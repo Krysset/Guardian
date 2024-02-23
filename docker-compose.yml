@@ -1,0 +1,35 @@
+version: "1.0"
+
+services:
+  guardian:
+    container_name: guardian
+    image: guardian:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - GUARDIAN_DB_HOST=guardian-postgres
+      - GUARDIAN_DB_PORT=5432
+      - GUARDIAN_DB_USER=admin
+      - GUARDIAN_DB_PASSWORD=123
+      - GUARDIAN_DB_NAME=guardian
+    ports:
+      - "8080:8080"
+    depends_on:
+      - guardian-postgres
+  postgres:
+    container_name: guardian-postgres
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: 123
+      POSTGRES_DB: guardian
+      PGDATA: /data/postgres
+    volumes:
+      - postgres-db:/data/postgres
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres-db:
+    driver: local
