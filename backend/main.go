@@ -10,12 +10,17 @@ import (
 	"github.com/joho/godotenv"
 )
 
+func hello(w http.ResponseWriter, r *http.Request) {
+	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
+}
+
 func main() {
 	loadEnv()
 	// create the router
 	// Test()
 	router := mux.NewRouter()
-	router.HandleFunc("/login/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", login).Methods("POST")
+	router.HandleFunc("/", hello).Methods("GET")
+	router.HandleFunc("/login", login).Methods("POST")
 	router.HandleFunc("/register", register).Methods("POST")
 	InitAccountSubrouter(router)
 	InitServiceSubrouter(router)
