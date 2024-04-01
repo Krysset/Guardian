@@ -63,4 +63,5 @@ func register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	AddUser(u)
+	RespoondWithSuccess(w)
 }
