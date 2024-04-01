@@ -1,8 +1,7 @@
 CREATE TABLE IF NOT EXISTS account_credentials
 	(
 		id TEXT NOT NULL PRIMARY KEY DEFAULT uuid_generate_v4(),
-		email TEXT NOT NULL UNIQUE,
-		username TEXT NOT NULL,
+		username TEXT NOT NULL UNIQUE,
 		password TEXT NOT NULL,
 		admin BOOLEAN NOT NULL DEFAULT FALSE
 	);

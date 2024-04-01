@@ -13,7 +13,6 @@ func InitAccountSubrouter(r *mux.Router) {
 	subr.HandleFunc("/delete/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", delete).Methods("DELETE")
 	subr.HandleFunc("/update/password/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", updatePassword).Methods("PUT")
 	subr.HandleFunc("/update/username/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", updateUsername).Methods("PUT")
-	subr.HandleFunc("/update/mail/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", updateMail).Methods("PUT")
 }
 
 func delete(w http.ResponseWriter, r *http.Request) {
@@ -61,21 +60,5 @@ func updateUsername(w http.ResponseWriter, r *http.Request) {
 		RespoondWithSuccess(w)
 	} else {
 		RespondWithError(w, http.StatusBadRequest, "Failed to update username")
-	}
-}
-
-func updateMail(w http.ResponseWriter, r *http.Request) {
-	var u User
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&u); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
-	if UpdateMail(u) {
-		RespoondWithSuccess(w)
-	} else {
-		RespondWithError(w, http.StatusBadRequest, "Failed to update mail")
 	}
 }

@@ -6,14 +6,12 @@ import (
 
 type User struct {
 	UUID     string `json:"uuid"`
-	Email    string `json:"email"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 type UserData struct {
 	UUID     string `json:"uuid"`
-	Email    string `json:"email"`
 	Username string `json:"username"`
 }
 
@@ -21,9 +19,9 @@ type UserData struct {
 
 func GetUser(u User) UserData {
 	database := GetDatabaseConnection()
-	const userQuery = `SELECT id, email, username FROM account_credentials WHERE id = $1`
+	const userQuery = `SELECT id, username FROM account_credentials WHERE id = $1`
 	var user UserData
-	err := database.QueryRow(userQuery, u.UUID).Scan(&user.UUID, &user.Username, &user.Email)
+	err := database.QueryRow(userQuery, u.UUID).Scan(&user.UUID, &user.Username)
 	if err != nil {
 		log.Println("Failed to retrieve user")
 		return UserData{}
@@ -71,16 +69,6 @@ func UpdateUsername(u User) bool {
 	if err != nil {
 		log.Println("Failed to update username")
 		return false
-	}
-	return true
-}
-
-func UpdateMail(u User) bool {
-	database := GetDatabaseConnection()
-	const emailUpdateQuery = `UPDATE account_credentials SET email = $2 WHERE uuid = $1`
-	_, err := database.Exec(emailUpdateQuery, u.UUID, u.Email)
-	if err != nil {
-		log.Println("Failed to update email")
 	}
 	return true
 }
