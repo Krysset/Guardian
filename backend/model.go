@@ -145,10 +145,7 @@ func IsAuthenticated(u User) bool {
 	var username string
 	var password string
 	err := database.QueryRow(authenticationQuery, u.Username, u.Password).Scan(&username, &password)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func IsAdmin(u User) bool {
