@@ -3,11 +3,21 @@
 ## Requirements
 
 - Go
+- Node.js
+- pnpm
 
 ## Installation
 
-- Run `go mod tidy` in root to install dependencies
+- Run `go mod tidy` in `backend` to install dependencies
+- Run `pnpm i` in `frontend` to install dependencies
 
 ## Run dev environment
 
-- Run `go run src/main.go`
+### Backend
+
+- Run `cd backend`
+- Run `go run .`
+
+### Frontend
+
+- Run `pnpm dev`
