@@ -87,5 +87,5 @@ function validatePassword(password: string, password2: string) {
 }
 
 function register(username: string, password: string) {
-	return axios.post("/api/register", { username, password });
+	return axios.post(process.env.BACKEND_BASE_URL + "/register", { username, password });
 }
