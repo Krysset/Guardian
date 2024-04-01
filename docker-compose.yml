@@ -1,11 +1,21 @@
 version: "1.0"
 
 services:
-  guardian:
-    container_name: guardian
-    image: guardian:latest
+  frontend:
+    container_name: guardian-frontend
+    image: guardian-frontend:latest
     build:
-      context: .
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+  backend:
+    container_name: guardian-backend
+    image: guardian-backend:latest
+    build:
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       - GUARDIAN_DB_HOST=guardian-postgres
@@ -14,7 +24,7 @@ services:
       - GUARDIAN_DB_PASSWORD=123
       - GUARDIAN_DB_NAME=guardian
     ports:
-      - "8080:8080"
+      - "8010:8010"
     depends_on:
       - guardian-postgres
   postgres:
