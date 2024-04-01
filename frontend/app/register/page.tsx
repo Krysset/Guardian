@@ -6,7 +6,7 @@ export default function RegisterPage() {
 					<header>Register for an account</header>
 					<form>
 						<input type="email" placeholder="Email" required />
-						<fieldset role="group" id="pw">
+						<fieldset role="group">
 							<input type="password" placeholder="A unique Password" required />
 							<input type="password" placeholder="Repeat password" required />{" "}
 						</fieldset>
