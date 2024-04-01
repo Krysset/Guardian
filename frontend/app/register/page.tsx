@@ -5,7 +5,7 @@ export default function RegisterPage() {
 				<article>
 					<header>Register for an account</header>
 					<form>
-						<input type="email" placeholder="Email" required />
+						<input type="username" placeholder="Username" required />
 						<fieldset role="group">
 							<input type="password" placeholder="A unique Password" required />
 							<input type="password" placeholder="Repeat password" required />{" "}
