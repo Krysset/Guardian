@@ -18,5 +18,6 @@ CREATE TABLE IF NOT EXISTS services
 	(
 		id TEXT NOT NULL PRIMARY KEY DEFAULT uuid_generate_v4(),
 		name TEXT NOT NULL,
-		description TEXT NOT NULL
+		description TEXT NOT NULL,
+		serviceKey TEXT NOT NULL UNIQUE uuid_generate_v4()
 	);
