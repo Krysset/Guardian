@@ -5,10 +5,13 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/joho/godotenv"
 )
+
+// Example rest api with chi
+// https://github.com/go-chi/chi/blob/master/_examples/rest/main.go#L189
 
 func hello(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
@@ -16,15 +19,16 @@ func hello(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	loadEnv()
-	// create the router
-	// Test()
-	router := mux.NewRouter()
-	router.HandleFunc("/", hello).Methods("GET")
-	router.HandleFunc("/login", login).Methods("POST")
-	router.HandleFunc("/register", register).Methods("POST")
-	InitAccountSubrouter(router)
-	InitServiceSubrouter(router)
-	http.ListenAndServe(":8010", router)
+	// Init DB connection
+	GetDatabaseConnection()
+	// Init router
+	r := chi.NewRouter()
+	r.Get("/", hello)
+	r.Post("/login", login)
+	r.Post("/register", register)
+	r.Mount("/account", getAccountSubrouter())
+	r.Mount("/service", getServiceSubrouter())
+	http.ListenAndServe(":8010", r)
 	// Close DB connection
 	GetDatabaseConnection().Close()
 }
@@ -43,8 +47,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
+	u.UUID = r.Context().Value("uuid").(string)
 	if IsAuthenticated(u) {
 		RespondWithError(w, http.StatusBadRequest, "Failed to login")
 		return

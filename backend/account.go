@@ -4,15 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 )
 
-func InitAccountSubrouter(r *mux.Router) {
-	subr := r.PathPrefix("/account").Subrouter()
-	subr.Use(Authenticate)
-	subr.HandleFunc("/delete/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", delete).Methods("DELETE")
-	subr.HandleFunc("/update/password/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", updatePassword).Methods("PUT")
-	subr.HandleFunc("/update/username/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", updateUsername).Methods("PUT")
+func getAccountSubrouter() *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(Authenticate)
+	r.Post("/delete", delete)
+	r.Post("/update/password", updatePassword)
+	r.Post("/update/username", updateUsername)
+	return r
 }
 
 func delete(w http.ResponseWriter, r *http.Request) {
@@ -22,8 +23,8 @@ func delete(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
+
+	u.UUID = r.Context().Value("uuid").(string)
 	if RemoveUser(u) {
 		RespoondWithSuccess(w)
 	} else {
@@ -38,8 +39,7 @@ func updatePassword(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
+	u.UUID = r.Context().Value("uuid").(string)
 	if UpdatePassword(u) {
 		RespoondWithSuccess(w)
 	} else {
@@ -54,8 +54,7 @@ func updateUsername(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
+	u.UUID = r.Context().Value("uuid").(string)
 	if UpdateUsername(u) {
 		RespoondWithSuccess(w)
 	} else {
