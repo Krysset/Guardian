@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -30,7 +31,8 @@ func connect() *sql.DB {
 	db, err := sql.Open("postgres", psqlInfo)
 	// Check connection
 	if err != nil {
-		fmt.Println("Something went wrong when connecting to DB. Retrying...")
+		fmt.Println("Something went wrong when connecting to DB. Retrying in 3 seconds..")
+		time.Sleep(3 * time.Second)
 		db = connect()
 	}
 	// Test connection
