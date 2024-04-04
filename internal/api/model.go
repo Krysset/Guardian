@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"log"
@@ -29,10 +29,10 @@ func GetUser(u User) UserData {
 	return user
 }
 
-func AddUser(u User) bool {
+func AddUser(username string, password string) bool {
 	database := GetDatabaseConnection()
 	const userCreationQuery = `INSERT INTO account_credentials (username, password) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	_, err := database.Exec(userCreationQuery, u.Username, u.Password)
+	_, err := database.Exec(userCreationQuery, username, password)
 	if err != nil {
 		log.Println("Failed to create user")
 		return false

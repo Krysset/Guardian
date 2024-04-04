@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"database/sql"
@@ -48,7 +48,7 @@ func connect() *sql.DB {
 
 func initialize_db(db *sql.DB) {
 	// Init tables
-	sql, ioErr := os.ReadFile("schema.sql")
+	sql, ioErr := os.ReadFile("/schema.sql")
 	tableCreationQuery := string(sql)
 	if ioErr != nil {
 		panic("Failed to read table creation query")

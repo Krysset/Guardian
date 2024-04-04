@@ -66,13 +66,18 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type registerRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 func register(w http.ResponseWriter, r *http.Request) {
-	var u User
+	var req registerRequest
 	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&u); err != nil {
+	if err := decoder.Decode(&req); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	AddUser(u)
+	AddUser(req.Username, req.Password)
 	RespoondWithSuccess(w)
 }
