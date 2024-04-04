@@ -46,26 +46,26 @@ func connect() *sql.DB {
 	return db
 }
 
-func initialize_db() {
-	GetDatabaseConnection()
+func initialize_db(db *sql.DB) {
 	// Init tables
 	sql, ioErr := os.ReadFile("schema.sql")
 	tableCreationQuery := string(sql)
 	if ioErr != nil {
 		panic("Failed to read table creation query")
 	}
-	_, err := database.Exec(tableCreationQuery)
+	_, err := db.Exec(tableCreationQuery)
 
 	if err != nil {
-		fmt.Println("Something went wrong when creating tables. Retrying...")
-		initialize_db()
+		fmt.Println("Something went wrong when creating tables. Retrying 3 seconds...")
+		time.Sleep(3 * time.Second)
+		initialize_db(db)
 	}
 }
 
 func GetDatabaseConnection() *sql.DB {
 	if database == nil {
 		database = connect()
-		initialize_db()
+		initialize_db(database)
 	}
 	return database
 }
