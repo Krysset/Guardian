@@ -13,24 +13,30 @@ import (
 // Example rest api with chi
 // https://github.com/go-chi/chi/blob/master/_examples/rest/main.go#L189
 
-func hello(w http.ResponseWriter, r *http.Request) {
-	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
-}
-
 func main() {
 	loadEnv()
 	// Init DB connection
 	GetDatabaseConnection()
 	// Init router
 	r := chi.NewRouter()
+	r.Mount("/api", getApiSubrouter())
+	http.ListenAndServe(":8010", r)
+	// Close DB connection
+	GetDatabaseConnection().Close()
+}
+
+func getApiSubrouter() *chi.Mux {
+	r := chi.NewRouter()
 	r.Get("/", hello)
 	r.Post("/login", login)
 	r.Post("/register", register)
 	r.Mount("/account", getAccountSubrouter())
 	r.Mount("/service", getServiceSubrouter())
-	http.ListenAndServe(":8010", r)
-	// Close DB connection
-	GetDatabaseConnection().Close()
+	return r
+}
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
 }
 
 func loadEnv() {
