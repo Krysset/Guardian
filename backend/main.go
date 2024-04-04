@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -20,7 +21,8 @@ func main() {
 	// Init router
 	r := chi.NewRouter()
 	r.Mount("/api", getApiSubrouter())
-	http.ListenAndServe(":8010", r)
+	fmt.Println("Server started and ready on port 3001")
+	http.ListenAndServe(":3001", r)
 	// Close DB connection
 	GetDatabaseConnection().Close()
 }
