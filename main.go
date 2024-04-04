@@ -2,26 +2,43 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/joho/godotenv"
 )
 
+// Example rest api with chi
+// https://github.com/go-chi/chi/blob/master/_examples/rest/main.go#L189
+
 func main() {
 	loadEnv()
-	// create the router
-	// Test()
-	router := mux.NewRouter()
-	router.HandleFunc("/login/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", login).Methods("POST")
-	router.HandleFunc("/register", register).Methods("POST")
-	InitAccountSubrouter(router)
-	InitServiceSubrouter(router)
-	http.ListenAndServe(":8010", router)
+	// Init DB connection
+	GetDatabaseConnection()
+	// Init router
+	r := chi.NewRouter()
+	r.Mount("/api", getApiSubrouter())
+	fmt.Println("Server started and ready on port 3001")
+	http.ListenAndServe(":3001", r)
 	// Close DB connection
 	GetDatabaseConnection().Close()
+}
+
+func getApiSubrouter() *chi.Mux {
+	r := chi.NewRouter()
+	r.Get("/", hello)
+	r.Post("/login", login)
+	r.Post("/register", register)
+	r.Mount("/account", getAccountSubrouter())
+	r.Mount("/service", getServiceSubrouter())
+	return r
+}
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
 }
 
 func loadEnv() {
@@ -38,8 +55,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	vars := mux.Vars(r)
-	u.UUID = vars["uuid"]
+	u.UUID = r.Context().Value("uuid").(string)
 	if IsAuthenticated(u) {
 		RespondWithError(w, http.StatusBadRequest, "Failed to login")
 		return
@@ -50,12 +66,18 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type registerRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 func register(w http.ResponseWriter, r *http.Request) {
-	var u User
+	var req registerRequest
 	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&u); err != nil {
+	if err := decoder.Decode(&req); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	AddUser(u)
+	AddUser(req.Username, req.Password)
+	RespoondWithSuccess(w)
 }

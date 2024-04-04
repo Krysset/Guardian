@@ -1,10 +1,8 @@
-package main
+package api
 
 import (
 	"encoding/json"
 	"net/http"
-
-	"github.com/gorilla/mux"
 )
 
 func Authenticate(next http.Handler) http.Handler {
@@ -15,8 +13,7 @@ func Authenticate(next http.Handler) http.Handler {
 			RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 			return
 		}
-		vars := mux.Vars(r)
-		u.UUID = vars["uuid"]
+		u.UUID = r.Context().Value("uuid").(string)
 		if IsAuthenticated(u) {
 			next.ServeHTTP(w, r)
 		}
@@ -33,11 +30,13 @@ func ValidateAdmin(next http.Handler) http.Handler {
 			RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 			return
 		}
-		vars := mux.Vars(r)
-		u.UUID = vars["uuid"]
+		u.UUID = r.Context().Value("uuid").(string)
 		if IsAdmin(u) {
 			next.ServeHTTP(w, r)
 		}
 	}
 	return http.HandlerFunc(fn)
 }
+
+// func ValidateService()
+// https://go-chi.io/#/pages/middleware?id=jwt-authentication

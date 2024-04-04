@@ -1,20 +1,28 @@
-package main
+package api
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 )
 
-func InitServiceSubrouter(r *mux.Router) {
-	subr := r.PathPrefix("/service").Subrouter()
-	subr.Use(Authenticate)
-	subr.Use(ValidateAdmin)
-	subr.HandleFunc("/add", addService).Methods("POST")
-	subr.HandleFunc("/remove", removeService).Methods("DELETE")
-	subr.HandleFunc("/list", listServices).Methods("GET")
-	subr.HandleFunc("/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", getService).Methods("GET")
+func getServiceSubrouter() *chi.Mux {
+	r := chi.NewRouter()
+
+	r.Group(func(r chi.Router) {
+		r.Get("/list", listServices)
+		r.Get("/{uuid:^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$}", getService)
+	})
+
+	r.Group(func(r chi.Router) {
+		r.Use(Authenticate)
+		r.Use(ValidateAdmin)
+		r.Post("/add", addService)
+		r.Delete("/remove", removeService) // Maybe use POST instead of DELETE
+	})
+
+	return r
 }
 
 func addService(w http.ResponseWriter, r *http.Request) {
@@ -53,8 +61,7 @@ func listServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func getService(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	uuid := vars["uuid"]
+	uuid := r.Context().Value("uuid").(string)
 	s := Service{UUID: uuid}
 	service := GetService(s)
 	RespondWithJSON(w, http.StatusOK, service)
