@@ -58,6 +58,16 @@ CREATE TABLE IF NOT EXISTS admin_permission
 		CONSTRAINT fk_permission_id FOREIGN KEY (permission_id) REFERENCES permission(id)
 	);
 
+CREATE TABLE IF NOT EXISTS account_reset_codes
+	(
+		id UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+		account_id UUID NOT NULL,
+		reset_code string NOT NULL,
+		used BOOLEAN NOT NULL DEFAULT FALSE,
+		creation_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		CONSTRAINT fk_account_id FOREIGN KEY (account_id) REFERENCES account(id)
+	);
+
 -- If tables are empty initialize a admin user with admin permissions
 IF(NOT EXISTS (SELECT 1 FROM permission)) THEN
 	INSERT INTO permission (name, pretty_name, description) VALUES ('admin', 'Admin', 'Grants full access to all permissions');
