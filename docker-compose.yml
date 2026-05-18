@@ -1,5 +1,3 @@
-version: "1.0"
-
 services:
   frontend:
     container_name: guardian-frontend
@@ -11,6 +9,7 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+      
   backend:
     container_name: guardian-backend
     image: guardian-backend:latest
@@ -27,6 +26,7 @@ services:
       - "8010:8010"
     depends_on:
       - postgres
+
   postgres:
     container_name: guardian-postgres
     image: postgres:latest
