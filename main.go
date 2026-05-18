@@ -9,6 +9,10 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/joho/godotenv"
+
+	"guardian/database/connection"
+	"guardian/api/account"
+	"guardian/api/app"
 )
 
 // Example rest api with chi
@@ -16,7 +20,7 @@ import (
 
 func main() {
 	loadEnv()
-	// Init DB connection
+	// Preemptively initialize DB connection
 	GetDatabaseConnection()
 	// Init router
 	r := chi.NewRouter()
@@ -33,7 +37,7 @@ func getApiSubrouter() *chi.Mux {
 	r.Post("/login", login)
 	r.Post("/register", register)
 	r.Mount("/account", getAccountSubrouter())
-	r.Mount("/service", getServiceSubrouter())
+	r.Mount("/service", getAppSubrouter())
 	return r
 }
 

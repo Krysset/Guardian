@@ -1,16 +1,23 @@
-package api
+package db
 
 import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
 var database *sql.DB
+
+func GetDatabaseConnection() *sql.DB {
+	if database == nil {
+		database = connect()
+		initialize_db(database)
+	}
+	return database
+}
 
 func connect() *sql.DB {
 	// Load credentials
@@ -60,12 +67,4 @@ func initialize_db(db *sql.DB) {
 		time.Sleep(3 * time.Second)
 		initialize_db(db)
 	}
-}
-
-func GetDatabaseConnection() *sql.DB {
-	if database == nil {
-		database = connect()
-		initialize_db(database)
-	}
-	return database
 }
