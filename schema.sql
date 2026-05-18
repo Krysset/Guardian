@@ -78,3 +78,12 @@ END IF;
 IF(NOT EXISTS (SELECT 1 FROM admin_permission)) THEN
 	INSERT INTO admin_permission (account_id, permission_id) SELECT a.id, p.id FROM account a, permission p WHERE a.username = 'admin' AND p.name = 'admin';
 END IF;
+
+-- If guardian does not exist initialize it with a default app and permissions
+IF(NOT EXISTS (SELECT 1 FROM app)) THEN
+	INSERT INTO app (name, pretty_name, description) VALUES ('guardian', 'Guardian', 'Service for managing accounts and app permissions');
+END IF;
+-- TODO: Change this to only give guardian the permissions it needs, currently it has all permissions for testing purposes
+IF(NOT EXISTS (SELECT 1 FROM app_permission)) THEN
+	INSERT INTO app_permission (app_id, permission_id) SELECT a.id, p.id FROM app a, permission p WHERE a.name = 'guardian' AND p.name = 'admin'; 
+END IF;
