@@ -17,6 +17,6 @@ func RespondWithError(w http.ResponseWriter, code int, message string) {
 	RespondWithJSON(w, code, map[string]string{"error": message})
 }
 
-func RespoondWithSuccess(w http.ResponseWriter) {
+func RespondWithSuccess(w http.ResponseWriter) {
 	RespondWithJSON(w, http.StatusOK, map[string]string{"result": "success"})
 }

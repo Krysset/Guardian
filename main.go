@@ -1,18 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-
 	"github.com/joho/godotenv"
 
-	"guardian/database/connection"
-	"guardian/api/account"
-	"guardian/api/app"
+	api "guardian/api"
+	db "guardian/database"
 )
 
 // Example rest api with chi
@@ -21,28 +18,26 @@ import (
 func main() {
 	loadEnv()
 	// Preemptively initialize DB connection
-	GetDatabaseConnection()
+	db.GetDatabaseConnection()
 	// Init router
 	r := chi.NewRouter()
 	r.Mount("/api", getApiSubrouter())
 	fmt.Println("Server started and ready on port 3001")
 	http.ListenAndServe(":3001", r)
 	// Close DB connection
-	GetDatabaseConnection().Close()
+	db.GetDatabaseConnection().Close()
 }
 
 func getApiSubrouter() *chi.Mux {
 	r := chi.NewRouter()
 	r.Get("/", hello)
-	r.Post("/login", login)
-	r.Post("/register", register)
-	r.Mount("/account", getAccountSubrouter())
-	r.Mount("/service", getAppSubrouter())
+	r.Mount("/account", api.GetAccountSubrouter())
+	r.Mount("/service", api.GetAppSubrouter())
 	return r
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
+	api.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
 }
 
 func loadEnv() {
@@ -50,38 +45,4 @@ func loadEnv() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
-}
-
-func login(w http.ResponseWriter, r *http.Request) {
-	var u User
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&u); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	u.UUID = r.Context().Value("uuid").(string)
-	if IsAuthenticated(u) {
-		RespondWithError(w, http.StatusBadRequest, "Failed to login")
-		return
-	}
-	sessionId := CreateSession(u)
-	if sessionId == "" {
-		RespondWithError(w, http.StatusFailedDependency, "Failed to create session")
-	}
-}
-
-type registerRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-func register(w http.ResponseWriter, r *http.Request) {
-	var req registerRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&req); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	AddUser(req.Username, req.Password)
-	RespoondWithSuccess(w)
 }

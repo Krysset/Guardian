@@ -1,27 +1,28 @@
-package internal
+package database
 
 type User struct {
-	UUID				string `json:"uuid"`
-	Username 		string `json:"username"`
-	Mail 				string `json:"mail,omitempty"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type UserCredentials struct {
-	UUID     string `json:"uuid"`
+	ID       string `json:"id"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 type Permission struct {
-	UUID        string `json:"uuid"`
+	ID          string `json:"id"`
 	Name        string `json:"name"`
 	PrettyName  string `json:"pretty_name"`
 	Description string `json:"description"`
 }
 
 type App struct {
-	UUID        string `json:"uuid"`
+	ID          string `json:"id"`
 	Name        string `json:"name"`
 	PrettyName  string `json:"pretty_name"`
 	Description string `json:"description"`
@@ -39,7 +40,7 @@ type FullApp struct {
 }
 
 type AccountSession struct {
-	SessionID   string `json:"session_id"`
-	AccountID   string `json:"account_id"`
+	SessionID    string `json:"session_id"`
+	AccountID    string `json:"account_id"`
 	CreationDate string `json:"creation_date"`
 }

@@ -6,11 +6,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"guardian/database/connection"
-	"guardian/database/app"
+	db "guardian/database"
 )
 
-func getAppSubrouter() *chi.Mux {
+func GetAppSubrouter() *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Group(func(r chi.Router) {
@@ -19,53 +18,59 @@ func getAppSubrouter() *chi.Mux {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(Authenticate)
-		r.Use(ValidateAdmin)
+		r.Use(OnlyAdmin)
 		r.Post("/add", addApp)
-		r.Delete("/remove", removeApp) 
+		r.Delete("/remove", removeApp)
 	})
 
 	return r
 }
 
 func addApp(w http.ResponseWriter, r *http.Request) {
-	var s App
+	var s db.App
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&s); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if AddApp(s) {
-		RespondWithJSON(w, http.StatusOK, s)
-	} else {
+	app, err := db.AddApp(s)
+	if err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Failed to add App")
+		return
 	}
+	RespondWithJSON(w, http.StatusOK, app)
 }
 
 func removeApp(w http.ResponseWriter, r *http.Request) {
-	var s App
+	var s db.App
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&s); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if RemoveApp(s) {
-		RespondWithJSON(w, http.StatusOK, s)
-	} else {
+	err := db.RemoveApp(s.ID)
+	if err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Failed to remove App")
+		return
 	}
+	RespondWithJSON(w, http.StatusOK, s)
 }
 
-// TODO: Verify that returned Apps actually have content and respond with error if they dont't
-
 func listApps(w http.ResponseWriter, r *http.Request) {
-	Apps := GetApps()
+	Apps, err := db.GetApps()
+	if err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Failed to retrieve Apps")
+		return
+	}
 	RespondWithJSON(w, http.StatusOK, Apps)
 }
 
 func getApp(w http.ResponseWriter, r *http.Request) {
 	uuid := r.Context().Value("uuid").(string)
-	s := App{UUID: uuid}
-	App := GetApp(s)
+	App, err := db.GetApp(uuid)
+	if err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Failed to retrieve App")
+		return
+	}
 	RespondWithJSON(w, http.StatusOK, App)
 }

@@ -1,9 +1,10 @@
-package db
+package database
 
 import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"

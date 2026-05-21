@@ -1,4 +1,4 @@
-module guardian
+module guardian //github.com/Krysset/Guardian
 
 go 1.21.6
 
