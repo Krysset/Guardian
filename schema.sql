@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS account_permission
 	);
 
 -- Table for storing password reset codes, each code is associated with an account and has a creation date.
+CREATE TABLE IF NOT EXISTS password_reset_code
 	(
 		id UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
 		account_id UUID NOT NULL,
@@ -59,25 +60,18 @@ CREATE TABLE IF NOT EXISTS account_permission
 		CONSTRAINT fk_account_id FOREIGN KEY (account_id) REFERENCES account(id)
 	);
 
-
--- TODO: Needs more work, not finished
+-- One time use code to reauthenticate a user
 CREATE TABLE IF NOT EXISTS account_access_token
 	(
 		token_id UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
 		account_id UUID NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		hashed_token TEXT NOT NULL,
+		used BOOLEAN NOT NULL DEFAULT FALSE,
 		CONSTRAINT fk_account_id FOREIGN KEY (account_id) REFERENCES account(id)
 	);
 
--- If guardian does not exist initialize it with a default app and permissions
-IF(NOT EXISTS (SELECT 1 FROM app)) THEN
-	INSERT INTO app (name, pretty_name, description) VALUES ('guardian', 'Guardian', 'Service for managing accounts and app permissions');
-END IF;
--- TODO: Change this to only give guardian the permissions it needs, currently it has all permissions for testing purposes
-IF(NOT EXISTS (SELECT 1 FROM app_permission)) THEN
-	INSERT INTO app_permission (app_id, permission_id) SELECT a.id, p.id FROM app a, permission p WHERE a.name = 'guardian' AND p.name = 'admin'; 
-END IF;
+CREATE TABLE IF NOT EXISTS 
 
 -- If tables are empty initialize a admin user with admin permissions
 IF(NOT EXISTS (SELECT 1 FROM permission)) THEN
@@ -90,3 +84,14 @@ IF(NOT EXISTS (SELECT 1 FROM account_permission)) THEN
 	INSERT INTO account_permission (account_id, permission_id) SELECT a.id, p.id FROM account a, permission p WHERE a.username = 'admin' AND p.name = 'admin';
 END IF;
 
+-- If guardian does not exist initialize it with a default app and permissions
+IF(NOT EXISTS (SELECT 1 FROM app)) THEN
+	INSERT INTO app (name, pretty_name, description) VALUES ('guardian', 'Guardian', 'Service for managing accounts and app permissions');
+END IF;
+-- TODO: Change this to only give guardian the permissions it needs, currently it has all permissions for testing purposes
+IF(NOT EXISTS (SELECT 1 FROM app_permission)) THEN
+	INSERT INTO app_permission (app_id, permission_id) SELECT a.id, p.id FROM app a, permission p WHERE a.name = 'guardian' AND p.name = 'admin'; 
+END IF;
+
+-- If required for guardian do no not exists, initialize them
+IF(NOT EXISTS (SELECT 1 FROM permission WHERE name = ''))
