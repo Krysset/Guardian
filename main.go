@@ -30,13 +30,19 @@ func main() {
 
 func getApiSubrouter() *chi.Mux {
 	r := chi.NewRouter()
-	r.Get("/", hello)
 	r.Mount("/account", api.GetAccountSubrouter())
 	r.Mount("/service", api.GetAppSubrouter())
+	r.Mount("/metrics", api.GetMetricsSubrouter())
+	r.Get("/", hello)
+	r.Get("/health", healthCheck)
 	return r
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {
+	api.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
+}
+
+func healthCheck(w http.ResponseWriter, r *http.Request) {
 	api.RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Hello, World!"})
 }
 
