@@ -14,10 +14,8 @@
 ## Run dev environment
 
 ### Backend
-
+- Have a local postgresql db up and running
 - Run `cd backend`
+- Copy `.env.example` and rename it to `.env`
+- Fill in the values in `.env`
 - Run `go run .`
-
-### Frontend
-
-- Run `pnpm dev`

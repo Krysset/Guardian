@@ -1,0 +1,33 @@
+name: test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: guardian
+          POSTGRES_PASSWORD: guardian
+          POSTGRES_DB: guardian_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U guardian -d guardian_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GUARDIAN_TEST_DB: "1"
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: guardian
+      DB_PASSWORD: guardian
+      DB_NAME: guardian_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # go.sum is not committed yet; generate it (then commit it and replace this with `go mod download`)
+      - run: go mod tidy
+      - run: go vet ./...
+      - run: go test -race -count=1 -timeout 10m ./...
