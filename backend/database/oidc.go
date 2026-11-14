@@ -22,7 +22,7 @@ func SaveAuthCode(codeHash string, c AuthCode, ttl time.Duration) error {
 		   (code_hash, app_id, account_id, session_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, auth_time, expires_at)
 		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, NULLIF($7, ''), NULLIF($8, ''),
 		         CASE WHEN $8 = '' THEN NULL ELSE 'S256' END, $9, $10)`,
-		codeHash, c.AppID, c.AccountID, c.SessionID, c.RedirectURI, pq.Array(c.Scopes), c.Nonce, c.CodeChallenge,
+		codeHash, c.AppID, c.AccountID, c.SessionID, c.RedirectURI, strArray(c.Scopes), c.Nonce, c.CodeChallenge,
 		c.AuthTime, time.Now().Add(ttl))
 	return err
 }
@@ -48,7 +48,7 @@ func SaveRefreshToken(tokenHash, familyID, appID, accountID, sessionID string, s
 	_, err := GetDatabaseConnection().Exec(
 		`INSERT INTO refresh_token (token_hash, family_id, app_id, account_id, session_id, scopes, expires_at)
 		 VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7)`,
-		tokenHash, familyID, appID, accountID, sessionID, pq.Array(scopes), expires)
+		tokenHash, familyID, appID, accountID, sessionID, strArray(scopes), expires)
 	return err
 }
 
@@ -93,7 +93,7 @@ func RotateRefreshToken(oldHash, appID, newHash string, newExpires time.Time) (R
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_token (token_hash, family_id, app_id, account_id, session_id, scopes, expires_at)
 		 VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7)`,
-		newHash, rt.FamilyID, rt.AppID, rt.AccountID, rt.SessionID, pq.Array(rt.Scopes), newExpires); err != nil {
+		newHash, rt.FamilyID, rt.AppID, rt.AccountID, rt.SessionID, strArray(rt.Scopes), newExpires); err != nil {
 		return RefreshToken{}, err
 	}
 	return rt, tx.Commit()
@@ -163,7 +163,7 @@ func SaveAccessToken(tokenHash, appID, accountID, sessionID string, scopes []str
 	_, err := GetDatabaseConnection().Exec(
 		`INSERT INTO access_token (token_hash, app_id, account_id, session_id, scopes, expires_at)
 		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6)`,
-		tokenHash, appID, accountID, sessionID, pq.Array(scopes), expires)
+		tokenHash, appID, accountID, sessionID, strArray(scopes), expires)
 	return err
 }
 

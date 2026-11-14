@@ -29,6 +29,15 @@ func scanApp(s scanner) (App, error) {
 	return a, err
 }
 
+// strArray binds a string slice as a Postgres array. A nil slice becomes an empty array instead of NULL,
+// so an optional list (for example post_logout_redirect_uris left out of a request) fits a NOT NULL column.
+func strArray(s []string) interface{} {
+	if s == nil {
+		s = []string{}
+	}
+	return pq.Array(s)
+}
+
 // AddApp creates an app, its first secret (if secretHash != "") and its allowed scopes.
 func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	tx, err := GetDatabaseConnection().Begin()
@@ -48,7 +57,7 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 900))
 		 RETURNING id`,
 		a.Name, a.PrettyName, a.Description, a.LogoURL, a.HomepageURL, a.ClientType, authMethod,
-		pq.Array(a.RedirectURIs), pq.Array(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
+		strArray(a.RedirectURIs), strArray(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
 		a.AccessTokenTTL).Scan(&id)
 	if err != nil {
 		log.Println("Failed to create app:", a.Name, err)

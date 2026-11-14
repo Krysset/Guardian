@@ -122,7 +122,7 @@ func SaveConsent(accountID, appID string, scopes []string) error {
 		`INSERT INTO account_consent (account_id, app_id, scopes) VALUES ($1, $2, $3)
 		 ON CONFLICT (account_id, app_id)
 		 DO UPDATE SET scopes = EXCLUDED.scopes, granted_at = now(), revoked_at = NULL`,
-		accountID, appID, pq.Array(scopes))
+		accountID, appID, strArray(scopes))
 	return err
 }
 
