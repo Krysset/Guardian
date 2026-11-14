@@ -234,7 +234,10 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
   - CI moved to the root `.github/`; the Dockerfile and `docker-compose.yml` were fixed.
   - The backend builds, and all 102 tests pass against PostgreSQL 16. One bug was found and fixed.
   - Still to do by the owner: check `docker compose up --build`, push, and merge `oidc-refactor` into `dev`.
-- **M1: restructure.** Move to `cmd/` and `internal/`, add the config package with validation, goose, slog, pgx and embedded assets. No behaviour changes.
+- **M1: restructure. Done 2026-11-14.** No change to features.
+  - Part 1: move to `cmd/` and `internal/`, add the config package with validation, structured logging with slog, and the schema embedded in the binary.
+  - Part 2: goose migrations and the pgx driver, plus a `guardian migrate` command.
+  - The split of `internal/api` into `oidc`, `web`, `httpx` and `internalapi` happens in the groups and JWT step below, where those handlers are rewritten.
 - **Groups and JWT:**
   - Rewrite `00001_init.sql`: groups with keys, `app_group`, group owners, the per-app access rule and require-MFA flag, key stages, keyring tags, the deletion log; no phone or birthdate.
   - Lean JWT access tokens, the `groups` scope, refresh re-checks with stable refresh tokens for confidential apps, and session idle and absolute timeouts.

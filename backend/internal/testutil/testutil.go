@@ -17,16 +17,18 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
 
-	"guardian/auth"
-	db "guardian/database"
+	"guardian/internal/auth"
+	"guardian/internal/config"
+	db "guardian/internal/store"
+	"guardian/migrations"
 )
 
 // DefaultPassword is the password of every account made by CreateAccount.
@@ -38,10 +40,9 @@ func Enabled() bool {
 }
 
 var (
-	setupOnce  sync.Once
-	setupErr   error
-	lockConn   *sql.Conn // holds the cross-process advisory lock for the lifetime of the test process
-	schemaPath string
+	setupOnce sync.Once
+	setupErr  error
+	lockConn  *sql.Conn // holds the cross-process advisory lock for the lifetime of the test process
 
 	hashOnce sync.Once
 	hashVal  string
@@ -55,16 +56,14 @@ func Setup() error {
 			setupErr = fmt.Errorf("database tests need GUARDIAN_TEST_DB=1 and DB_NAME ending in _test")
 			return
 		}
-		path, err := findSchema()
+		cfg, err := config.LoadDatabase()
 		if err != nil {
 			setupErr = err
 			return
 		}
-		schemaPath = path
-		os.Setenv("SCHEMA_PATH", path)
 
-		// GetDatabaseConnection retries forever; fail fast instead if nothing is listening.
-		addr := net.JoinHostPort(os.Getenv("DB_HOST"), envOr("DB_PORT", "5432"))
+		// store.Open retries forever; fail fast instead if nothing is listening.
+		addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 		c, err := net.DialTimeout("tcp", addr, 3*time.Second)
 		if err != nil {
 			setupErr = fmt.Errorf("cannot reach test database at %s: %w", addr, err)
@@ -74,7 +73,11 @@ func Setup() error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		conn := db.GetDatabaseConnection()
+		conn, err := db.Open(ctx, cfg)
+		if err != nil {
+			setupErr = err
+			return
+		}
 		if lockConn, err = conn.Conn(ctx); err != nil {
 			setupErr = err
 			return
@@ -84,36 +87,6 @@ func Setup() error {
 		}
 	})
 	return setupErr
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func findSchema() (string, error) {
-	if p := os.Getenv("SCHEMA_PATH"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		p := filepath.Join(dir, "schema.sql")
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("schema.sql not found above %s (set SCHEMA_PATH)", dir)
-		}
-		dir = parent
-	}
 }
 
 // RequireTestDB skips the test unless database tests are enabled, and fails it if the setup is broken.
@@ -127,13 +100,14 @@ func RequireTestDB(t testing.TB) {
 	}
 }
 
-// Reset empties every table (except signing keys) and re-runs the schema script, which re-seeds the
+// Reset empties every table (except signing keys and the migration history) and re-runs migration 1, which re-seeds the
 // scopes, the guardian app, the admin role and the admin account. Call it first in each database test.
 func Reset(t testing.TB) {
 	t.Helper()
 	RequireTestDB(t)
 	conn := db.GetDatabaseConnection()
-	rows, err := conn.Query(`SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename <> 'signing_key'`)
+	rows, err := conn.Query(`SELECT tablename FROM pg_tables WHERE schemaname = current_schema()
+		   AND tablename NOT IN ('signing_key', 'goose_db_version')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +117,7 @@ func Reset(t testing.TB) {
 		if err := rows.Scan(&name); err != nil {
 			t.Fatal(err)
 		}
-		tables = append(tables, pq.QuoteIdentifier(name))
+		tables = append(tables, pgx.Identifier{name}.Sanitize())
 	}
 	rows.Close()
 	if len(tables) > 0 {
@@ -154,12 +128,8 @@ func Reset(t testing.TB) {
 	RunSchema(t)
 }
 
-// RunSchemaErr executes the schema script the way the application does at startup.
+// RunSchemaErr executes migration 1 directly, as one batch. It is idempotent, so this re-seeds an emptied database.
 func RunSchemaErr() error {
-	script, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c, err := db.GetDatabaseConnection().Conn(ctx)
@@ -167,7 +137,7 @@ func RunSchemaErr() error {
 		return err
 	}
 	defer c.Close()
-	if _, err := c.ExecContext(ctx, string(script)); err != nil {
+	if _, err := c.ExecContext(ctx, migrations.InitSQL); err != nil {
 		c.ExecContext(context.Background(), "ROLLBACK")
 		return err
 	}

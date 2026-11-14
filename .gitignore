@@ -4,3 +4,5 @@ backend/vendor/
 # Locally built binaries.
 backend/guardian
 backend/guardian.exe
+# Tools kept next to the repository for offline work, such as a Linux Go toolchain for the agent.
+.tools/
