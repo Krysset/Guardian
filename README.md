@@ -30,7 +30,7 @@ You need Go and a PostgreSQL database.
 ```
 cd backend
 cp .env.example .env      # then fill in the values
-go run .
+go run ./cmd/guardian
 ```
 
 ## Tests

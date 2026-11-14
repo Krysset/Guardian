@@ -37,24 +37,30 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
 - After writing single files to the PC with `device_commit_files`, check size or checksum. It has several times written the *previous* version of a file; committing again with `force` fixed it.
 
 ## Repository map (current)
-- `backend/` — Go module `guardian`, Go 1.22 (to be bumped), chi, lib/pq, golang-jwt, prometheus. About 3,100 lines plus a large test suite.
-  - `main.go` — two listeners: public `:3001` (OIDC, hosted pages, `/api`) and internal `:3002` (`/introspect`, `/metrics`, `/healthz`, `/readyz`). It also bootstraps the admin password and starts hourly cleanup.
-  - `api/` — HTTP handlers:
+- `backend/` — Go module `guardian`: chi, lib/pq (moving to pgx), golang-jwt, prometheus. About 3,300 lines plus a large test suite.
+  - `cmd/guardian/main.go` — the entry point: loads `.env` if present, loads and validates the configuration, sets up logging, runs the server.
+  - `internal/config/` — every environment variable in one place, validated at startup; all problems are reported at once.
+  - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
+    - Public `:3001`: OIDC, hosted pages, `/api`.
+    - Internal `:3002`: `/introspect`, `/metrics`, `/healthz`, `/readyz`.
+  - `internal/api/` — HTTP handlers, still one package:
     - `oidc.go` — discovery, authorize, token, userinfo, jwks, consent.
     - `login.go` — login/logout and back-channel logout.
     - `account.go`, `app.go`, `access.go` — `/api/account`, `/api/service`, `/api/access`.
     - `introspect.go` — internal router.
     - `templates.go` — inline hosted-page HTML.
     - `middleware.go` — session, CSRF, `OnlyAdmin`, `RequirePermission`, `RequireSameOrigin`.
-  - `auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
-  - `database/` — queries; `connection.go` runs `schema.sql` at startup under an advisory lock.
-  - `schema.sql` — the full data model, described below.
-  - Tests: `*_test.go`, `e2e_*_test.go`. 102 tests, all passing since 2026-11-14 (`docs/TESTING.md`).
+  - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
+  - `internal/store/` — queries (imported as `db`); `connection.go` runs the schema script at startup under an advisory lock.
+  - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
+  - `internal/testutil/` — helpers for tests that need Postgres.
+  - `e2e/` — end-to-end tests over HTTP against both routers.
+  - Tests: 108, all passing (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
 - `docs/` — `ARCHITECTURE.md`, `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`, plus yUML diagrams.
 
-## Data model (backend/schema.sql)
+## Data model (backend/migrations/00001_init.sql)
 - `account` — the OIDC subject; profile columns map 1:1 to standard claims. Status is pending, active, disabled or locked. Soft delete via `deleted_at`.
 - `app` — an OIDC client: public or confidential, redirect URIs, PKCE, first-party (skips consent), TTLs. `app_secret` allows several active secrets, so rotation can overlap.
 - `scope`, `app_scope`, `account_consent` — standard and custom scopes, and the scopes a user has consented to.
@@ -233,9 +239,20 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **0.4 console:** account and admin console, group owners.
   - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
   - **1.0:** hardening, docs, and ES256 if time allows.
-- **Next step:** M1, the restructure (see `docs/ROADMAP.md`): move to `cmd/` and `internal/`, add the config package, goose, slog, pgx and embedded assets, and bump the Go version. No behaviour changes; the 102 tests are the safety net.
-  - New dependencies (goose, pgx) need the owner to run `go get` and `go mod vendor` on Windows, because the agent has no network.
+- **M1 is in progress** on branch `implement-m1`. The owner reviews changes before anything is committed: **do not commit on this branch unless asked.**
+  - **Part 1, done and tested (uncommitted in the owner's working tree):**
+    - The move to `cmd/guardian`, `internal/{api,auth,store,server,config}`, `e2e/` and `migrations/`.
+    - The config package with validation.
+    - Structured logging with `log/slog` (`LOG_FORMAT`, `LOG_LEVEL`).
+    - The schema embedded in the binary; `SCHEMA_PATH` is gone.
+  - **Part 2, waiting for dependencies:** goose migrations and the pgx driver.
+    - Order matters: `go mod tidy` and `go mod vendor` only keep packages the code imports. So the agent first writes the code that imports goose and pgx (it cannot compile yet).
+    - The owner then runs `go get github.com/pressly/goose/v3@latest github.com/jackc/pgx/v5@latest`, `go mod tidy` and `go mod vendor`, in `backend` on Windows.
+    - The agent then pulls the new `vendor/`, builds, tests and fixes.
+    - Then: convert `00001_init.sql` to a goose migration, replace `lib/pq` (`pq.Array`, `pq.Error`) with pgx, and set the Dockerfile's `GO_VERSION` to match the new `go` line in `go.mod`.
+  - **Deliberately not in M1:** splitting `internal/api` into `oidc`, `web`, `httpx` and `internalapi`. Those handlers are rewritten in the groups and JWT step, so the split happens there.
   - To run tests: start Postgres in the cloud workspace, unpack `backend/vendor/` there, and use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
+  - Postgres in the cloud workspace is killed between turns; restart it at the start of each command that needs it.
 - `docs/ARCHITECTURE.md` and `INTEGRATION.md` still describe the old introspection design (they are marked as outdated). They are rewritten during 0.1.
 
 ## Working conventions

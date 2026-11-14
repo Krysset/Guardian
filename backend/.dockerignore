@@ -5,6 +5,9 @@
 # Offline copy of dependencies; the image downloads and verifies them itself.
 vendor/
 # Not needed to build.
-.github/
 *_test.go
+e2e/
 internal/testutil/
+# Locally built binaries.
+guardian
+guardian.exe
