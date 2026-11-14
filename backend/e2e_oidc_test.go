@@ -365,12 +365,16 @@ func TestE2EAuthorizeRequestValidation(t *testing.T) {
 
 	// problems with client_id / redirect_uri are shown to the user and NEVER redirected to
 	unredirectable := map[string]url.Values{
-		"unknown client":             func() url.Values { v := good().values(); v.Set("client_id", "11111111-1111-1111-1111-111111111111"); return v }(),
-		"malformed client":           func() url.Values { v := good().values(); v.Set("client_id", "nope"); return v }(),
-		"unregistered redirect":      authParams{app: app, state: "s", challenge: challenge, redirect: "https://evil.example/cb"}.values(),
-		"redirect with extra path":   authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback/x"}.values(),
-		"redirect with query":        authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback?x=1"}.values(),
-		"redirect with other case":   authParams{app: app, state: "s", challenge: challenge, redirect: "https://BILLING.test/callback"}.values(),
+		"unknown client": func() url.Values {
+			v := good().values()
+			v.Set("client_id", "11111111-1111-1111-1111-111111111111")
+			return v
+		}(),
+		"malformed client":         func() url.Values { v := good().values(); v.Set("client_id", "nope"); return v }(),
+		"unregistered redirect":    authParams{app: app, state: "s", challenge: challenge, redirect: "https://evil.example/cb"}.values(),
+		"redirect with extra path": authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback/x"}.values(),
+		"redirect with query":      authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback?x=1"}.values(),
+		"redirect with other case": authParams{app: app, state: "s", challenge: challenge, redirect: "https://BILLING.test/callback"}.values(),
 	}
 	for name, v := range unredirectable {
 		resp := b.get("/authorize?" + v.Encode())

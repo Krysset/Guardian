@@ -114,7 +114,10 @@ func TestE2EAccessAPIRequiresThePermissionsManagePermission(t *testing.T) {
 		wantStatus(t, r, 200)
 		drain(r)
 	}
-	for _, c := range []struct{ b *browser; want int }{{anon, 401}, {plain, 403}} {
+	for _, c := range []struct {
+		b    *browser
+		want int
+	}{{anon, 401}, {plain, 403}} {
 		r := c.b.postJSON("/api/access/grant-role", map[string]any{"account_id": adminRole, "role_id": adminRole})
 		wantStatus(t, r, c.want)
 		drain(r)

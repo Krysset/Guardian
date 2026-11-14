@@ -170,9 +170,9 @@ func SaveAccessToken(tokenHash, appID, accountID, sessionID string, scopes []str
 // TokenInfo is what introspection knows about a live access token.
 type TokenInfo struct {
 	AccountID   string
-	AppID       string          // app the token was issued to
-	ClientID    string          // ...and its client_id
-	SessionID   string          // "" if none
+	AppID       string // app the token was issued to
+	ClientID    string // ...and its client_id
+	SessionID   string // "" if none
 	Scopes      []string
 	IssuedAt    time.Time
 	ExpiresAt   time.Time

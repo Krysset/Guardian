@@ -42,6 +42,7 @@ func readyz(w http.ResponseWriter, r *http.Request) {
 // and gets, for the presented user access token:
 //   - whether it is active RIGHT NOW (token live, account active, session not revoked, app enabled), and
 //   - the permissions (and attributes of direct grants) the user holds in the CALLER's own app.
+//
 // Everything is read from Postgres on every call, so revoking a permission, logging out or disabling an
 // account is visible to the very next call. Callers must therefore not cache the answer.
 func introspect(w http.ResponseWriter, r *http.Request) {

@@ -42,7 +42,7 @@ type addAppRequest struct {
 	BackchannelLogoutURI   string   `json:"backchannel_logout_uri"`
 	IsFirstParty           bool     `json:"is_first_party"`
 	AccessTokenTTLSeconds  int      `json:"access_token_ttl_seconds"` // optional, 60-86400, default 900
-	Scopes                 []string `json:"scopes"` // defaults to openid, profile, email
+	Scopes                 []string `json:"scopes"`                   // defaults to openid, profile, email
 }
 
 func addApp(w http.ResponseWriter, r *http.Request) {

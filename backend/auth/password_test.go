@@ -49,21 +49,21 @@ func TestVerifyPasswordRejectsMalformedHashes(t *testing.T) {
 		return strings.Join(cp, "$")
 	}
 	cases := map[string]string{
-		"empty":                "",
-		"plaintext":            "pw",
-		"bcrypt":               "$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
-		"truncated":            "$argon2id$v=19$m=65536,t=2,p=2$",
-		"wrong algorithm":      strings.Replace(valid, "argon2id", "argon2i", 1),
-		"wrong version":        strings.Replace(valid, "v=19", "v=16", 1),
-		"memory bomb":          withParams("m=4194304,t=2,p=2"),
-		"iteration bomb":       withParams("m=65536,t=1000,p=2"),
-		"zero threads":         withParams("m=65536,t=2,p=0"),
-		"zero memory":          withParams("m=0,t=2,p=2"),
-		"garbage params":       withParams("nonsense"),
-		"bad salt base64":      strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", "!!!", parts[5]}, "$"),
-		"bad key base64":       strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", parts[4], "!!!"}, "$"),
-		"key too short":        strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", parts[4], "AAAA"}, "$"),
-		"extra fields":         valid + "$extra",
+		"empty":           "",
+		"plaintext":       "pw",
+		"bcrypt":          "$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+		"truncated":       "$argon2id$v=19$m=65536,t=2,p=2$",
+		"wrong algorithm": strings.Replace(valid, "argon2id", "argon2i", 1),
+		"wrong version":   strings.Replace(valid, "v=19", "v=16", 1),
+		"memory bomb":     withParams("m=4194304,t=2,p=2"),
+		"iteration bomb":  withParams("m=65536,t=1000,p=2"),
+		"zero threads":    withParams("m=65536,t=2,p=0"),
+		"zero memory":     withParams("m=0,t=2,p=2"),
+		"garbage params":  withParams("nonsense"),
+		"bad salt base64": strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", "!!!", parts[5]}, "$"),
+		"bad key base64":  strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", parts[4], "!!!"}, "$"),
+		"key too short":   strings.Join([]string{"", "argon2id", "v=19", "m=65536,t=2,p=2", parts[4], "AAAA"}, "$"),
+		"extra fields":    valid + "$extra",
 	}
 	for name, h := range cases {
 		if VerifyPassword("pw", h) {

@@ -129,8 +129,8 @@ func TestIntrospectRejectsUnauthenticatedCallers(t *testing.T) {
 	}
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"no credentials":       post("", ""),
-		"malformed client id":  post("not-a-uuid", "secret"),
+		"no credentials":      post("", ""),
+		"malformed client id": post("not-a-uuid", "secret"),
 	} {
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s: status %d, want 401", name, rec.Code)
@@ -222,19 +222,19 @@ func TestAddAppValidation(t *testing.T) {
 		return string(b)
 	}
 	cases := map[string]string{
-		"invalid json":              `{`,
-		"unknown client type":       with("client_type", "weird"),
-		"uppercase name":            with("name", "Billing"),
-		"name with space":           with("name", "my app"),
-		"name too short":            with("name", "a"),
-		"missing pretty name":       with("pretty_name", ""),
-		"no redirect uris":          with("redirect_uris", []string{}),
+		"invalid json":                `{`,
+		"unknown client type":         with("client_type", "weird"),
+		"uppercase name":              with("name", "Billing"),
+		"name with space":             with("name", "my app"),
+		"name too short":              with("name", "a"),
+		"missing pretty name":         with("pretty_name", ""),
+		"no redirect uris":            with("redirect_uris", []string{}),
 		"http redirect off-localhost": with("redirect_uris", []string{"http://billing.test/cb"}),
-		"redirect with fragment":    with("redirect_uris", []string{"https://billing.test/cb#x"}),
-		"bad post-logout uri":       with("post_logout_redirect_uris", []string{"ftp://x/y"}),
-		"bad back-channel uri":      with("backchannel_logout_uri", "http://billing.test/bcl"),
-		"ttl too small":             with("access_token_ttl_seconds", 59),
-		"ttl too large":             with("access_token_ttl_seconds", 86401),
+		"redirect with fragment":      with("redirect_uris", []string{"https://billing.test/cb#x"}),
+		"bad post-logout uri":         with("post_logout_redirect_uris", []string{"ftp://x/y"}),
+		"bad back-channel uri":        with("backchannel_logout_uri", "http://billing.test/bcl"),
+		"ttl too small":               with("access_token_ttl_seconds", 59),
+		"ttl too large":               with("access_token_ttl_seconds", 86401),
 	}
 	for name, body := range cases {
 		if rec := call(addApp, jsonReq("POST", "/add", body)); rec.Code != http.StatusBadRequest {

@@ -320,7 +320,9 @@ func TestIntrospectionValidityRules(t *testing.T) {
 		active bool
 	}{
 		{"valid", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string { return token }, true},
-		{"unknown token", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string { return "not-a-token" }, false},
+		{"unknown token", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
+			return "not-a-token"
+		}, false},
 		{"token without session is valid", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
 			return testutil.Token(t, app, acct.ID, "", time.Hour)
 		}, true},

@@ -59,10 +59,10 @@ func TestDecryptFailsWithWrongKeyOrTampering(t *testing.T) {
 
 func TestEncryptionKeyValidation(t *testing.T) {
 	cases := map[string]string{
-		"missing":      "",
-		"not base64":   "%%%",
-		"16 bytes":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 16)),
-		"64 bytes":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 64)),
+		"missing":    "",
+		"not base64": "%%%",
+		"16 bytes":   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 16)),
+		"64 bytes":   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 64)),
 	}
 	for name, v := range cases {
 		t.Setenv("KEY_ENCRYPTION_KEY", v)

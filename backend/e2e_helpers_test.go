@@ -217,9 +217,9 @@ func newPKCE(t *testing.T) (verifier, challenge string) {
 }
 
 type authParams struct {
-	app                                    db.App
+	app                                      db.App
 	scope, state, nonce, challenge, redirect string
-	extra                                  url.Values
+	extra                                    url.Values
 }
 
 func (p authParams) values() url.Values {

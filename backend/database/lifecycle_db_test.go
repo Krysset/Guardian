@@ -620,14 +620,14 @@ func TestConsentAndScopeClaims(t *testing.T) {
 func TestSchemaSeedsAndStructure(t *testing.T) {
 	testutil.Reset(t)
 	checks := map[string]int{
-		`SELECT count(*) FROM scope WHERE app_id IS NULL`:                                                   5,
-		`SELECT count(*) FROM app WHERE name = 'guardian' AND is_first_party`:                                1,
-		`SELECT count(*) FROM app_permission p JOIN app a ON a.id = p.app_id WHERE a.name = 'guardian'`:      4,
-		`SELECT count(*) FROM app_scope s JOIN app a ON a.id = s.app_id WHERE a.name = 'guardian'`:           5,
-		`SELECT count(*) FROM role WHERE name = 'admin' AND all_permissions AND is_system`:                   1,
-		`SELECT count(*) FROM account WHERE username = 'admin'`:                                              1,
-		`SELECT count(*) FROM pg_views WHERE viewname = 'account_effective_permission'`:                      1,
-		`SELECT count(*) FROM pg_class WHERE relname = 'rate_limit' AND relpersistence = 'u'`:                1,
+		`SELECT count(*) FROM scope WHERE app_id IS NULL`:                                               5,
+		`SELECT count(*) FROM app WHERE name = 'guardian' AND is_first_party`:                           1,
+		`SELECT count(*) FROM app_permission p JOIN app a ON a.id = p.app_id WHERE a.name = 'guardian'`: 4,
+		`SELECT count(*) FROM app_scope s JOIN app a ON a.id = s.app_id WHERE a.name = 'guardian'`:      5,
+		`SELECT count(*) FROM role WHERE name = 'admin' AND all_permissions AND is_system`:              1,
+		`SELECT count(*) FROM account WHERE username = 'admin'`:                                         1,
+		`SELECT count(*) FROM pg_views WHERE viewname = 'account_effective_permission'`:                 1,
+		`SELECT count(*) FROM pg_class WHERE relname = 'rate_limit' AND relpersistence = 'u'`:           1,
 	}
 	for q, want := range checks {
 		if got := testutil.Count(t, q); got != want {
