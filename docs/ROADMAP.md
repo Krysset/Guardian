@@ -61,6 +61,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - There is no break-glass command. Recovery for a locked-out sole admin is a documented SQL statement, run by someone with database access.
   - The console warns when there is only one admin. MFA setup makes the user confirm a recovery code before it finishes.
 - **Apps only see the groups linked to them** (`app_group`).
+- **Tables:** `user_group` ("group" is a reserved word in SQL), `group_member` and `app_group`.
 - **Per-app access rule:**
   - **"Members of linked groups only"** is the default. Guardian refuses everyone else at sign-in with a clear message, and no code is issued.
   - **"Anyone with an account"** is the alternative.
@@ -239,7 +240,8 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
   - Part 2: goose migrations and the pgx driver, plus a `guardian migrate` command.
   - The split of `internal/api` into `oidc`, `web`, `httpx` and `internalapi` happens in the groups and JWT step below, where those handlers are rewritten.
 - **Groups and JWT:**
-  - Rewrite `00001_init.sql`: groups with keys, `app_group`, group owners, the per-app access rule and require-MFA flag, key stages, keyring tags, the deletion log; no phone or birthdate.
+  - **Done 2026-11-14:** groups with keys (`user_group`, `group_member`, `app_group`), group owners, the per-app access rule enforced at sign-in, the last-administrator rule, and `/api/groups`.
+  - Still to come in `00001_init.sql`, each with its feature: the require-MFA flag, key stages, keyring tags and the deletion log; and the removal of phone and birthdate.
   - Lean JWT access tokens, the `groups` scope, refresh re-checks with stable refresh tokens for confidential apps, and session idle and absolute timeouts.
   - `client_credentials` and the machine API.
   - Remove `/introspect`.

@@ -15,7 +15,8 @@ func IsUUID(s string) bool { return uuidRe.MatchString(s) }
 const appColumns = `id, name, pretty_name, description, COALESCE(logo_url, ''), COALESCE(homepage_url, ''),
 	client_id, client_type, token_endpoint_auth_method, grant_types, redirect_uris, post_logout_redirect_uris,
 	COALESCE(backchannel_logout_uri, ''), require_pkce, is_first_party, access_token_ttl_seconds, refresh_token_ttl_seconds, enabled,
-	ARRAY(SELECT scope_name FROM app_scope WHERE app_scope.app_id = app.id ORDER BY scope_name)`
+	ARRAY(SELECT scope_name FROM app_scope WHERE app_scope.app_id = app.id ORDER BY scope_name),
+	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1)`
 
 func scanApp(s scanner) (App, error) {
 	var a App
@@ -23,11 +24,12 @@ func scanApp(s scanner) (App, error) {
 		&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
 		scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
 		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshTokenTTL, &a.Enabled,
-		scanArray(&a.Scopes))
+		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs))
 	return a, err
 }
 
-// AddApp creates an app, its first secret (if secretHash != "") and its allowed scopes.
+// AddApp creates an app, its first secret (if secretHash != ""), its allowed scopes and its linked groups.
+// An empty a.AccessRule means "groups": nobody may sign in until a group is linked or the rule is changed.
 func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
@@ -42,12 +44,13 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	var id string
 	err = tx.QueryRow(
 		`INSERT INTO app (name, pretty_name, description, logo_url, homepage_url, client_type, token_endpoint_auth_method,
-			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds)
-		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 900))
+			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds, access_rule)
+		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 900),
+		         COALESCE(NULLIF($13, ''), 'groups'))
 		 RETURNING id`,
 		a.Name, a.PrettyName, a.Description, a.LogoURL, a.HomepageURL, a.ClientType, authMethod,
 		strArray(a.RedirectURIs), strArray(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
-		a.AccessTokenTTL).Scan(&id)
+		a.AccessTokenTTL, a.AccessRule).Scan(&id)
 	if err != nil {
 		slog.Error("failed to create an app", "app", a.Name, "error", err)
 		return App{}, err
@@ -60,6 +63,9 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	if _, err := tx.Exec(
 		`INSERT INTO app_scope (app_id, scope_name) SELECT $1::uuid, name FROM scope
 		 WHERE name = ANY($2) AND (app_id IS NULL OR app_id = $1::uuid)`, id, strArray(scopes)); err != nil {
+		return App{}, err
+	}
+	if err := linkAppGroups(tx, id, a.GroupIDs); err != nil {
 		return App{}, err
 	}
 	if err := tx.Commit(); err != nil {

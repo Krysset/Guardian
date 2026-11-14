@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -167,32 +166,28 @@ func SaveAccessToken(tokenHash, appID, accountID, sessionID string, scopes []str
 
 // TokenInfo is what introspection knows about a live access token.
 type TokenInfo struct {
-	AccountID   string
-	AppID       string // app the token was issued to
-	ClientID    string // ...and its client_id
-	SessionID   string // "" if none
-	Scopes      []string
-	IssuedAt    time.Time
-	ExpiresAt   time.Time
-	Permissions []string        // what the account holds in callerAppID, computed NOW
-	Attributes  json.RawMessage // per-permission attributes of direct grants in callerAppID ({} if none)
+	AccountID string
+	AppID     string // app the token was issued to
+	ClientID  string // ...and its client_id
+	SessionID string // "" if none
+	Scopes    []string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+	Groups    []string // the account's groups that are linked to callerAppID, computed NOW
 }
 
-// IntrospectAccessToken answers "is this token valid right now, and what may its user do in callerAppID?"
-// with ONE query against live data. The token is valid only while: not expired or revoked, its app is
-// enabled, its account is active, and its session (if any) is not revoked. callerAppID may be "" when
-// permissions are not needed. Returns sql.ErrNoRows for any invalid token.
+// IntrospectAccessToken answers "is this token valid right now, and which of callerAppID's groups is its
+// user in?" with ONE query against live data. The token is valid only while: not expired or revoked, its
+// app is enabled, its account is active, and its session (if any) is not revoked. callerAppID may be ""
+// when groups are not needed. Returns sql.ErrNoRows for any invalid token.
 func IntrospectAccessToken(tokenHash, callerAppID string) (TokenInfo, error) {
 	var ti TokenInfo
-	var attrs []byte
 	err := GetDatabaseConnection().QueryRow(
 		`SELECT t.account_id, t.app_id, a.client_id, COALESCE(t.session_id::text, ''), t.scopes, t.created_at, t.expires_at,
-		        ARRAY(SELECT e.name FROM account_effective_permission e
-		              WHERE e.account_id = t.account_id AND e.app_id = NULLIF($2, '')::uuid ORDER BY e.name),
-		        (SELECT COALESCE(jsonb_object_agg(p.name, g.attributes), '{}'::jsonb)
-		           FROM account_app_permission g JOIN app_permission p ON p.id = g.permission_id
-		          WHERE g.account_id = t.account_id AND p.app_id = NULLIF($2, '')::uuid
-		            AND g.attributes <> '{}'::jsonb AND (g.expires_at IS NULL OR g.expires_at > now()))
+		        ARRAY(SELECT g.key FROM group_member m
+		              JOIN user_group g ON g.id = m.group_id
+		              JOIN app_group ag ON ag.group_id = g.id AND ag.app_id = NULLIF($2, '')::uuid
+		              WHERE m.account_id = t.account_id AND `+activeMember+` ORDER BY g.key)
 		 FROM access_token t
 		 JOIN app a ON a.id = t.app_id AND a.enabled
 		 JOIN account acc ON acc.id = t.account_id AND acc.status = 'active' AND acc.deleted_at IS NULL
@@ -201,10 +196,9 @@ func IntrospectAccessToken(tokenHash, callerAppID string) (TokenInfo, error) {
 		   AND (t.session_id IS NULL OR s.revoked_at IS NULL)`,
 		tokenHash, callerAppID).
 		Scan(&ti.AccountID, &ti.AppID, &ti.ClientID, &ti.SessionID, scanArray(&ti.Scopes), &ti.IssuedAt, &ti.ExpiresAt,
-			scanArray(&ti.Permissions), &attrs)
+			scanArray(&ti.Groups))
 	if err != nil {
 		return TokenInfo{}, err
 	}
-	ti.Attributes = json.RawMessage(attrs)
 	return ti, nil
 }

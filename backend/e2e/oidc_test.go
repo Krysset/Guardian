@@ -57,9 +57,6 @@ func TestE2ELoginIssuesOpaqueAccessTokenAndVerifiableIDToken(t *testing.T) {
 	if authTime, _ := claims["auth_time"].(float64); time.Since(time.Unix(int64(authTime), 0)) > time.Minute {
 		t.Errorf("auth_time = %v", claims["auth_time"])
 	}
-	if _, leaked := claims["permissions"]; leaked {
-		t.Error("ID tokens must not carry permissions")
-	}
 
 	// userinfo honours the granted scopes and the response is not cacheable
 	status, info := userinfoStatus(t, tok.Access)

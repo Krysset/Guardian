@@ -360,9 +360,10 @@ func mustInactive(t *testing.T, caller db.App, secret, token string) {
 	}
 }
 
-func permList(m map[string]any) []string {
-	var out []string
-	if arr, ok := m["permissions"].([]any); ok {
+// groupList returns the "groups" claim of an introspection answer.
+func groupList(m map[string]any) []string {
+	out := []string{}
+	if arr, ok := m["groups"].([]any); ok {
 		for _, v := range arr {
 			out = append(out, str(v))
 		}

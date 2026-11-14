@@ -41,9 +41,9 @@ func readyz(w http.ResponseWriter, r *http.Request) {
 // introspect implements RFC 7662. The caller authenticates as one of the registered (confidential) apps
 // and gets, for the presented user access token:
 //   - whether it is active RIGHT NOW (token live, account active, session not revoked, app enabled), and
-//   - the permissions (and attributes of direct grants) the user holds in the CALLER's own app.
+//   - the groups the user is in, out of those linked to the CALLER's own app.
 //
-// Everything is read from Postgres on every call, so revoking a permission, logging out or disabling an
+// Everything is read from Postgres on every call, so removing a group member, logging out or disabling an
 // account is visible to the very next call. Callers must therefore not cache the answer.
 func introspect(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -77,24 +77,21 @@ func introspect(w http.ResponseWriter, r *http.Request) {
 	}
 	introspections.WithLabelValues("active").Inc()
 
-	if info.Permissions == nil {
-		info.Permissions = []string{}
+	if info.Groups == nil {
+		info.Groups = []string{}
 	}
 	resp := map[string]any{
-		"active":      true,
-		"sub":         info.AccountID,
-		"client_id":   info.ClientID, // the app the token was issued to (may differ from the caller)
-		"scope":       strings.Join(info.Scopes, " "),
-		"token_type":  "Bearer",
-		"iat":         info.IssuedAt.Unix(),
-		"exp":         info.ExpiresAt.Unix(),
-		"permissions": info.Permissions, // in the caller's app
+		"active":     true,
+		"sub":        info.AccountID,
+		"client_id":  info.ClientID, // the app the token was issued to (may differ from the caller)
+		"scope":      strings.Join(info.Scopes, " "),
+		"token_type": "Bearer",
+		"iat":        info.IssuedAt.Unix(),
+		"exp":        info.ExpiresAt.Unix(),
+		"groups":     info.Groups, // only groups linked to the caller's app
 	}
 	if info.SessionID != "" {
 		resp["sid"] = info.SessionID // matches the sid in back-channel logout tokens
-	}
-	if len(info.Attributes) > 0 && string(info.Attributes) != "{}" {
-		resp["attributes"] = info.Attributes // permission name -> app-defined JSON
 	}
 	RespondWithJSON(w, http.StatusOK, resp)
 }

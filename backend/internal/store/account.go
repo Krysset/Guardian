@@ -99,17 +99,35 @@ func TouchLogin(id string) {
 
 // SoftDeleteAccount disables the account and ends all its sessions and refresh tokens, in one
 // transaction. Access tokens stop being valid on their own: introspection requires an active account
-// and a non-revoked session.
+// and a non-revoked session. It refuses to delete the last administrator (ErrLastAdmin).
 func SoftDeleteAccount(id string) error {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	adminGroupID, err := lockAdminGroup(tx)
+	if err != nil {
+		return err
+	}
+	var isAdmin bool
+	if err := tx.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM group_member WHERE group_id = $1 AND account_id = $2)`, adminGroupID, id).Scan(&isAdmin); err != nil {
+		return err
+	}
+	if isAdmin {
+		if n, err := otherPermanentAdmins(tx, adminGroupID, id); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrLastAdmin
+		}
+	}
 	stmts := []string{
 		`UPDATE account SET deleted_at = now(), status = 'disabled' WHERE id = $1 AND deleted_at IS NULL`,
 		`UPDATE session SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL`,
 		`UPDATE refresh_token SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL`,
+		// A deleted account must not keep counting as a group member, for example as an administrator.
+		`DELETE FROM group_member WHERE account_id = $1`,
 	}
 	for _, q := range stmts {
 		if _, err := tx.Exec(q, id); err != nil {

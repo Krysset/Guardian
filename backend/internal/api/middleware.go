@@ -100,10 +100,15 @@ func Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// OnlyAdmin requires the built-in "admin" role.
-func OnlyAdmin(next http.Handler) http.Handler {
-	return Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, err := db.AccountHasRole(accountID(r), "admin")
+// RequireAdmin requires a signed-in member of the built-in guardian-admins group.
+func RequireAdmin(next http.Handler) http.Handler {
+	return Authenticate(requireAdmin(next))
+}
+
+// requireAdmin is RequireAdmin for routes that Authenticate already protects.
+func requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ok, err := db.IsAdmin(accountID(r))
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
@@ -113,25 +118,7 @@ func OnlyAdmin(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
-	}))
-}
-
-// RequirePermission requires one specific permission in one app, e.g. RequirePermission("guardian", "apps.manage").
-func RequirePermission(appName, permission string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ok, err := db.AccountHasPermission(accountID(r), appName, permission)
-			if err != nil {
-				RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
-				return
-			}
-			if !ok {
-				RespondWithError(w, http.StatusForbidden, "Forbidden")
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-	}
+	})
 }
 
 // RequireSameOrigin blocks cross-site browser requests to the JSON API (CSRF defence, together with the

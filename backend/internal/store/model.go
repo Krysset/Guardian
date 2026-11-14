@@ -41,6 +41,8 @@ type App struct {
 	AccessTokenTTL          int      `json:"access_token_ttl_seconds"`
 	RefreshTokenTTL         int      `json:"refresh_token_ttl_seconds"`
 	Enabled                 bool     `json:"enabled"`
+	AccessRule              string   `json:"access_rule"`      // "groups" (only members of linked groups may sign in) or "anyone"
+	GroupIDs                []string `json:"group_ids"`        // groups linked to the app
 	Scopes                  []string `json:"scopes,omitempty"` // scopes the app may request (filled by GetAppByClientID)
 }
 

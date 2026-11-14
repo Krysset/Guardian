@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -520,7 +521,7 @@ func TestAppRegistrationDefaults(t *testing.T) {
 		t.Errorf("unknown client id: %v", err)
 	}
 	apps, err := db.GetApps()
-	if err != nil || len(apps) < 4 { // guardian + three above
+	if err != nil || len(apps) != 3 { // the three created above; Guardian seeds no app of its own
 		t.Fatalf("GetApps = %d apps, %v", len(apps), err)
 	}
 }
@@ -620,14 +621,16 @@ func TestConsentAndScopeClaims(t *testing.T) {
 func TestSchemaSeedsAndStructure(t *testing.T) {
 	testutil.Reset(t)
 	checks := map[string]int{
-		`SELECT count(*) FROM scope WHERE app_id IS NULL`:                                               5,
-		`SELECT count(*) FROM app WHERE name = 'guardian' AND is_first_party`:                           1,
-		`SELECT count(*) FROM app_permission p JOIN app a ON a.id = p.app_id WHERE a.name = 'guardian'`: 4,
-		`SELECT count(*) FROM app_scope s JOIN app a ON a.id = s.app_id WHERE a.name = 'guardian'`:      5,
-		`SELECT count(*) FROM role WHERE name = 'admin' AND all_permissions AND is_system`:              1,
-		`SELECT count(*) FROM account WHERE username = 'admin'`:                                         1,
-		`SELECT count(*) FROM pg_views WHERE viewname = 'account_effective_permission'`:                 1,
-		`SELECT count(*) FROM pg_class WHERE relname = 'rate_limit' AND relpersistence = 'u'`:           1,
+		`SELECT count(*) FROM scope WHERE app_id IS NULL`:                                     5,
+		`SELECT count(*) FROM app`:                                                            0,
+		`SELECT count(*) FROM user_group`:                                                     1,
+		`SELECT count(*) FROM user_group WHERE key = 'guardian-admins' AND is_system`:         1,
+		`SELECT count(*) FROM account WHERE username = 'admin'`:                               1,
+		`SELECT count(*) FROM group_member`:                                                   1,
+		`SELECT count(*) FROM pg_class WHERE relname = 'rate_limit' AND relpersistence = 'u'`: 1,
+		// the permission model that groups replaced is gone
+		`SELECT count(*) FROM pg_class WHERE relname IN ('role', 'app_permission', 'role_permission',
+		   'account_role', 'account_app_permission', 'account_effective_permission')`: 0,
 	}
 	for q, want := range checks {
 		if got := testutil.Count(t, q); got != want {
@@ -635,18 +638,16 @@ func TestSchemaSeedsAndStructure(t *testing.T) {
 		}
 	}
 	admin, _, _ := db.GetAccountByUsername("admin")
-	if ok, _ := db.AccountHasRole(admin.ID, "admin"); !ok {
-		t.Error("seeded admin does not hold the admin role")
-	}
-	if ok, _ := db.AccountHasPermission(admin.ID, "guardian", "permissions.manage"); !ok {
-		t.Error("seeded admin cannot manage permissions")
+	if ok, _ := db.IsAdmin(admin.ID); !ok {
+		t.Error("the seeded admin is not a member of the administrators group")
 	}
 }
 
 func TestSchemaScriptIsIdempotentAndNeverOverwrites(t *testing.T) {
 	testutil.Reset(t)
 	count := func(q string) int { return testutil.Count(t, q) }
-	tables := []string{"role", "app", "account", "scope", "app_permission", "app_scope", "account_role"}
+	testutil.CreateApp(t, "billing", testutil.AppOptions{})
+	tables := []string{"user_group", "group_member", "app", "account", "scope", "app_scope"}
 	before := map[string]int{}
 	for _, tbl := range tables {
 		before[tbl] = count(`SELECT count(*) FROM ` + tbl)
@@ -661,17 +662,17 @@ func TestSchemaScriptIsIdempotentAndNeverOverwrites(t *testing.T) {
 
 	// admin edits and deletions survive a restart: seeds only run into EMPTY tables
 	testutil.Exec(t, `UPDATE account SET display_name = 'Changed' WHERE username = 'admin'`)
-	testutil.Exec(t, `DELETE FROM account_role`)
-	testutil.Exec(t, `UPDATE app SET pretty_name = 'Renamed' WHERE name = 'guardian'`)
+	testutil.Exec(t, `DELETE FROM group_member`)
+	testutil.Exec(t, `UPDATE user_group SET description = 'Edited' WHERE key = 'guardian-admins'`)
 	testutil.RunSchema(t)
 	if n := count(`SELECT count(*) FROM account WHERE display_name = 'Changed'`); n != 1 {
 		t.Error("account edit was overwritten by the seed")
 	}
-	if n := count(`SELECT count(*) FROM account_role`); n != 0 {
-		t.Error("a deleted grant was re-created by the seed")
+	if n := count(`SELECT count(*) FROM group_member`); n != 0 {
+		t.Error("a deleted membership was re-created by the seed")
 	}
-	if n := count(`SELECT count(*) FROM app WHERE pretty_name = 'Renamed'`); n != 1 {
-		t.Error("app edit was overwritten by the seed")
+	if n := count(`SELECT count(*) FROM user_group WHERE description = 'Edited'`); n != 1 {
+		t.Error("group edit was overwritten by the seed")
 	}
 }
 
@@ -694,8 +695,8 @@ func TestSchemaScriptSurvivesConcurrentStartups(t *testing.T) {
 			t.Errorf("concurrent schema run failed: %v", err)
 		}
 	}
-	if n := testutil.Count(t, `SELECT count(*) FROM role WHERE name = 'admin'`); n != 1 {
-		t.Errorf("admin role count = %d", n)
+	if n := testutil.Count(t, `SELECT count(*) FROM user_group WHERE key = 'guardian-admins'`); n != 1 {
+		t.Errorf("administrators group count = %d", n)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM account WHERE username = 'admin'`); n != 1 {
 		t.Errorf("admin account count = %d", n)
@@ -837,5 +838,45 @@ func TestMigrateSurvivesConcurrentStartups(t *testing.T) {
 	}
 	if n := testutil.Count(t, migrationOneRecords); n != 1 {
 		t.Errorf("migration 1 was applied %d times by %d replicas starting together, want 1", n, replicas)
+	}
+}
+
+func TestADatabaseFromAnotherSchemaRevisionIsRefused(t *testing.T) {
+	testutil.RequireTestDB(t)
+	ctx := context.Background()
+	conn := db.GetDatabaseConnection()
+	if err := db.VerifySchemaRevision(ctx, conn); err != nil {
+		t.Fatalf("a database created by this version must be accepted: %v", err)
+	}
+	original := ""
+	if err := conn.QueryRow(`SELECT fingerprint FROM schema_revision`).Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	restore := func() {
+		testutil.Exec(t, `DELETE FROM schema_revision`)
+		testutil.Exec(t, `INSERT INTO schema_revision (fingerprint) VALUES ($1)`, original)
+	}
+	t.Cleanup(restore)
+
+	// created by another revision of the first migration
+	testutil.Exec(t, `UPDATE schema_revision SET fingerprint = 'an-older-revision'`)
+	err := db.VerifySchemaRevision(ctx, conn)
+	if !errors.Is(err, db.ErrSchemaRevision) {
+		t.Fatalf("another revision: %v, want ErrSchemaRevision", err)
+	}
+	for _, want := range []string{"an-older-revision", "recreate", "docker compose down -v"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error must say what to do, missing %q in: %v", want, err)
+		}
+	}
+
+	// created before revisions were recorded: running the script again must not mark it as current
+	testutil.Exec(t, `DELETE FROM schema_revision`)
+	testutil.RunSchema(t)
+	if err := db.VerifySchemaRevision(ctx, conn); !errors.Is(err, db.ErrSchemaRevision) {
+		t.Errorf("a database without a recorded revision: %v, want ErrSchemaRevision", err)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM schema_revision`); n != 0 {
+		t.Error("re-running the script on an existing database recorded a revision")
 	}
 }

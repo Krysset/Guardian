@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -18,7 +19,7 @@ func GetAccountSubrouter() *chi.Mux {
 	r := chi.NewRouter()
 	r.Post("/register", registerPublic) // open sign-up, rate limited per IP
 	r.Group(func(r chi.Router) {
-		r.Use(OnlyAdmin)
+		r.Use(RequireAdmin)
 		r.Post("/delete", deleteAccount)
 		r.Post("/add", register)
 	})
@@ -116,6 +117,10 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := db.SoftDeleteAccount(req.ID); err != nil {
+		if errors.Is(err, db.ErrLastAdmin) {
+			RespondWithError(w, http.StatusConflict, "Guardian must keep at least one active administrator whose membership does not expire")
+			return
+		}
 		RespondWithError(w, http.StatusBadRequest, "Failed to delete user")
 		return
 	}

@@ -1,10 +1,11 @@
 -- =============================================================================
--- Guardian: account service with OIDC provider + per-app permissions
+-- Guardian: account service with OIDC provider + groups
 -- Target: PostgreSQL 13+ (gen_random_uuid() is built in)
 --
 -- This is migration 1. goose runs it once per database, inside a transaction, and records it in
 -- goose_db_version. Until Guardian 1.0 this file is still edited in place: a database that already ran
--- it does not pick up later edits, so recreate development databases after a schema change.
+-- it does not pick up later edits, so recreate development databases after a schema change. Guardian
+-- notices the difference at startup and says so (see SCHEMA REVISION below).
 --
 -- Rules:
 --   * Only creates what is missing (IF NOT EXISTS). Never ALTERs or DROPs. That keeps it safe on a
@@ -20,6 +21,22 @@
 -- +goose Up
 -- +goose StatementBegin
 SELECT pg_advisory_xact_lock(727274);   -- arbitrary constant, released when the transaction ends
+
+-- -----------------------------------------------------------------------------
+-- SCHEMA REVISION
+-- Remembers which revision of this file created the database. Guardian fills in the placeholder below
+-- before it runs the script, and at every start compares the stored value with the file it ships with.
+-- A database made by another revision is refused with an explanation, instead of failing on a missing
+-- table later. The row is only written into a database that has no Guardian tables yet, so running the
+-- script again on an existing database can never mark it as current.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS schema_revision (
+	fingerprint  TEXT NOT NULL,
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO schema_revision (fingerprint)
+SELECT '@@INIT_FINGERPRINT@@'
+WHERE to_regclass('account') IS NULL AND NOT EXISTS (SELECT 1 FROM schema_revision);
 
 -- -----------------------------------------------------------------------------
 -- ACCOUNTS
@@ -91,6 +108,10 @@ CREATE TABLE IF NOT EXISTS app (
 	access_token_ttl_seconds    INT NOT NULL DEFAULT 900,
 	refresh_token_ttl_seconds   INT NOT NULL DEFAULT 2592000,
 	enabled                     BOOLEAN NOT NULL DEFAULT TRUE,
+	-- Who may sign in to this app. 'groups': only members of a group linked to it (app_group).
+	-- 'anyone': every account. The default denies, so a new app is closed until it is opened on purpose.
+	access_rule                 TEXT NOT NULL DEFAULT 'groups'
+	                            CHECK (access_rule IN ('groups', 'anyone')),
 	created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -119,7 +140,7 @@ CREATE TABLE IF NOT EXISTS scope (
 	claims       TEXT[] NOT NULL DEFAULT '{}'
 );
 
--- Which scopes each app is *allowed* to request (replaces old app_permission semantics)
+-- Which scopes each app is *allowed* to request
 CREATE TABLE IF NOT EXISTS app_scope (
 	app_id      UUID NOT NULL REFERENCES app(id)    ON DELETE CASCADE,
 	scope_name  TEXT NOT NULL REFERENCES scope(name) ON DELETE CASCADE,
@@ -137,60 +158,42 @@ CREATE TABLE IF NOT EXISTS account_consent (
 );
 
 -- -----------------------------------------------------------------------------
--- AUTHORIZATION: per-app permissions, cross-app roles, and per-account grants
--- Permission names are opaque to Guardian; the app decides what they mean.
--- `attributes` on a grant carries app-specific parameters (limits, resource ids, ...).
+-- GROUPS
+-- Guardian knows which groups an account is in; each app decides what a group means.
+-- Groups are flat (no groups inside groups). "group" is a reserved word, hence user_group.
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS app_permission (
-	id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	app_id       UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
-	name         TEXT NOT NULL,                 -- e.g. 'invoices.approve'
-	pretty_name  TEXT NOT NULL,
-	description  TEXT NOT NULL,
-	UNIQUE (app_id, name)
+CREATE TABLE IF NOT EXISTS user_group (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	key             TEXT NOT NULL UNIQUE,          -- immutable; the value apps see in the "groups" claim
+	display_name    TEXT NOT NULL,                 -- editable
+	description     TEXT NOT NULL DEFAULT '',
+	is_system       BOOLEAN NOT NULL DEFAULT FALSE, -- built-in: cannot be deleted, renamed or given an owner
+	-- Members of the owner group may add and remove members of this group. One level only.
+	owner_group_id  UUID REFERENCES user_group(id) ON DELETE SET NULL,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	CHECK (owner_group_id IS DISTINCT FROM id)
 );
+CREATE INDEX IF NOT EXISTS ix_user_group_owner ON user_group (owner_group_id);
 
--- Roles: named, reassignable sets of permissions. A role is NOT tied to one app;
--- it can bundle permissions from any number of apps (e.g. 'support' = read access
--- in app A + refund permission in app B).
--- all_permissions = catchall: the role implicitly holds EVERY permission of EVERY
--- app, including apps/permissions created later, with no role_permission rows needed.
-CREATE TABLE IF NOT EXISTS role (
-	id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	name             TEXT NOT NULL UNIQUE,
-	pretty_name      TEXT NOT NULL,
-	description      TEXT NOT NULL,
-	all_permissions  BOOLEAN NOT NULL DEFAULT FALSE,
-	is_system        BOOLEAN NOT NULL DEFAULT FALSE,    -- built-in; the app should refuse to delete/rename it
-	created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS role_permission (
-	role_id        UUID NOT NULL REFERENCES role(id)           ON DELETE CASCADE,
-	permission_id  UUID NOT NULL REFERENCES app_permission(id) ON DELETE CASCADE,
-	PRIMARY KEY (role_id, permission_id)
-);
-
-CREATE TABLE IF NOT EXISTS account_role (
-	account_id  UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-	role_id     UUID NOT NULL REFERENCES role(id)    ON DELETE CASCADE,
-	granted_by  UUID REFERENCES account(id) ON DELETE SET NULL,
-	granted_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+-- Membership. A row with expires_at in the past no longer counts.
+CREATE TABLE IF NOT EXISTS group_member (
+	group_id    UUID NOT NULL REFERENCES user_group(id) ON DELETE CASCADE,
+	account_id  UUID NOT NULL REFERENCES account(id)    ON DELETE CASCADE,
+	added_by    UUID REFERENCES account(id) ON DELETE SET NULL,
+	added_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	expires_at  TIMESTAMPTZ,
-	PRIMARY KEY (account_id, role_id)
+	PRIMARY KEY (group_id, account_id)
 );
-CREATE INDEX IF NOT EXISTS ix_role_permission_perm ON role_permission (permission_id);
+CREATE INDEX IF NOT EXISTS ix_group_member_account ON group_member (account_id);
 
--- Direct grants (for one-off permissions that don't belong in a role)
-CREATE TABLE IF NOT EXISTS account_app_permission (
-	account_id     UUID NOT NULL REFERENCES account(id)        ON DELETE CASCADE,
-	permission_id  UUID NOT NULL REFERENCES app_permission(id) ON DELETE CASCADE,
-	attributes     JSONB NOT NULL DEFAULT '{}',
-	granted_by     UUID REFERENCES account(id) ON DELETE SET NULL,
-	granted_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	expires_at     TIMESTAMPTZ,
-	PRIMARY KEY (account_id, permission_id)
+-- Which groups an app is told about. An app only ever sees the groups linked to it, and with
+-- access_rule = 'groups' only their members may sign in to it.
+CREATE TABLE IF NOT EXISTS app_group (
+	app_id    UUID NOT NULL REFERENCES app(id)        ON DELETE CASCADE,
+	group_id  UUID NOT NULL REFERENCES user_group(id) ON DELETE CASCADE,
+	PRIMARY KEY (app_id, group_id)
 );
+CREATE INDEX IF NOT EXISTS ix_app_group_group ON app_group (group_id);
 
 -- -----------------------------------------------------------------------------
 -- SESSIONS & OIDC TOKEN STATE
@@ -328,7 +331,7 @@ CREATE INDEX IF NOT EXISTS ix_account_mfa_account ON account_mfa (account_id);
 CREATE TABLE IF NOT EXISTS audit_log (
 	id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	occurred_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	event_type        TEXT NOT NULL,                    -- 'login.success', 'login.failure', 'permission.granted', ...
+	event_type        TEXT NOT NULL,                    -- 'login.success', 'login.failure', 'group.member_added', ...
 	actor_account_id  UUID,                             -- no FK on purpose: logs outlive accounts
 	actor_app_id      UUID,
 	target_type       TEXT,
@@ -338,36 +341,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_log (actor_account_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS ix_audit_event ON audit_log (event_type, occurred_at DESC);
-
--- =============================================================================
--- EFFECTIVE PERMISSIONS: the single definition of "what may this account do".
--- Combines catchall roles, role permissions and direct grants, and ignores expired grants.
--- It is a plain view (no caching): every read sees the latest committed state, so a revoke is
--- effective for the very next query on every replica. Created only if missing; later changes
--- to the view belong in a migration.
--- =============================================================================
-DO $$
-BEGIN
-	IF to_regclass('account_effective_permission') IS NULL THEN
-		CREATE VIEW account_effective_permission AS
-			SELECT ar.account_id, p.id AS permission_id, p.app_id, p.name
-			FROM account_role ar
-			JOIN role r ON r.id = ar.role_id AND r.all_permissions
-			CROSS JOIN app_permission p
-			WHERE ar.expires_at IS NULL OR ar.expires_at > now()
-			UNION
-			SELECT ar.account_id, p.id, p.app_id, p.name
-			FROM account_role ar
-			JOIN role_permission rp ON rp.role_id = ar.role_id
-			JOIN app_permission p ON p.id = rp.permission_id
-			WHERE ar.expires_at IS NULL OR ar.expires_at > now()
-			UNION
-			SELECT g.account_id, p.id, p.app_id, p.name
-			FROM account_app_permission g
-			JOIN app_permission p ON p.id = g.permission_id
-			WHERE g.expires_at IS NULL OR g.expires_at > now();
-	END IF;
-END $$;
 
 -- =============================================================================
 -- SEED DATA - each block runs only if its table is empty.
@@ -391,52 +364,30 @@ BEGIN
 	END IF;
 END $$;
 
--- Guardian app, its permissions and allowed scopes
--- TODO: tighten guardian's scopes to only what it needs
+-- Built-in administrators group. Its members may do everything in Guardian.
 DO $$
-DECLARE
-	v_app_id UUID;
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM app) THEN
-		INSERT INTO app (name, pretty_name, description, is_first_party)
-		VALUES ('guardian', 'Guardian', 'Service for managing accounts and app permissions', TRUE)
-		RETURNING id INTO v_app_id;
-
-		INSERT INTO app_permission (app_id, name, pretty_name, description) VALUES
-			(v_app_id, 'accounts.read',      'Read accounts',      'View accounts and their profiles'),
-			(v_app_id, 'accounts.write',     'Manage accounts',    'Create, edit, disable and delete accounts'),
-			(v_app_id, 'apps.manage',        'Manage apps',        'Create apps, rotate secrets, edit redirect URIs'),
-			(v_app_id, 'permissions.manage', 'Manage permissions', 'Define permissions/roles and grant them to accounts');
-
-		INSERT INTO app_scope (app_id, scope_name)
-		SELECT v_app_id, name FROM scope WHERE app_id IS NULL;
+	IF NOT EXISTS (SELECT 1 FROM user_group) THEN
+		INSERT INTO user_group (key, display_name, description, is_system)
+		VALUES ('guardian-admins', 'Guardian administrators', 'Members can manage accounts, apps and groups in Guardian', TRUE);
 	END IF;
 END $$;
 
--- Built-in admin role: catchall, holds every permission of every app (no role_permission rows)
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM role) THEN
-		INSERT INTO role (name, pretty_name, description, all_permissions, is_system)
-		VALUES ('admin', 'Administrator', 'Holds all permissions in all apps', TRUE, TRUE);
-	END IF;
-END $$;
-
--- Initial admin account (no password yet, see note above) with the admin role
+-- Initial admin account (no password yet, see note above), a member of the administrators group
 DO $$
 DECLARE
 	v_account_id UUID;
-	v_role_id    UUID;
+	v_group_id   UUID;
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM account) THEN
-		SELECT id INTO v_role_id FROM role WHERE name = 'admin';
+		SELECT id INTO v_group_id FROM user_group WHERE key = 'guardian-admins';
 
 		INSERT INTO account (username, display_name, must_change_password)
 		VALUES ('admin', 'Admin', TRUE)
 		RETURNING id INTO v_account_id;
 
-		IF v_role_id IS NOT NULL THEN
-			INSERT INTO account_role (account_id, role_id) VALUES (v_account_id, v_role_id);
+		IF v_group_id IS NOT NULL THEN
+			INSERT INTO group_member (group_id, account_id) VALUES (v_group_id, v_account_id);
 		END IF;
 	END IF;
 END $$;

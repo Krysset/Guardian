@@ -1,6 +1,8 @@
 package api
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"regexp"
 
@@ -12,21 +14,16 @@ import (
 
 var appNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,62}$`)
 
+// GetAppSubrouter manages apps (OIDC clients). Every route is for administrators only: an app's
+// redirect URIs and settings are not something other accounts should be able to read.
 func GetAppSubrouter() *chi.Mux {
 	r := chi.NewRouter()
-
-	r.Group(func(r chi.Router) {
-		r.Use(Authenticate)
-		r.Get("/list", listApps)
-		r.Get("/{uuid}", getApp)
-	})
-
-	r.Group(func(r chi.Router) {
-		r.Use(RequirePermission("guardian", "apps.manage"))
-		r.Post("/add", addApp)
-		r.Delete("/remove", removeApp)
-	})
-
+	r.Use(RequireAdmin)
+	r.Get("/list", listApps)
+	r.Get("/{uuid}", getApp)
+	r.Post("/add", addApp)
+	r.Post("/access", setAppAccess)
+	r.Delete("/remove", removeApp)
 	return r
 }
 
@@ -43,7 +40,11 @@ type addAppRequest struct {
 	IsFirstParty           bool     `json:"is_first_party"`
 	AccessTokenTTLSeconds  int      `json:"access_token_ttl_seconds"` // optional, 60-86400, default 900
 	Scopes                 []string `json:"scopes"`                   // defaults to openid, profile, email
+	AccessRule             string   `json:"access_rule"`              // "groups" (default) or "anyone"
+	GroupIDs               []string `json:"group_ids"`                // groups linked to the app
 }
+
+func validAccessRule(rule string) bool { return rule == "groups" || rule == "anyone" }
 
 func addApp(w http.ResponseWriter, r *http.Request) {
 	var req addAppRequest
@@ -82,6 +83,13 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 	if len(req.Scopes) == 0 {
 		req.Scopes = []string{"openid", "profile", "email"}
 	}
+	if req.AccessRule == "" {
+		req.AccessRule = "groups"
+	}
+	if !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
+		RespondWithError(w, http.StatusBadRequest, "access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
+		return
+	}
 
 	secret, secretHash := "", ""
 	if req.ClientType == "confidential" {
@@ -98,10 +106,14 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 		LogoURL: req.LogoURL, HomepageURL: req.HomepageURL, ClientType: req.ClientType,
 		RedirectURIs: req.RedirectURIs, PostLogoutRedirectURIs: req.PostLogoutRedirectURIs,
 		BackchannelLogoutURI: req.BackchannelLogoutURI, IsFirstParty: req.IsFirstParty,
-		AccessTokenTTL: req.AccessTokenTTLSeconds,
+		AccessTokenTTL: req.AccessTokenTTLSeconds, AccessRule: req.AccessRule, GroupIDs: req.GroupIDs,
 	}, req.Scopes, secretHash)
 	if db.IsUniqueViolation(err) {
 		RespondWithError(w, http.StatusConflict, "An app with that name already exists")
+		return
+	}
+	if errors.Is(err, db.ErrGroupNotFound) {
+		RespondWithError(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
 		return
 	}
 	if err != nil {
@@ -117,6 +129,51 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusCreated, resp)
 }
 
+// setAppAccess sets who may sign in to an app: the access rule and the complete list of linked groups.
+// With "groups", only members of a linked group may sign in. With "anyone", every account may; the
+// linked groups then only decide which groups the app is told about.
+func setAppAccess(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID         string   `json:"id"`
+		AccessRule string   `json:"access_rule"`
+		GroupIDs   []string `json:"group_ids"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !db.IsUUID(req.ID) || !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
+		RespondWithError(w, http.StatusBadRequest, "id must be an app id; access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
+		return
+	}
+	switch err := db.SetAppAccess(req.ID, req.AccessRule, req.GroupIDs); {
+	case errors.Is(err, sql.ErrNoRows):
+		RespondWithError(w, http.StatusNotFound, "App not found")
+		return
+	case errors.Is(err, db.ErrGroupNotFound):
+		RespondWithError(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
+		return
+	case err != nil:
+		RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+		return
+	}
+	db.Audit("app.access_changed", accountID(r), req.ID, clientIP(r), map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs})
+	app, err := db.GetApp(req.ID)
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to load the app")
+		return
+	}
+	RespondWithJSON(w, http.StatusOK, app)
+}
+
+func allUUIDs(ids ...string) bool {
+	for _, id := range ids {
+		if !db.IsUUID(id) {
+			return false
+		}
+	}
+	return true
+}
+
 func removeApp(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
@@ -127,10 +184,6 @@ func removeApp(w http.ResponseWriter, r *http.Request) {
 	app, err := db.GetApp(req.ID)
 	if err != nil {
 		RespondWithError(w, http.StatusNotFound, "App not found")
-		return
-	}
-	if app.Name == "guardian" {
-		RespondWithError(w, http.StatusBadRequest, "The guardian app cannot be removed")
 		return
 	}
 	if err := db.RemoveApp(app.ID); err != nil {

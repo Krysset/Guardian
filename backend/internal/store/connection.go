@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -80,13 +81,36 @@ func initializeDB(ctx context.Context, db *sql.DB) error {
 	for {
 		err := Migrate(ctx, db)
 		if err == nil {
-			return nil
+			return VerifySchemaRevision(ctx, db)
 		}
 		slog.Warn("database migration failed, retrying in 3 seconds", "error", err)
 		if err := wait(ctx, 3*time.Second); err != nil {
 			return fmt.Errorf("gave up migrating the database: %w", err)
 		}
 	}
+}
+
+// ErrSchemaRevision means the database was created by another revision of migration 1.
+var ErrSchemaRevision = errors.New("this database was created by a different development version of Guardian. " +
+	"Until Guardian 1.0 the first migration is still edited in place, so the database cannot be upgraded: " +
+	"recreate it (with the compose setup: docker compose down -v), or restore a backup into a new one")
+
+// VerifySchemaRevision checks that the database was created by the migration 1 that this binary ships
+// with (see SCHEMA REVISION in migrations/00001_init.sql). Without it, a database from an older
+// development version would start fine and then fail on the first query that needs a newer table.
+func VerifySchemaRevision(ctx context.Context, db *sql.DB) error {
+	var stored string
+	err := db.QueryRowContext(ctx, `SELECT fingerprint FROM schema_revision LIMIT 1`).Scan(&stored)
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, sql.ErrNoRows), errors.As(err, &pgErr) && pgErr.Code == "42P01": // no row, or no such table
+		return ErrSchemaRevision
+	case err != nil:
+		return err
+	case stored != migrations.InitFingerprint:
+		return fmt.Errorf("%w (database revision %s, expected %s)", ErrSchemaRevision, stored, migrations.InitFingerprint)
+	}
+	return nil
 }
 
 // Migrate applies every migration that the database has not seen yet, in order. Each migration runs in

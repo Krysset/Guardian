@@ -234,6 +234,8 @@ func TestAddAppValidation(t *testing.T) {
 		"bad post-logout uri":         with("post_logout_redirect_uris", []string{"ftp://x/y"}),
 		"bad back-channel uri":        with("backchannel_logout_uri", "http://billing.test/bcl"),
 		"ttl too small":               with("access_token_ttl_seconds", 59),
+		"unknown access rule":         with("access_rule", "everyone"),
+		"group id is not an id":       with("group_ids", []string{"nope"}),
 		"ttl too large":               with("access_token_ttl_seconds", 86401),
 	}
 	for name, body := range cases {
@@ -243,49 +245,52 @@ func TestAddAppValidation(t *testing.T) {
 	}
 }
 
-func TestAccessEndpointsValidateIDsAndAttributes(t *testing.T) {
+func TestGroupAndAppAccessEndpointsValidateInput(t *testing.T) {
 	type tc struct {
 		name    string
 		handler http.HandlerFunc
 		body    string
 	}
+	long := strings.Repeat("x", 129)
 	cases := []tc{
-		{"grant-role bad ids", grantRole, `{"account_id":"x","role_id":"y"}`},
-		{"grant-role missing role", grantRole, `{"account_id":"` + someUUID + `"}`},
-		{"revoke-role bad ids", revokeRole, `{"account_id":"x","role_id":"` + someUUID + `"}`},
-		{"grant-permission bad ids", grantPermission, `{"account_id":"x","permission_id":"y"}`},
-		{"grant-permission attributes not an object", grantPermission,
-			`{"account_id":"` + someUUID + `","permission_id":"` + someUUID + `","attributes":[1,2]}`},
-		{"grant-permission attributes string", grantPermission,
-			`{"account_id":"` + someUUID + `","permission_id":"` + someUUID + `","attributes":"x"}`},
-		{"revoke-permission bad ids", revokePermission, `{"account_id":"x","permission_id":"y"}`},
-		{"create role bad name", createRole, `{"name":"Bad Name","pretty_name":"x"}`},
-		{"create role bad permission id", createRole, `{"name":"ok-name","pretty_name":"x","permission_ids":["nope"]}`},
-		{"delete role bad id", deleteRole, `{"role_id":"nope"}`},
-		{"set role permissions bad id", setRolePermissions, `{"role_id":"nope","permission_ids":[]}`},
-		{"create permission bad app", createPermission, `{"app_id":"nope","name":"x","pretty_name":"x"}`},
-		{"create permission empty name", createPermission, `{"app_id":"` + someUUID + `","name":"","pretty_name":"x"}`},
-		{"invalid json", grantRole, `{`},
+		{"create group: upper case key", createGroup, `{"key":"Finance","display_name":"x"}`},
+		{"create group: key with a space", createGroup, `{"key":"fin ance","display_name":"x"}`},
+		{"create group: key too short", createGroup, `{"key":"f","display_name":"x"}`},
+		{"create group: key starts with a dash", createGroup, `{"key":"-finance","display_name":"x"}`},
+		{"create group: no display name", createGroup, `{"key":"finance"}`},
+		{"create group: display name too long", createGroup, `{"key":"finance","display_name":"` + long + `"}`},
+		{"create group: owner is not an id", createGroup, `{"key":"finance","display_name":"x","owner_group_id":"nope"}`},
+		{"create group: invalid json", createGroup, `{`},
+		{"update group: key cannot change", updateGroup, `{"key":"other"}`},
+		{"update group: empty display name", updateGroup, `{"display_name":""}`},
+		{"update group: owner is not an id", updateGroup, `{"owner_group_id":"nope"}`},
+		{"app access: app is not an id", setAppAccess, `{"id":"nope","access_rule":"anyone"}`},
+		{"app access: unknown rule", setAppAccess, `{"id":"` + someUUID + `","access_rule":"everyone"}`},
+		{"app access: missing rule", setAppAccess, `{"id":"` + someUUID + `"}`},
+		{"app access: group is not an id", setAppAccess, `{"id":"` + someUUID + `","access_rule":"groups","group_ids":["nope"]}`},
 	}
 	for _, c := range cases {
 		if rec := call(c.handler, jsonReq("POST", "/", c.body)); rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: status %d, want 400", c.name, rec.Code)
+			t.Errorf("%s: status %d, want 400 (rejected before touching the database)", c.name, rec.Code)
 		}
 	}
 }
 
-func TestAccessFailMapsErrors(t *testing.T) {
+func TestGroupFailMapsErrors(t *testing.T) {
 	cases := []struct {
 		err  error
 		want int
 	}{
+		{db.ErrGroupNotFound, http.StatusNotFound},
+		{db.ErrSystemGroup, http.StatusForbidden},
+		{db.ErrLastAdmin, http.StatusConflict},
+		{db.ErrInvalidOwner, http.StatusBadRequest},
 		{&pgconn.PgError{Code: "23505"}, http.StatusConflict},
-		{db.ErrSystemRole, http.StatusForbidden},
-		{errors.New("boom: connection details that must not leak"), http.StatusBadRequest},
+		{errors.New("boom: connection details that must not leak"), http.StatusInternalServerError},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
-		accessFail(rec, c.err)
+		groupFail(rec, c.err)
 		if rec.Code != c.want {
 			t.Errorf("%v: status %d, want %d", c.err, rec.Code, c.want)
 		}

@@ -187,6 +187,24 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The app's access rule: with "groups", only members of a group linked to the app may sign in to it.
+	// Nobody else gets a code, so the app never has to notice and refuse them itself.
+	allowed, err := db.AccountMayUseApp(sess.AccountID, req.App)
+	if err != nil {
+		redirectWithError(w, r, req.RedirectURI, req.State, "server_error", "")
+		return
+	}
+	if !allowed {
+		db.Audit("authorize.denied", sess.AccountID, req.App.ID, clientIP(r), map[string]any{"reason": "access_rule"})
+		if contains(req.Prompts, "none") {
+			redirectWithError(w, r, req.RedirectURI, req.State, "access_denied", "The account has no access to this app")
+			return
+		}
+		renderMessage(w, http.StatusForbidden, "No access to "+req.App.PrettyName,
+			"Your account does not have access to "+req.App.PrettyName+". Ask an administrator to add you to a group that does.")
+		return
+	}
+
 	granted, err := db.GetConsent(sess.AccountID, req.App.ID)
 	if err != nil {
 		redirectWithError(w, r, req.RedirectURI, req.State, "server_error", "")

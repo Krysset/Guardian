@@ -105,7 +105,7 @@ func apiRouter() http.Handler {
 	r.Use(api.RequireSameOrigin)
 	r.Mount("/account", api.GetAccountSubrouter())
 	r.Mount("/service", api.GetAppSubrouter())
-	r.Mount("/access", api.GetAccessSubrouter())
+	r.Mount("/groups", api.GetGroupSubrouter())
 	return r
 }
 

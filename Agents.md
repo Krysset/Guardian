@@ -46,16 +46,16 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `internal/api/` — HTTP handlers, still one package:
     - `oidc.go` — discovery, authorize, token, userinfo, jwks, consent.
     - `login.go` — login/logout and back-channel logout.
-    - `account.go`, `app.go`, `access.go` — `/api/account`, `/api/service`, `/api/access`.
+    - `account.go`, `app.go`, `groups.go` — `/api/account`, `/api/service`, `/api/groups` (REST style).
     - `introspect.go` — internal router.
     - `templates.go` — inline hosted-page HTML.
-    - `middleware.go` — session, CSRF, `OnlyAdmin`, `RequirePermission`, `RequireSameOrigin`.
+    - `middleware.go` — session, CSRF, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `RequireSameOrigin`.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
   - `internal/store/` — queries (imported as `db`); `connection.go` connects and applies migrations with goose at startup.
   - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
   - `internal/testutil/` — helpers for tests that need Postgres.
   - `e2e/` — end-to-end tests over HTTP against both routers.
-  - Tests: 110, all passing (`docs/TESTING.md`).
+  - Tests: 119, all passing (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
 - `docs/` — `ARCHITECTURE.md`, `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`, plus yUML diagrams.
@@ -64,16 +64,15 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
 - `account` — the OIDC subject; profile columns map 1:1 to standard claims. Status is pending, active, disabled or locked. Soft delete via `deleted_at`.
 - `app` — an OIDC client: public or confidential, redirect URIs, PKCE, first-party (skips consent), TTLs. `app_secret` allows several active secrets, so rotation can overlap.
 - `scope`, `app_scope`, `account_consent` — standard and custom scopes, and the scopes a user has consented to.
-- Permission tables: `app_permission`, `role`, `role_permission`, `account_role`, `account_app_permission`, and the `account_effective_permission` view.
-  - **These are being replaced (M2) by groups:**
-    - `role` becomes `group` (flat; `is_system` kept). The built-in admin group is `guardian-admins`.
-    - `account_role` becomes `account_group`, with expiry.
-    - A new `app_group` table links the groups each app receives.
-    - App permissions, direct grants and the view are dropped; apps map groups to their own permissions.
+- **Groups** (the old roles, permissions and the effective-permission view are gone):
+  - `user_group` — the group itself ("group" is a reserved word). It has an immutable `key` (what apps see), an editable `display_name`, `is_system`, and an optional `owner_group_id`.
+  - `group_member` — membership, with optional `expires_at`. Expired rows do not count.
+  - `app_group` — which groups an app is told about.
+  - `app.access_rule` — `groups` (the default: only members of a linked group may sign in) or `anyone`.
 - Session and token tables: `session` (SSO), `authorization_code`, `refresh_token` (rotating families), `access_token` (opaque and hashed; to be removed with JWT access tokens), `session_app` (for back-channel logout), `signing_key`.
 - `account_token` — one-time tokens for reset, verification, re-authentication and invites. `account_mfa` holds TOTP, WebAuthn and recovery codes. Both are unused so far.
 - `rate_limit` (UNLOGGED) and `audit_log` (append-only).
-- Seed data: standard scopes; the `guardian` app with permissions `accounts.read`, `accounts.write`, `apps.manage` and `permissions.manage`; the system `admin` role (catch-all); and an `admin` account with no password, set at startup from `ADMIN_INITIAL_PASSWORD` or logged once.
+- Seed data: standard scopes; the system group `guardian-admins`; and an `admin` account in that group with no password, set at startup from `ADMIN_INITIAL_PASSWORD` or logged once. No app is seeded.
 
 ## Agreed chart layout
 ```
@@ -190,7 +189,7 @@ charts/guardian/
 - **No tests were deleted.** The tests for introspection and the old permission model pass, so they stay until those features are removed in the groups and JWT work.
 - **Not verified:** the Docker image build and `docker compose up` (no Docker available to the agent), and the CI workflow (nothing has been pushed).
 - **Left to the owner:** pushing, and merging `oidc-refactor` into `dev`.
-- **Still open from the first read of the code:** admin routes mix `OnlyAdmin` and `RequirePermission`, and any signed-in user can list all apps. This goes away with the groups rewrite in 0.1.
+- **Fixed since, in the groups work:** admin routes used to mix `OnlyAdmin` and `RequirePermission`, and any signed-in user could list all apps.
 
 ## Login page design (approved)
 Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact/TCheh3oE3wEhtFxMxKY59J). It is to be implemented in the Go templates (milestone M3).
@@ -248,7 +247,18 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **Verified with Go 1.26.11 and PostgreSQL 16:** build, vet, gofmt, and all 110 tests with `-race`. The binary was also run against a fresh database, against a database created before goose (it adopts it and keeps edited rows), and with `guardian migrate`.
   - **Not verified:** the Docker image build and CI.
   - **Deliberately not in M1:** splitting `internal/api` into `oidc`, `web`, `httpx` and `internalapi`. Those handlers are rewritten in the groups and JWT step, so the split happens there.
-- **Next step:** the groups and JWT work of 0.1 (see `docs/ROADMAP.md`).
+- **Groups and JWT work of 0.1, in parts** (on branch `dev`; leave changes staged for the owner's review):
+  - **Part 1, groups: done and tested, staged for review (2026-11-14).**
+    - Schema: `user_group`, `group_member`, `app_group`, `app.access_rule`. Roles, permissions and the seeded `guardian` app are removed.
+    - Store: `internal/store/groups.go`. The last-administrator rule lives there: one active account must always be in `guardian-admins` through a membership without an expiry. It is enforced on member removal, on adding an expiry and on account deletion, under a row lock on the administrators group.
+    - API: `/api/groups` (REST). Administrators do everything; a group's owners (members of its owner group) may only list, add and remove its members. `/api/service` is now administrators only, with `POST /api/service/access` for the access rule and linked groups.
+    - Sign-in: `/authorize` enforces the app's access rule; refused accounts get a 403 page, or `access_denied` with `prompt=none`.
+    - Introspection now returns `groups` instead of `permissions`. It is removed in part 2.
+    - **Schema revision check:** `00001_init.sql` records a fingerprint of itself (table `schema_revision`; comments and blank lines do not count) when it creates a database. `store.VerifySchemaRevision` compares it at every start and refuses a database made by another revision, with a message that says to recreate it. So after any edit to `00001_init.sql`, existing development databases must be recreated (`docker compose down -v`); tell the owner when a change needs that.
+  - **Part 2, tokens: next.** Lean JWT access tokens (`at+jwt`), the `groups` scope in the ID token, userinfo and access token, stable refresh tokens for confidential apps with re-checks at refresh (including the access rule), no refresh tokens for public apps, session idle and absolute timeouts, back-channel logout on membership removal, removal of `/introspect` and the `access_token` table, the 15-second lifetime floor, and removal of `phone_number`, `birthdate` and the `phone` scope.
+  - **Part 3:** `client_credentials` and the machine API.
+  - **Part 4:** split `internal/api` into `oidc`, `web`, `httpx` and `internalapi`.
+  - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
 - **How to build and test in the cloud workspace:**
   - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.
   - Modules: tar `backend/vendor` in the VM and unpack it in the cloud copy. When dependencies change, the code that imports them must exist first, then the owner runs `go get`, `go mod tidy` and `go mod vendor` in `backend`.
