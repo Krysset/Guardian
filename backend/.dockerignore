@@ -1,0 +1,10 @@
+# Local configuration and secrets never go into the image.
+.env
+.env.*
+!.env.example
+# Offline copy of dependencies; the image downloads and verifies them itself.
+vendor/
+# Not needed to build.
+.github/
+*_test.go
+internal/testutil/

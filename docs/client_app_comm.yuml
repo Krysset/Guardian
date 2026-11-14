@@ -1,0 +1,11 @@
+// {type:sequence}
+// {generate:true}
+[Client]Initiates login>[App]
+[App]Redirects to>[Guardian]
+[Guardian]Requests credentials>[Client]
+[Client]Submits credentials>[Guardian]
+[Guardian]Issues access token>[Client]
+[Client]Accesses app with token>[App]
+[App]Validates token>[Guardian]
+[Guardian]Confirms token validity and permissions>[App]
+[App]Grants access to resources>[Client]
