@@ -1,5 +1,7 @@
 # Guardian architecture and design decisions
 
+> **Partly outdated (2026-11-13).** The design moved to groups plus short-lived JWT access tokens, and `/introspect` is removed. See the decisions log at the top of `docs/ROADMAP.md`. Sections about opaque tokens, introspection, per-app permissions and immediate revocation describe the old design. They will be rewritten in milestone M2.
+
 ## Requirements that drive the design
 
 1. Sign-up is open to everyone (rate limited).

@@ -1,5 +1,7 @@
 # Integrating a service with Guardian
 
+> **Partly outdated (2026-11-13).** The design moved to groups plus short-lived JWT access tokens, and `/introspect` is removed. See the decisions log at the top of `docs/ROADMAP.md`. Sections about opaque tokens, introspection, per-app permissions and immediate revocation describe the old design. They will be rewritten in milestone M2.
+
 Everything a service needs is: **one OIDC login** and **one HTTP call per request**. No JWT validation,
 no JWKS, no key rotation, no token caching.
 
