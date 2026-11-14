@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
 	db "guardian/internal/store"
@@ -279,7 +279,7 @@ func TestAccessFailMapsErrors(t *testing.T) {
 		err  error
 		want int
 	}{
-		{&pq.Error{Code: "23505"}, http.StatusConflict},
+		{&pgconn.PgError{Code: "23505"}, http.StatusConflict},
 		{db.ErrSystemRole, http.StatusForbidden},
 		{errors.New("boom: connection details that must not leak"), http.StatusBadRequest},
 	}

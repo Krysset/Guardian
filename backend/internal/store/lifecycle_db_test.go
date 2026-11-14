@@ -799,3 +799,43 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 		t.Error("rate limit rows were not cleaned correctly")
 	}
 }
+
+// ---- Migrations -------------------------------------------------------------
+
+const migrationOneRecords = `SELECT count(*) FROM goose_db_version WHERE version_id = 1 AND is_applied`
+
+func TestMigrationsAreRecordedAndRunOnce(t *testing.T) {
+	testutil.RequireTestDB(t)
+	// Opening the database already migrated it.
+	if n := testutil.Count(t, migrationOneRecords); n != 1 {
+		t.Fatalf("migration 1 is recorded %d times after startup, want 1", n)
+	}
+	// A second run finds nothing to do.
+	if err := db.Migrate(context.Background(), db.GetDatabaseConnection()); err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	if n := testutil.Count(t, migrationOneRecords); n != 1 {
+		t.Errorf("migration 1 is recorded %d times after a second run, want 1", n)
+	}
+}
+
+func TestMigrateSurvivesConcurrentStartups(t *testing.T) {
+	testutil.Reset(t)
+	// Forget that migration 1 ran, so every "replica" below wants to apply it. The migration is
+	// idempotent, so applying it to the existing schema is safe.
+	testutil.Exec(t, `DELETE FROM goose_db_version WHERE version_id = 1`)
+
+	const replicas = 6
+	errs := make(chan error, replicas)
+	for i := 0; i < replicas; i++ {
+		go func() { errs <- db.Migrate(context.Background(), db.GetDatabaseConnection()) }()
+	}
+	for i := 0; i < replicas; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Migrate: %v", err)
+		}
+	}
+	if n := testutil.Count(t, migrationOneRecords); n != 1 {
+		t.Errorf("migration 1 was applied %d times by %d replicas starting together, want 1", n, replicas)
+	}
+}

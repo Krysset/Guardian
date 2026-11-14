@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"regexp"
-
-	"github.com/lib/pq"
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -23,19 +21,10 @@ func scanApp(s scanner) (App, error) {
 	var a App
 	err := s.Scan(&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
 		&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
-		pq.Array(&a.GrantTypes), pq.Array(&a.RedirectURIs), pq.Array(&a.PostLogoutRedirectURIs),
+		scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
 		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshTokenTTL, &a.Enabled,
-		pq.Array(&a.Scopes))
+		scanArray(&a.Scopes))
 	return a, err
-}
-
-// strArray binds a string slice as a Postgres array. A nil slice becomes an empty array instead of NULL,
-// so an optional list (for example post_logout_redirect_uris left out of a request) fits a NOT NULL column.
-func strArray(s []string) interface{} {
-	if s == nil {
-		s = []string{}
-	}
-	return pq.Array(s)
 }
 
 // AddApp creates an app, its first secret (if secretHash != "") and its allowed scopes.
@@ -70,7 +59,7 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO app_scope (app_id, scope_name) SELECT $1::uuid, name FROM scope
-		 WHERE name = ANY($2) AND (app_id IS NULL OR app_id = $1::uuid)`, id, pq.Array(scopes)); err != nil {
+		 WHERE name = ANY($2) AND (app_id IS NULL OR app_id = $1::uuid)`, id, strArray(scopes)); err != nil {
 		return App{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -132,7 +121,7 @@ func GetApps() ([]App, error) {
 // GetScopes returns scope details (for the consent screen).
 func GetScopes(names []string) ([]Scope, error) {
 	rows, err := GetDatabaseConnection().Query(
-		`SELECT name, description, claims FROM scope WHERE name = ANY($1) ORDER BY name`, pq.Array(names))
+		`SELECT name, description, claims FROM scope WHERE name = ANY($1) ORDER BY name`, strArray(names))
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +129,7 @@ func GetScopes(names []string) ([]Scope, error) {
 	var out []Scope
 	for rows.Next() {
 		var s Scope
-		if err := rows.Scan(&s.Name, &s.Description, pq.Array(&s.Claims)); err != nil {
+		if err := rows.Scan(&s.Name, &s.Description, scanArray(&s.Claims)); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -151,7 +140,7 @@ func GetScopes(names []string) ([]Scope, error) {
 // GetScopeClaims returns the claim names released by the given scopes.
 func GetScopeClaims(scopes []string) ([]string, error) {
 	rows, err := GetDatabaseConnection().Query(
-		`SELECT DISTINCT c FROM scope, unnest(claims) AS c WHERE name = ANY($1)`, pq.Array(scopes))
+		`SELECT DISTINCT c FROM scope, unnest(claims) AS c WHERE name = ANY($1)`, strArray(scopes))
 	if err != nil {
 		return nil, err
 	}

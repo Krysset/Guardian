@@ -33,6 +33,10 @@ cp .env.example .env      # then fill in the values
 go run ./cmd/guardian
 ```
 
+Guardian creates its tables by itself when it starts. The schema lives in `backend/migrations/`. Until 1.0 the
+first migration is still edited in place, and a database that already ran it does not pick up the edits. After a
+schema change, recreate your development database (`docker compose down -v` removes the compose one).
+
 ## Tests
 
 See [docs/TESTING.md](docs/TESTING.md). In short:

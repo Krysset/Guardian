@@ -1,9 +1,14 @@
 // Command guardian runs the Guardian server.
+//
+//	guardian            start the server (the default)
+//	guardian serve      the same
+//	guardian migrate    apply pending database migrations, then exit
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +21,15 @@ import (
 )
 
 func main() {
+	command := "serve"
+	if len(os.Args) > 1 {
+		command = os.Args[1]
+	}
+	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
+		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate]")
+		os.Exit(2)
+	}
+
 	// .env is optional: in containers the variables are injected directly.
 	envErr := godotenv.Load()
 
@@ -34,14 +48,18 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = server.Run(ctx, cfg)
+	if command == "migrate" {
+		err = server.Migrate(ctx, cfg)
+	} else {
+		err = server.Run(ctx, cfg)
+	}
 	if errors.Is(err, context.Canceled) {
 		// Asked to stop before startup finished, for example while waiting for the database.
 		slog.Info("stopped during startup")
 		return
 	}
 	if err != nil {
-		slog.Error("Guardian stopped with an error", "error", err)
+		slog.Error("Guardian stopped with an error", "command", command, "error", err)
 		os.Exit(1)
 	}
 }

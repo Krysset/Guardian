@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
 
 	"guardian/internal/auth"
 	"guardian/internal/config"
@@ -100,13 +100,14 @@ func RequireTestDB(t testing.TB) {
 	}
 }
 
-// Reset empties every table (except signing keys) and re-runs the schema script, which re-seeds the
+// Reset empties every table (except signing keys and the migration history) and re-runs migration 1, which re-seeds the
 // scopes, the guardian app, the admin role and the admin account. Call it first in each database test.
 func Reset(t testing.TB) {
 	t.Helper()
 	RequireTestDB(t)
 	conn := db.GetDatabaseConnection()
-	rows, err := conn.Query(`SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename <> 'signing_key'`)
+	rows, err := conn.Query(`SELECT tablename FROM pg_tables WHERE schemaname = current_schema()
+		   AND tablename NOT IN ('signing_key', 'goose_db_version')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func Reset(t testing.TB) {
 		if err := rows.Scan(&name); err != nil {
 			t.Fatal(err)
 		}
-		tables = append(tables, pq.QuoteIdentifier(name))
+		tables = append(tables, pgx.Identifier{name}.Sanitize())
 	}
 	rows.Close()
 	if len(tables) > 0 {
@@ -127,7 +128,7 @@ func Reset(t testing.TB) {
 	RunSchema(t)
 }
 
-// RunSchemaErr executes the schema script the way the application does at startup.
+// RunSchemaErr executes migration 1 directly, as one batch. It is idempotent, so this re-seeds an emptied database.
 func RunSchemaErr() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

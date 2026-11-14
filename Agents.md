@@ -22,7 +22,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
 - Owner works on Windows; repo is at `D:\Projekt\Guardian`.
 - Branches: `main`, `dev`, `oidc-refactor`. Work happens on `oidc-refactor`. Nothing has been pushed or merged by an agent; the owner decides when.
 - **Where things can run (checked 2026-11-14):**
-  - **The cloud workspace** has Go 1.24, PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`) and gofmt, but no network. Go modules cannot be downloaded there.
+  - **The cloud workspace** has PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`) and gofmt, but no network. Go 1.24 is preinstalled, which is too old for the repo; unpack the Go 1.26 toolchain from `.tools/` instead. Go modules cannot be downloaded there.
   - **The shell on the owner's PC** (`device_bash`, a Linux VM with the repo mounted at `$HOME/mnt/Guardian`) has git, python3, tar and gcc, but no Go, no Postgres, no Docker and no network.
   - **Go dependencies** therefore come from `backend/vendor/` (the owner runs `go mod vendor` on Windows; the folder is git-ignored). Access to the owner's Go module cache folder was denied by policy; do not ask again.
   - **Docker cannot run in either place.** The image and compose setup are verified by the owner, or by the `image` job in CI.
@@ -37,7 +37,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
 - After writing single files to the PC with `device_commit_files`, check size or checksum. It has several times written the *previous* version of a file; committing again with `force` fixed it.
 
 ## Repository map (current)
-- `backend/` — Go module `guardian`: chi, lib/pq (moving to pgx), golang-jwt, prometheus. About 3,300 lines plus a large test suite.
+- `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus. About 3,300 lines plus a large test suite.
   - `cmd/guardian/main.go` — the entry point: loads `.env` if present, loads and validates the configuration, sets up logging, runs the server.
   - `internal/config/` — every environment variable in one place, validated at startup; all problems are reported at once.
   - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
@@ -51,11 +51,11 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
     - `templates.go` — inline hosted-page HTML.
     - `middleware.go` — session, CSRF, `OnlyAdmin`, `RequirePermission`, `RequireSameOrigin`.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
-  - `internal/store/` — queries (imported as `db`); `connection.go` runs the schema script at startup under an advisory lock.
+  - `internal/store/` — queries (imported as `db`); `connection.go` connects and applies migrations with goose at startup.
   - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
   - `internal/testutil/` — helpers for tests that need Postgres.
   - `e2e/` — end-to-end tests over HTTP against both routers.
-  - Tests: 108, all passing (`docs/TESTING.md`).
+  - Tests: 110, all passing (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
 - `docs/` — `ARCHITECTURE.md`, `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`, plus yUML diagrams.
@@ -239,19 +239,20 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **0.4 console:** account and admin console, group owners.
   - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
   - **1.0:** hardening, docs, and ES256 if time allows.
-- **M1 is in progress** on branch `implement-m1`. The owner reviews changes before anything is committed: **do not commit on this branch unless asked.**
-  - **Part 1, done and tested (uncommitted in the owner's working tree):**
-    - The move to `cmd/guardian`, `internal/{api,auth,store,server,config}`, `e2e/` and `migrations/`.
-    - The config package with validation.
-    - Structured logging with `log/slog` (`LOG_FORMAT`, `LOG_LEVEL`).
-    - The schema embedded in the binary; `SCHEMA_PATH` is gone.
-  - **Part 2, waiting for dependencies:** goose migrations and the pgx driver.
-    - Order matters: `go mod tidy` and `go mod vendor` only keep packages the code imports. So the agent first writes the code that imports goose and pgx (it cannot compile yet).
-    - The owner then runs `go get github.com/pressly/goose/v3@latest github.com/jackc/pgx/v5@latest`, `go mod tidy` and `go mod vendor`, in `backend` on Windows.
-    - The agent then pulls the new `vendor/`, builds, tests and fixes.
-    - Then: convert `00001_init.sql` to a goose migration, replace `lib/pq` (`pq.Array`, `pq.Error`) with pgx, and set the Dockerfile's `GO_VERSION` to match the new `go` line in `go.mod`.
+- **M1 is done** (2026-11-14), on branch `implement-m1`. The owner reviews changes before anything is committed: **do not commit on the owner's branches unless asked**; leave changes staged.
+  - **Part 1:** the move to `cmd/guardian`, `internal/{api,auth,store,server,config}`, `e2e/` and `migrations/`; the config package with validation; structured logging with `log/slog` (`LOG_FORMAT`, `LOG_LEVEL`); the schema embedded in the binary.
+  - **Part 2:** goose migrations and the pgx driver.
+    - `migrations/00001_init.sql` is a goose migration: `-- +goose Up` with one statement block and no `BEGIN`/`COMMIT` of its own. It still takes its advisory lock and stays idempotent.
+    - `store.Migrate` runs goose with a Postgres session lock, asking for the lock once a second; `store.Open` calls it. `guardian migrate` applies migrations and exits.
+    - The driver is `pgx/v5/stdlib` (pgx 5.13, goose 3.30). Arrays are scanned through `store.scanArray` and passed with `store.strArray`. Unique violations are detected with `pgconn.PgError`.
+  - **Verified with Go 1.26.11 and PostgreSQL 16:** build, vet, gofmt, and all 110 tests with `-race`. The binary was also run against a fresh database, against a database created before goose (it adopts it and keeps edited rows), and with `guardian migrate`.
+  - **Not verified:** the Docker image build and CI.
   - **Deliberately not in M1:** splitting `internal/api` into `oidc`, `web`, `httpx` and `internalapi`. Those handlers are rewritten in the groups and JWT step, so the split happens there.
-  - To run tests: start Postgres in the cloud workspace, unpack `backend/vendor/` there, and use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
+- **Next step:** the groups and JWT work of 0.1 (see `docs/ROADMAP.md`).
+- **How to build and test in the cloud workspace:**
+  - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.
+  - Modules: tar `backend/vendor` in the VM and unpack it in the cloud copy. When dependencies change, the code that imports them must exist first, then the owner runs `go get`, `go mod tidy` and `go mod vendor` in `backend`.
+  - Use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
   - Postgres in the cloud workspace is killed between turns; restart it at the start of each command that needs it.
 - `docs/ARCHITECTURE.md` and `INTEGRATION.md` still describe the old introspection design (they are marked as outdated). They are rewritten during 0.1.
 

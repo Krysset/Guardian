@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // touchInterval limits last_seen_at writes: a session is written at most this often, so the hot
@@ -110,7 +108,7 @@ func GetConsent(accountID, appID string) ([]string, error) {
 	var scopes []string
 	err := GetDatabaseConnection().QueryRow(
 		`SELECT scopes FROM account_consent WHERE account_id = $1 AND app_id = $2 AND revoked_at IS NULL`,
-		accountID, appID).Scan(pq.Array(&scopes))
+		accountID, appID).Scan(scanArray(&scopes))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

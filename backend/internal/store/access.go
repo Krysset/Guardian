@@ -3,8 +3,6 @@ package store
 import (
 	"errors"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // Every function here changes who may do what. Nothing is cached anywhere, so a committed change is
@@ -44,7 +42,7 @@ func ListRoles() ([]Role, error) {
 	out := []Role{}
 	for rows.Next() {
 		var r Role
-		if err := rows.Scan(&r.ID, &r.Name, &r.PrettyName, &r.Description, &r.AllPermissions, &r.IsSystem, pq.Array(&r.PermissionIDs)); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.PrettyName, &r.Description, &r.AllPermissions, &r.IsSystem, scanArray(&r.PermissionIDs)); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -97,8 +95,8 @@ func CreateRole(name, prettyName, description string, allPermissions bool, permi
 		return "", err
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO role_permission (role_id, permission_id) SELECT $1::uuid, id FROM app_permission WHERE id = ANY($2::uuid[])`,
-		id, pq.Array(permissionIDs)); err != nil {
+		`INSERT INTO role_permission (role_id, permission_id) SELECT $1::uuid, id FROM app_permission WHERE id = ANY($2::text[]::uuid[])`,
+		id, strArray(permissionIDs)); err != nil {
 		return "", err
 	}
 	return id, tx.Commit()
@@ -122,8 +120,8 @@ func SetRolePermissions(roleID string, permissionIDs []string) error {
 		return err
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO role_permission (role_id, permission_id) SELECT $1::uuid, id FROM app_permission WHERE id = ANY($2::uuid[])`,
-		roleID, pq.Array(permissionIDs)); err != nil {
+		`INSERT INTO role_permission (role_id, permission_id) SELECT $1::uuid, id FROM app_permission WHERE id = ANY($2::text[]::uuid[])`,
+		roleID, strArray(permissionIDs)); err != nil {
 		return err
 	}
 	return tx.Commit()

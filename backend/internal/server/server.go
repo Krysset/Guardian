@@ -19,9 +19,16 @@ import (
 	db "guardian/internal/store"
 )
 
+// Migrate connects to the database, applies pending migrations and returns. It backs "guardian migrate",
+// for deployments that run migrations as a separate job. Starting the server does the same thing first.
+func Migrate(ctx context.Context, cfg config.Config) error {
+	_, err := db.Open(ctx, cfg.DB)
+	return err
+}
+
 // Run starts Guardian and blocks until ctx is cancelled or a listener fails.
 func Run(ctx context.Context, cfg config.Config) error {
-	// Connect and run the schema script up front. This waits for the database, until ctx is cancelled.
+	// Connect and apply pending migrations up front. This waits for the database, until ctx is cancelled.
 	if _, err := db.Open(ctx, cfg.DB); err != nil {
 		return err
 	}

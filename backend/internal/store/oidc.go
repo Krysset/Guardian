@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 var (
@@ -35,7 +33,7 @@ func ConsumeAuthCode(codeHash string) (AuthCode, error) {
 		 WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now()
 		 RETURNING app_id, account_id, COALESCE(session_id::text, ''), redirect_uri, scopes,
 		           COALESCE(nonce, ''), COALESCE(code_challenge, ''), auth_time`, codeHash).
-		Scan(&c.AppID, &c.AccountID, &c.SessionID, &c.RedirectURI, pq.Array(&c.Scopes), &c.Nonce, &c.CodeChallenge, &c.AuthTime)
+		Scan(&c.AppID, &c.AccountID, &c.SessionID, &c.RedirectURI, scanArray(&c.Scopes), &c.Nonce, &c.CodeChallenge, &c.AuthTime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AuthCode{}, ErrInvalidGrant
 	}
@@ -67,7 +65,7 @@ func RotateRefreshToken(oldHash, appID, newHash string, newExpires time.Time) (R
 	err = tx.QueryRow(
 		`SELECT id, family_id, app_id, account_id, COALESCE(session_id::text, ''), scopes, rotated_at, revoked_at, expires_at
 		 FROM refresh_token WHERE token_hash = $1 AND app_id = $2 FOR UPDATE`, oldHash, appID).
-		Scan(&rt.ID, &rt.FamilyID, &rt.AppID, &rt.AccountID, &rt.SessionID, pq.Array(&rt.Scopes), &rotated, &revoked, &expires)
+		Scan(&rt.ID, &rt.FamilyID, &rt.AppID, &rt.AccountID, &rt.SessionID, scanArray(&rt.Scopes), &rotated, &revoked, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RefreshToken{}, ErrInvalidGrant
 	}
@@ -202,8 +200,8 @@ func IntrospectAccessToken(tokenHash, callerAppID string) (TokenInfo, error) {
 		 WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()
 		   AND (t.session_id IS NULL OR s.revoked_at IS NULL)`,
 		tokenHash, callerAppID).
-		Scan(&ti.AccountID, &ti.AppID, &ti.ClientID, &ti.SessionID, pq.Array(&ti.Scopes), &ti.IssuedAt, &ti.ExpiresAt,
-			pq.Array(&ti.Permissions), &attrs)
+		Scan(&ti.AccountID, &ti.AppID, &ti.ClientID, &ti.SessionID, scanArray(&ti.Scopes), &ti.IssuedAt, &ti.ExpiresAt,
+			scanArray(&ti.Permissions), &attrs)
 	if err != nil {
 		return TokenInfo{}, err
 	}

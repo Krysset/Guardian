@@ -65,7 +65,7 @@ type Log struct {
 	Level string
 }
 
-// DSN returns the connection string for the lib/pq driver.
+// DSN returns the connection string in libpq keyword/value form, which the pgx driver accepts.
 func (d Database) DSN() string {
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		quoteDSN(d.Host), d.Port, quoteDSN(d.User), quoteDSN(d.Password), quoteDSN(d.Name), d.SSLMode)

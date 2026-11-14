@@ -2,20 +2,24 @@
 -- Guardian: account service with OIDC provider + per-app permissions
 -- Target: PostgreSQL 13+ (gen_random_uuid() is built in)
 --
--- Runs at EVERY startup. Rules:
---   * Only creates what is missing (IF NOT EXISTS). Never ALTERs or DROPs.
---     Changes to existing tables belong in migration scripts.
---   * Seed data is inserted only when its table is empty (first run), so rows
---     that were later edited or deleted are never recreated or overwritten.
---   * Whole script is one transaction behind an advisory lock, so several
---     instances starting at once don't race each other.
+-- This is migration 1. goose runs it once per database, inside a transaction, and records it in
+-- goose_db_version. Until Guardian 1.0 this file is still edited in place: a database that already ran
+-- it does not pick up later edits, so recreate development databases after a schema change.
+--
+-- Rules:
+--   * Only creates what is missing (IF NOT EXISTS). Never ALTERs or DROPs. That keeps it safe on a
+--     database that was created before goose was introduced, and lets the tests run it repeatedly.
+--   * Seed data is inserted only when its table is empty, so rows that were later edited or deleted
+--     are never recreated or overwritten.
+--   * It takes a transaction-level advisory lock, so two runs at the same time do not race.
 --
 -- Conventions: TIMESTAMPTZ everywhere, secrets/tokens stored as hashes,
 --              TEXT + CHECK instead of enums (easier to migrate).
 -- =============================================================================
 
-BEGIN;
-SELECT pg_advisory_xact_lock(727274);   -- arbitrary constant, released at COMMIT
+-- +goose Up
+-- +goose StatementBegin
+SELECT pg_advisory_xact_lock(727274);   -- arbitrary constant, released when the transaction ends
 
 -- -----------------------------------------------------------------------------
 -- ACCOUNTS
@@ -436,5 +440,7 @@ BEGIN
 		END IF;
 	END IF;
 END $$;
+-- +goose StatementEnd
 
-COMMIT;
+-- +goose Down
+-- Guardian only migrates forward. To go back, restore a backup.
