@@ -4,7 +4,7 @@
 #
 # Guardian:  http://localhost:3001  (sign in as "admin" with ADMIN_INITIAL_PASSWORD below)
 # Internal:  http://localhost:3002  (/metrics, /healthz, /readyz; bound to this machine only)
-# Mailpit:   http://localhost:8025  (catches outgoing mail; used from release 0.3)
+# Mailpit:   http://localhost:3003  (catches outgoing mail; used from release 0.3)
 
 services:
   backend:
@@ -57,8 +57,9 @@ services:
     container_name: guardian-mailpit
     image: axllent/mailpit:latest
     ports:
-      - "127.0.0.1:8025:8025"   # web UI
-      - "127.0.0.1:1025:1025"   # SMTP
+      # Host ports stay in the 3000 range next to Guardian. Windows often reserves ports such as 1025.
+      - "127.0.0.1:3003:8025"   # web UI
+      - "127.0.0.1:3004:1025"   # SMTP, for a backend run outside compose; inside compose use mailpit:1025
 
 volumes:
   postgres-db:
