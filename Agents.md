@@ -49,7 +49,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
   - `database/` — queries; `connection.go` runs `schema.sql` at startup under an advisory lock.
   - `schema.sql` — the full data model, described below.
-  - Tests: `*_test.go`, `e2e_*_test.go`. **Written but never executed**; expect fixes on the first run (`docs/TESTING.md`).
+  - Tests: `*_test.go`, `e2e_*_test.go`. 102 tests, all passing since 2026-11-14 (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
 - `docs/` — `ARCHITECTURE.md`, `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`, plus yUML diagrams.
@@ -171,16 +171,19 @@ charts/guardian/
   - External is for managed or HA databases.
   - A CloudNativePG option is planned for after 1.0.
 
-## M0 progress
-- **Done and committed (2026-11-14):**
+## M0: done (2026-11-14)
+- **Build and tests:** `go build ./...` and `go vet ./...` pass. All 102 tests pass with `-race` against PostgreSQL 16, with none skipped. The tests had never been run before.
+- **One real bug found and fixed:** registering an app without `post_logout_redirect_uris` failed, because a missing list was stored as NULL in a NOT NULL column. `database.strArray` now binds a nil slice as an empty array.
+- **Smoke test:** the static binary starts against Postgres, serves discovery, JWKS, the login page, health and metrics, and the admin can sign in and register an app.
+- **Infrastructure:**
   - gofmt on all Go code.
   - A multi-stage distroless `backend/Dockerfile` (renamed from `dockerfile`) and `.dockerignore`.
   - `docker-compose.yml` with the right `DB_*` names, ports 3001/3002, a dev key, Postgres 16 with a health check, and Mailpit.
-  - CI moved to `.github/workflows/backend.yml` (format check, vet, tests against Postgres, image build).
+  - CI at `.github/workflows/backend.yml` (format check, vet, tests against Postgres, image build).
   - `.gitattributes`, `.gitignore`, `README.md` and `TESTING.md` updates.
-- **Checked:** every Go file parses, and `schema.sql` applies cleanly twice on PostgreSQL 16.
-- **Not yet done:** `go build`, `go vet` and the tests have still never run, because the modules are missing. This waits for `backend/vendor/`.
-- **Not verified:** the Docker image build and `docker compose up`.
+- **No tests were deleted.** The tests for introspection and the old permission model pass, so they stay until those features are removed in the groups and JWT work.
+- **Not verified:** the Docker image build and `docker compose up` (no Docker available to the agent), and the CI workflow (nothing has been pushed).
+- **Left to the owner:** pushing, and merging `oidc-refactor` into `dev`.
 - **Still open from the first read of the code:** admin routes mix `OnlyAdmin` and `RequirePermission`, and any signed-in user can list all apps. This goes away with the groups rewrite in 0.1.
 
 ## Login page design (approved)
@@ -230,10 +233,9 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **0.4 console:** account and admin console, group owners.
   - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
   - **1.0:** hardening, docs, and ES256 if time allows.
-- **M0 scope:** CI location, Dockerfile, compose, tests compiling, protocol tests passing. Tests for introspection and the old permissions are deleted, not fixed.
-- **Next step:** finish M0.
-  - Once `backend/vendor/` exists, tar it in the VM, stage it into the cloud workspace, then run `go build ./...`, `go vet ./...` and the tests against a local Postgres.
-  - Delete failing tests for introspection and the old permission model; fix the protocol tests.
+- **Next step:** M1, the restructure (see `docs/ROADMAP.md`): move to `cmd/` and `internal/`, add the config package, goose, slog, pgx and embedded assets, and bump the Go version. No behaviour changes; the 102 tests are the safety net.
+  - New dependencies (goose, pgx) need the owner to run `go get` and `go mod vendor` on Windows, because the agent has no network.
+  - To run tests: start Postgres in the cloud workspace, unpack `backend/vendor/` there, and use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
 - `docs/ARCHITECTURE.md` and `INTEGRATION.md` still describe the old introspection design (they are marked as outdated). They are rewritten during 0.1.
 
 ## Working conventions

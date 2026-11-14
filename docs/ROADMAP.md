@@ -230,11 +230,10 @@ guardian/
 Everything runs in a staging environment with test data until 1.0. Guardian is not opened for public sign-up before then.
 
 ### 0.1: it runs locally
-- **M0: make it run.**
-  - Move CI to the root `.github/`.
-  - Fix the Dockerfile (multi-stage, single binary, distroless) and `docker-compose.yml` (`DB_*`, ports 3001/3002, keyring, mailpit).
-  - Get the tests compiling and the protocol tests passing. Tests for introspection and the old permission model are **deleted, not fixed**.
-  - Commit `go.sum` and merge `oidc-refactor` into `dev`.
+- **M0: make it run. Done 2026-11-14.**
+  - CI moved to the root `.github/`; the Dockerfile and `docker-compose.yml` were fixed.
+  - The backend builds, and all 102 tests pass against PostgreSQL 16. One bug was found and fixed.
+  - Still to do by the owner: check `docker compose up --build`, push, and merge `oidc-refactor` into `dev`.
 - **M1: restructure.** Move to `cmd/` and `internal/`, add the config package with validation, goose, slog, pgx and embedded assets. No behaviour changes.
 - **Groups and JWT:**
   - Rewrite `00001_init.sql`: groups with keys, `app_group`, group owners, the per-app access rule and require-MFA flag, key stages, keyring tags, the deletion log; no phone or birthdate.

@@ -1,8 +1,9 @@
 # Testing Guardian
 
-> **Status: the tests have been written but never executed** (the environment they were written in had no Go
-> toolchain or PostgreSQL). Expect to fix a few compile errors and a few wrong assumptions on the first run.
-> When something fails, read the message first: it may be a bug in the test, not in Guardian.
+> **Status:** the whole suite was run for the first time on 2026-11-14 (Go 1.24, PostgreSQL 16, with `-race`):
+> 102 tests, all passing, none skipped. The first run found one real bug, an app could not be registered through
+> the API without `post_logout_redirect_uris`, which is fixed. When something fails, read the message first: it
+> may be a bug in the test, not in Guardian.
 
 ## Running
 
