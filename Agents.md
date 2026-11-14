@@ -20,10 +20,21 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
 
 ## Environment
 - Owner works on Windows; repo is at `D:\Projekt\Guardian`.
-- Branches: `main`, `dev`, `oidc-refactor`. As of 2026-11-13, `oidc-refactor` is checked out and holds the "big oidc refactor" commit.
-- If the device shell fails with "hypervisor is not running" (virtualization off in BIOS), use the device stage/commit file tools instead of a shell on the machine.
-- After writing files to the device with the commit tool, check the sizes with a directory listing. A commit has twice written the *previous* version of a file; committing again with `force` fixed it.
-- The cloud sandbox has no network for package installs, so Go and Postgres tests cannot run there. Ask the owner to run them locally.
+- Branches: `main`, `dev`, `oidc-refactor`. Work happens on `oidc-refactor`. Nothing has been pushed or merged by an agent; the owner decides when.
+- **Where things can run (checked 2026-11-14):**
+  - **The cloud workspace** has Go 1.24, PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`) and gofmt, but no network. Go modules cannot be downloaded there.
+  - **The shell on the owner's PC** (`device_bash`, a Linux VM with the repo mounted at `$HOME/mnt/Guardian`) has git, python3, tar and gcc, but no Go, no Postgres, no Docker and no network.
+  - **Go dependencies** therefore come from `backend/vendor/` (the owner runs `go mod vendor` on Windows; the folder is git-ignored). Access to the owner's Go module cache folder was denied by policy; do not ask again.
+  - **Docker cannot run in either place.** The image and compose setup are verified by the owner, or by the `image` job in CI.
+- **Moving files between the two:**
+  - PC to cloud: `git archive` or `tar` in the VM into the repo folder, then `device_stage_files` on that one file. Delete the transfer file afterwards.
+  - Cloud to PC: write patches (`git diff --no-renames --binary`), tar them into `/mnt/user-data/outputs/`, send with `device_commit_files`, check the SHA-256 in the VM, then `git apply --index`.
+  - Renames that only change letter case (for example `dockerfile` to `Dockerfile`) fail in a patch on the Windows disk. Use `git mv` through a temporary name.
+- **Git in the VM:**
+  - Always pass `-c core.autocrlf=true`. The owner's Windows checkout has CRLF files, and without it they show as modified.
+  - The VM has no git identity. Commit with the author of the latest commit: `-c user.name="$(git log -1 --format=%an)" -c user.email="$(git log -1 --format=%ae)"`.
+  - Deleting files, including git's own lock files, needs `device_request_delete_permission` once per session.
+- After writing single files to the PC with `device_commit_files`, check size or checksum. It has several times written the *previous* version of a file; committing again with `force` fixed it.
 
 ## Repository map (current)
 - `backend/` — Go module `guardian`, Go 1.22 (to be bumped), chi, lib/pq, golang-jwt, prometheus. About 3,100 lines plus a large test suite.
@@ -160,11 +171,17 @@ charts/guardian/
   - External is for managed or HA databases.
   - A CloudNativePG option is planned for after 1.0.
 
-## Known bugs to fix first (milestone M0)
-- The CI workflow sits in `backend/.github/` and never runs; it must move to the root `.github/workflows/`.
-- The Dockerfile build `go build -o file ./...` fails with several packages. The image also uses `golang:latest`, runs as root, and the schema path does not match (`/schema.sql` vs `/app/schema.sql`).
-- `docker-compose.yml` uses `GUARDIAN_DB_*` and port 8010; the code expects `DB_*` and ports 3001/3002, and needs `KEY_ENCRYPTION_KEY`.
-- Admin routes mix `OnlyAdmin` and `RequirePermission`; any signed-in user can list all apps.
+## M0 progress
+- **Done and committed (2026-11-14):**
+  - gofmt on all Go code.
+  - A multi-stage distroless `backend/Dockerfile` (renamed from `dockerfile`) and `.dockerignore`.
+  - `docker-compose.yml` with the right `DB_*` names, ports 3001/3002, a dev key, Postgres 16 with a health check, and Mailpit.
+  - CI moved to `.github/workflows/backend.yml` (format check, vet, tests against Postgres, image build).
+  - `.gitattributes`, `.gitignore`, `README.md` and `TESTING.md` updates.
+- **Checked:** every Go file parses, and `schema.sql` applies cleanly twice on PostgreSQL 16.
+- **Not yet done:** `go build`, `go vet` and the tests have still never run, because the modules are missing. This waits for `backend/vendor/`.
+- **Not verified:** the Docker image build and `docker compose up`.
+- **Still open from the first read of the code:** admin routes mix `OnlyAdmin` and `RequirePermission`, and any signed-in user can list all apps. This goes away with the groups rewrite in 0.1.
 
 ## Login page design (approved)
 Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact/TCheh3oE3wEhtFxMxKY59J). It is to be implemented in the Go templates (milestone M3).
@@ -214,9 +231,9 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
   - **1.0:** hardening, docs, and ES256 if time allows.
 - **M0 scope:** CI location, Dockerfile, compose, tests compiling, protocol tests passing. Tests for introspection and the old permissions are deleted, not fixed.
-- **Next step:** start M0.
-  - The owner is enabling hardware virtualization in the BIOS so the device shell (`device_bash`) can run Go, Postgres and Docker on their PC.
-  - Check it with a trivial device command first; if it still fails, ask the owner to run commands and paste the output.
+- **Next step:** finish M0.
+  - Once `backend/vendor/` exists, tar it in the VM, stage it into the cloud workspace, then run `go build ./...`, `go vet ./...` and the tests against a local Postgres.
+  - Delete failing tests for introspection and the old permission model; fix the protocol tests.
 - `docs/ARCHITECTURE.md` and `INTEGRATION.md` still describe the old introspection design (they are marked as outdated). They are rewritten during 0.1.
 
 ## Working conventions
