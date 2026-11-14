@@ -1,34 +1,64 @@
+# Local development only. The passwords and keys below are throwaway values: never reuse them anywhere else.
+#
+#   docker compose up --build
+#
+# Guardian:  http://localhost:3001  (sign in as "admin" with ADMIN_INITIAL_PASSWORD below)
+# Internal:  http://localhost:3002  (/metrics, /healthz, /readyz; bound to this machine only)
+# Mailpit:   http://localhost:8025  (catches outgoing mail; used from release 0.3)
+
 services:
   backend:
     container_name: guardian-backend
-    image: guardian-backend:latest
+    image: guardian-backend:dev
     build:
       context: ./backend
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
     environment:
-      - GUARDIAN_DB_HOST=guardian-postgres
-      - GUARDIAN_DB_PORT=5432
-      - GUARDIAN_DB_USER=admin
-      - GUARDIAN_DB_PASSWORD=123
-      - GUARDIAN_DB_NAME=guardian
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: guardian
+      DB_PASSWORD: guardian-dev
+      DB_NAME: guardian
+      PUBLIC_ADDR: ":3001"
+      INTERNAL_ADDR: ":3002"
+      ISSUER_URL: http://localhost:3001
+      INTROSPECTION_URL: http://backend:3002/introspect
+      TRUSTED_PROXY_HOPS: "0"
+      # Dev-only key (base64 of 32 bytes). Generate a real one with: openssl rand -base64 32
+      KEY_ENCRYPTION_KEY: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtYW55d2hlcmU=
+      ADMIN_INITIAL_PASSWORD: guardian-dev-admin
     ports:
-      - "8010:8010"
+      - "3001:3001"
+      - "127.0.0.1:3002:3002"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   postgres:
     container_name: guardian-postgres
-    image: postgres:latest
+    # Major version pinned on purpose: a new major cannot read the old data files.
+    image: postgres:16
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: 123
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: guardian-dev
       POSTGRES_DB: guardian
-      PGDATA: /data/postgres
     volumes:
-      - postgres-db:/data/postgres
+      - postgres-db:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    container_name: guardian-mailpit
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:8025:8025"   # web UI
+      - "127.0.0.1:1025:1025"   # SMTP
 
 volumes:
   postgres-db:
-    driver: local

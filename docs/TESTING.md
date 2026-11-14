@@ -9,7 +9,7 @@
 Unit tests need nothing:
 
 ```
-go mod tidy          # first time: creates go.sum
+go mod download
 go test ./...        # database tests skip themselves
 ```
 
@@ -23,7 +23,7 @@ go test -race -count=1 ./...
 ```
 
 Each test process takes a Postgres advisory lock, so packages can run in parallel without `-p 1`.
-CI: `.github/workflows/test.yml` runs everything against a Postgres service container.
+CI: `.github/workflows/backend.yml` (at the repository root) runs everything against a Postgres service container and builds the image.
 
 ## Layers
 

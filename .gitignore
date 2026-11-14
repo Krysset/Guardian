@@ -1,1 +1,3 @@
 .env
+# Offline copy of Go dependencies (go mod vendor); not committed.
+backend/vendor/

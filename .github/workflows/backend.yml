@@ -1,9 +1,16 @@
-name: test
-on: [push, pull_request]
+name: backend
+on:
+  push:
+    paths: ["backend/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/backend.yml"]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     services:
       postgres:
         image: postgres:16
@@ -26,8 +33,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-      # go.sum is not committed yet; generate it (then commit it and replace this with `go mod download`)
-      - run: go mod tidy
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go mod download && go mod verify
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -race -count=1 -timeout 10m ./...
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the backend image
+        run: docker build -t guardian-backend:ci backend
