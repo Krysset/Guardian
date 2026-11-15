@@ -142,7 +142,7 @@ func accountFail(w http.ResponseWriter, err error) {
 	}
 }
 
-// getMe returns the signed-in account, and whether it is an administrator (for the console).
+// getMe returns the signed-in account, and whether it is an administrator (for the management UI).
 func getMe(w http.ResponseWriter, r *http.Request) {
 	acct, err := db.GetAccount(httpx.AccountID(r))
 	if err != nil {

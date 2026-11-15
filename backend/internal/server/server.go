@@ -95,7 +95,7 @@ func newServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
-// PublicRouter serves browsers and apps: hosted pages, the OIDC endpoints and /api/v1.
+// PublicRouter serves browsers and apps: sign-in pages, the OIDC endpoints and /api/v1.
 func PublicRouter() http.Handler {
 	r := chi.NewRouter()
 	// No request logger on purpose: it would log authorization codes found in query strings.

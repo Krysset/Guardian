@@ -58,7 +58,7 @@ button.secondary{background:#e3e5e8;color:#1a1a1a}.error{color:#b00020}.app{disp
 
 var tmpl = template.Must(template.New("").Parse(pageTemplates))
 
-// Render writes the named page with the headers every hosted page needs.
+// Render writes the named page with the headers every sign-in page needs.
 func Render(w http.ResponseWriter, status int, name string, data Page) {
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {

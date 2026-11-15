@@ -8,7 +8,7 @@ info:
     see docs/INTEGRATION.md and the discovery document at /.well-known/openid-configuration.
 
     **Who may call what**
-    - Routes marked `sessionCookie` are for a signed-in browser (the console). State-changing requests
+    - Routes marked `sessionCookie` are for a signed-in browser (the management UI). State-changing requests
       from another origin are refused unless the origin is listed in ALLOWED_ORIGINS.
     - Most of them need membership of the `guardian-admins` group. Group owners (members of a group's
       owner group) may see that group and manage its members.

@@ -1,4 +1,4 @@
-// Package web serves Guardian's own hosted pages: the HTML templates and the login page. The OIDC
+// Package web serves Guardian's own sign-in pages: the HTML templates and the login page. The OIDC
 // package renders its consent, logout and error pages with the same templates.
 package web
 
@@ -17,7 +17,7 @@ import (
 	db "guardian/internal/store"
 )
 
-// Mount registers the hosted pages at the root of the router.
+// Mount registers the sign-in pages at the root of the router.
 func Mount(r chi.Router) {
 	r.Get("/login", loginPage)
 	r.Post("/login", loginSubmit)

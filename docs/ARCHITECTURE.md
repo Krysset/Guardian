@@ -28,7 +28,7 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | **Two listeners**: public `:3001`, internal `:3002` | Metrics and probes are never reachable through the ingress, even if an ingress rule is wrong. |
 | Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login and sign-up volumes (1). |
 | Client IP from `X-Forwarded-For` only with `TRUSTED_PROXY_HOPS` | Behind an ingress the TCP peer is the proxy; trusting the header blindly lets attackers dodge limits. |
-| Origin check on `/api`, SameSite=Lax cookies, CSRF tokens on HTML forms | CSRF defence for the browser API and hosted pages. |
+| Origin check on `/api`, SameSite=Lax cookies, CSRF tokens on HTML forms | CSRF defence for the browser API and sign-in pages. |
 | The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |
 | At most 4 concurrent argon2 hashes | Each hash needs 64 MiB; unbounded logins would exhaust a memory-limited pod. |
 | Migrations with goose, embedded in the binary | One image, no SQL files beside it; a Postgres lock makes replicas take turns. |
@@ -56,7 +56,7 @@ flowchart LR
     I -->|/account, /admin, /_app| F["Frontend pods<br/>(planned, 0.4)"]
     I -->|everything else| P
     subgraph G[Guardian backend pods]
-      P["public :3001<br/>OIDC, hosted pages, /api"]
+      P["public :3001<br/>OIDC, sign-in pages, /api/v1"]
       N["internal :3002<br/>metrics, probes"]
     end
     A[Apps] -->|"/token (refresh), /userinfo,<br/>machine API"| I

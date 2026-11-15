@@ -41,11 +41,11 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `cmd/guardian/main.go` — the entry point: loads `.env` if present, loads and validates the configuration, sets up logging, runs the server.
   - `internal/config/` — every environment variable in one place, validated at startup; all problems are reported at once.
   - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
-    - Public `:3001`: OIDC, hosted pages, `/api`.
+    - Public `:3001`: OIDC, sign-in pages, `/api/v1`.
     - Internal `:3002`: `/metrics`, `/healthz`, `/readyz`.
   - HTTP packages (split in 0.1 part 4). Dependencies point one way: `httpx` <- `web` <- `oidc` <- `api`; `internalapi` uses only `httpx`.
     - `internal/httpx/` — shared by the others: settings (`Configure`, `Issuer`, session timeouts, cookie names), `JSON`/`Error`/`Success`/`DecodeJSON`, `ClientIP`, `SafeReturnTo`, `ValidRedirectURI`, session cookie and CSRF helpers, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `AdminOnly`, `RequireSameOrigin`, request metrics and `RateLimited`.
-    - `internal/web/` — hosted pages: `templates.go` (inline HTML, `Render`, `Message`, `Page`) and `login.go` (`/login`, login throttling, `guardian_logins_total`).
+    - `internal/web/` — sign-in pages: `templates.go` (inline HTML, `Render`, `Message`, `Page`) and `login.go` (`/login`, login throttling, `guardian_logins_total`).
     - `internal/oidc/` — the provider: `oidc.go` (`Mount`, `SetKeys`, discovery, JWKS, token metric), `authorize.go` (authorize and consent), `token.go` (`/token`, `issueTokens`, `BuildClaims`, `/revoke`), `userinfo.go`, `client.go` (client_credentials tokens, `VerifyClientToken`), `logout.go` (RP-initiated logout, `SendLogoutNotices`, back-channel logout).
     - `internal/api/` — the JSON API at `/api/v1`, described in `docs/openapi.yaml` (`TestOpenAPIDescribesEveryRoute` fails when they drift apart). `api.go` (the router, `list`, `pageLimit`), `account.go` (`/signup`, `/me`, `/accounts`), `groups.go`, `app.go` (`/apps`), `audit.go`, `machine.go` (`/apps/self`, Bearer client tokens checked by `oidc.VerifyClientToken`).
     - `internal/internalapi/` — internal router: `/metrics`, `/healthz`, `/readyz`.
@@ -132,14 +132,14 @@ charts/guardian/
   - Production should use an external HA Postgres.
   - Apps treat `invalid_grant` as a logout, but keep the session through Guardian network errors for about one token lifetime.
 - **Scheduled backups:** a CronJob writes to its own disk claim in 1.0; S3 comes in 1.x.
-- **Console hosting:** the same hostname with path routing (`/account` and `/admin` to the frontend, the rest to the backend); the console uses Guardian's session cookie. The owner wants replica control and multi-cluster support. Backends in several clusters share one Postgres, with no cluster-local state.
+- **Management UI hosting:** the same hostname with path routing (`/account` and `/admin` to the frontend, the rest to the backend); the management UI uses Guardian's session cookie. The owner wants replica control and multi-cluster support. Backends in several clusters share one Postgres, with no cluster-local state.
 - **Delegation:**
   - 1.0 has group owners: an owner group manages an owned group's members. Only global admins touch system groups, and owners can't change their own ownership. Delegated actions are audited.
   - Apps and their group links are global-admin only in 1.0. App owners come in 1.x.
 - **Recovery and MFA:**
   - A reset changes only the password; MFA still applies.
   - Recovery ladder: another factor, then a recovery code, then an audited admin reset.
-  - Protected changes need re-authentication at save (`reauth_required` → console dialog → retry), with a 5-minute grace period.
+  - Protected changes need re-authentication at save (`reauth_required` → management UI dialog → retry), with a 5-minute grace period.
   - MFA is mandatory for global admins and group owners.
   - Tokens carry `amr`. A per-app "require MFA" setting is enforced at sign-in; `acr_values` comes in 1.x.
   - Passkey-only accounts are allowed.
@@ -148,7 +148,7 @@ charts/guardian/
 - **GDPR:**
   - Deletion: 30-day grace period, then a hard-delete job, with the id added to the deletion log.
   - Audit log retention is 6 months by default; personal details are removed from the entries of erased accounts.
-  - "Download my data" export in the console.
+  - "Download my data" export in the account area.
   - `phone_number`, `birthdate` and the `phone` scope are removed.
   - Logs hold account ids only. `docs/DATA-PROTECTION.md` documents it all.
   - A restore re-applies the deletion log; `--apply-deletions` handles restoring an older backup.
@@ -160,7 +160,7 @@ charts/guardian/
   - Audited and counted in a metric.
   - Idempotent: single-step commands run in one transaction, and re-encryption resumes where it stopped.
 - Hosted auth pages (login, sign-up, consent, logout, reset, MFA) stay **server-rendered Go templates**: they work without JavaScript, allow a strict CSP and share the session cookie's origin.
-- The account and admin console is **Svelte 5 + SvelteKit (adapter-static) + TypeScript**, styled with plain CSS tokens; no Tailwind in 1.0. It runs on the same origin and uses the session cookie, so it needs no OIDC client of its own.
+- The management UI (account area `/account`, admin area `/admin`) is **Svelte 5 + SvelteKit (adapter-static) + TypeScript**, styled with plain CSS tokens; no Tailwind in 1.0. It runs on the same origin and uses the session cookie, so it needs no OIDC client of its own.
 - Migrations will use goose with embedded SQL; `schema.sql` becomes `00001_init.sql`. The driver moves to pgx (stdlib); logging to slog.
 - The API is `/api/v1` with REST verbs and checks through `guardian-admins` and group ownership, documented in `docs/openapi.yaml` (done in 0.1 part 5).
 - WebAuthn security keys and passkeys are **in 1.0**, built on the latest spec and library (go-webauthn), alongside TOTP and recovery codes. The login page's "Use a security key" button stays.
@@ -232,10 +232,10 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
 - **Two design reviews are complete.** `docs/ROADMAP.md` is the source of truth; if this file disagrees, it wins.
 - **No open confirmations.**
 - **Release plan:**
-  - **0.1 local:** M0, M1, groups and JWT, access-rule enforcement, `/api/v1`, hosted pages including sign-up; runs with docker-compose.
+  - **0.1 local:** M0, M1, groups and JWT, access-rule enforcement, `/api/v1`, sign-in pages including sign-up; runs with docker-compose.
   - **0.2 cluster:** minimal chart, backup and restore, install via Argo CD in staging.
   - **0.3 accounts:** email, TOTP, mandatory admin MFA, require-MFA enforcement, re-authentication, GDPR deletion and export, key and keyring rotation, abuse limits.
-  - **0.4 console:** account and admin console, group owners.
+  - **0.4 management UI:** account area, admin area, group owners.
   - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
   - **1.0:** hardening, docs, and ES256 if time allows.
 - **M1 is done** (2026-11-14), on branch `implement-m1`. The owner reviews changes before anything is committed: **do not commit on the owner's branches unless asked**; leave changes staged.
@@ -281,7 +281,7 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - Secret rotation: `grace_seconds` (0 to 7 days) keeps older secrets working that long.
     - Account paging orders by `lower(username) COLLATE "C"`, so it does not depend on the database locale.
     - `store.UpdateProfile` and `store.UpdateUsername` are now only used by tests; 0.3 (email verification) replaces them.
-  - **Part 6 (next):** the hosted pages in the approved design: login, sign-up with its notices, consent, logout, error, and the forced password change for `must_change_password`.
+  - **Part 6 (after the page designs):** the sign-in pages in the approved design: login, sign-up with its notices, consent, logout, error, and the forced password change for `must_change_password`.
   - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
 - **How to build and test in the cloud workspace:**
   - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.
@@ -289,6 +289,14 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - Use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
   - Postgres in the cloud workspace is killed between turns; restart it at the start of each command that needs it.
 - `docs/ARCHITECTURE.md` was rewritten for the current design on 2026-11-15 (staged with parts 2 and 3). Its four mermaid diagrams render with `mmdc`; keep them in sync when the design changes.
+
+## Terms, users and pages
+- **Sign-in pages:** served by the backend (`internal/web`, `internal/oidc`). **Management UI:** the SvelteKit frontend, with the **account area** (`/account`) and the **admin area** (`/admin`). Do not call it the "console": the owner read that as a terminal. The **CLI** (`guardian ...` via `kubectl exec`) is only for cluster operations; admins do everyday work in the admin area.
+- `docs/USERS.md`: the roles (Visitor, User, Group owner, App admin (1.x), Guardian admin, Operator, App) with inheritance, and every requirement with a stable id (V1, U12, O3, A18, P2, M1) and release tags. Never renumber ids; add new ones.
+- `docs/PAGES.md`: every page (S sign-in, AC account area, AD admin area, E emails) with the requirement ids it serves, and the reverse table. Keep both directions in step when either file changes.
+- Design work (2026-11-15): the owner wants, in order, users and requirements (done), pages (done), then the contents of each page, then design drafts of all pages on the design board, for one consistent look. The login page design is settled; whether other pages reuse its layout is open.
+- The owner wants questions numbered so they can answer by number.
+- Decided 2026-11-15: personal data only where someone went to see it (admin overview with counts only, account start page without personal details, email masked on the profile until shown); single-app groups bound permanently to one app (backend in 0.1, not built yet); copying groups and hidden groups are 1.x.
 
 ## Working conventions
 - Keep this file and `docs/ROADMAP.md` current; they are the hand-off between sessions.

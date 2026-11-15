@@ -59,7 +59,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
 - **System group `guardian-admins`** holds all admin rights in Guardian.
   - It always has at least one active member. Guardian refuses to remove, disable or delete the last one.
   - There is no break-glass command. Recovery for a locked-out sole admin is a documented SQL statement, run by someone with database access.
-  - The console warns when there is only one admin. MFA setup makes the user confirm a recovery code before it finishes.
+  - The admin area warns when there is only one admin. MFA setup makes the user confirm a recovery code before it finishes.
 - **Apps only see the groups linked to them** (`app_group`).
 - **Tables:** `user_group` ("group" is a reserved word in SQL), `group_member` and `app_group`.
 - **Per-app access rule:**
@@ -67,6 +67,9 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - **"Anyone with an account"** is the alternative.
 - **Per-app "require MFA" setting.** Guardian enforces it during sign-in, either with the second-factor prompt or by walking the user through setting one up.
 - **Group owners (delegation):**
+  - Owners add members by typing an exact username or email. There are no suggestions, and the only answers are "No user found" or "User added".
+  - Owners see which apps their groups are linked to, and users see the groups they are in.
+- **Single-app groups:** a group can be bound to one named app, permanently. It can never be linked to another app; when its app is deleted it stays, bound to nothing, until the clean-up after audit retention removes it. New groups ask whether they are for one app only, with no preselected answer.
   - A group can name an owner group, whose members manage the owned group's membership.
   - Only global admins change system groups or ownership.
   - Apps, and linking groups to apps, are global-admin only in 1.0.
@@ -100,7 +103,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
 - **Re-authentication before protected changes:**
   - Protected changes: username, email, password, MFA, recovery codes, account deletion, sessions and connected apps.
   - The API answers `403 reauth_required` unless the session was re-authenticated within the last 5 minutes.
-  - The console shows one shared dialog and retries the save automatically.
+  - The management UI shows one shared dialog and retries the save automatically.
 - **Abuse protection:**
   - Login failures are counted per username *and* IP together: 5 in 15 minutes blocks that IP for that account.
   - A separate per-IP limit applies across all accounts.
@@ -170,13 +173,13 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - The chart defaults to 2 replicas plus a PDB.
   - Target: refresh p99 under 100 ms.
 - **Routing:**
-  - One hostname. `/account`, `/admin` and `/_app` (the console's script and style files) go to the frontend; everything else goes to the backend.
+  - One hostname. `/account`, `/admin` and `/_app` (the management UI's script and style files) go to the frontend; everything else goes to the backend.
   - The chart offers an optional standard `Ingress` (with `className`) and an optional Gateway API `HTTPRoute` (with `parentRefs`). It never creates a Gateway, and contains nothing Traefik-specific.
   - The NetworkPolicy ingress source is a value. HTTPS is required unless a dev flag is set. `TRUSTED_PROXY_HOPS` is a value, default 1.
 
 ### Data protection (GDPR)
 - **Account deletion:**
-  - Self-service in the console, as a protected change.
+  - Self-service in the account area, as a protected change.
   - The account is disabled at once and hard-deleted after a 30-day grace period (configurable), during which an admin can restore it.
   - Admins can also delete, with an "erase now" option.
   - Hard-deleted ids go into the deletion log, which holds ids only, no personal data.
@@ -196,10 +199,10 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - `golang-jwt` for tokens, `go-webauthn/webauthn` for WebAuthn, `pquerna/otp` for TOTP, `filippo.io/age` for backup encryption, and `net/smtp` behind a `Mailer` interface.
   - Everything is embedded (migrations, templates, static files).
   - The image is distroless, non-root, with a read-only root filesystem.
-- **Hosted pages** (login, sign-up, consent, logout, reset, MFA): server-rendered Go `html/template` in the approved Guardian design. They work without JavaScript, except for the security-key prompt.
-- **Console** (`/account`, `/admin`):
+- **Sign-in pages** (login, sign-up, consent, logout, reset, MFA): server-rendered Go `html/template` in the approved Guardian design. They work without JavaScript, except for the security-key prompt.
+- **Management UI** (the account area `/account` and the admin area `/admin`; called the "console" before 2026-11-15). Admins do all everyday work here; the CLI is only for cluster operations:
   - Svelte 5 + SvelteKit (`adapter-static`) + TypeScript.
-  - Plain CSS with tokens shared with the hosted pages.
+  - Plain CSS with tokens shared with the sign-in pages.
   - Types generated from `docs/openapi.yaml`.
   - Served by `nginx-unprivileged` as its own deployment, on the same origin, using Guardian's session cookie.
 - **Chart:** Helm, usable with plain Helm and Argo CD.
@@ -218,7 +221,7 @@ guardian/
 │   │   ├── config/  store/  auth/  oidc/  api/  internalapi/  web/  mail/  httpx/  backup/  testutil/
 │   ├── e2e/
 │   └── Dockerfile
-├── frontend/                      # SvelteKit console, Dockerfile, nginx.conf
+├── frontend/                      # SvelteKit management UI, Dockerfile, nginx.conf
 ├── charts/guardian/               # see Agents.md for the template list
 └── docs/
     ├── ROADMAP.md, ARCHITECTURE.md, INTEGRATION.md, TESTING.md
@@ -247,7 +250,8 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
   - **Done 2026-11-15:** the split of `internal/api` into `httpx`, `web`, `oidc`, `internalapi` and `api`. No change to behaviour.
 - **API and pages:**
   - **Done 2026-11-15:** `/api/v1` with REST routes and `docs/openapi.yaml` (kept in step with the router by a test); admin checks through `guardian-admins`; account search, disabling and admin-set passwords; app edits and secret rotation; the audit log.
-  - The hosted login, sign-up (with its notices), consent, logout and error pages in the approved design, and the forced password change after an admin-set password.
+  - The sign-in pages in the approved design: login, sign-up (with its notices), consent, logout and error pages, and the forced password change after an admin-set password.
+  - Single-app groups in the backend: a group can be bound permanently to one app and then cannot be linked to any other (`docs/USERS.md` A27).
 - **Done when:** with docker-compose, a test app and Grafana sign in through OIDC and receive the right groups.
 
 ### 0.2: it runs in the cluster
@@ -265,16 +269,17 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - Abuse protection (login limits and the honeypot).
 - **Done when:** end-to-end tests cover reset, verification, MFA sign-in, re-authentication, deletion, and key and keyring rotation.
 
-### 0.4: console
-- The SvelteKit console:
-  - `/account`: profile, security, sessions, connected apps, data export, deletion;
-  - `/admin`: accounts, apps, groups, audit log.
+### 0.4: management UI
+- The SvelteKit management UI (pages in `docs/PAGES.md`):
+  - `/account`: a start page without personal details, profile (email masked until shown), security, sessions, connected apps, data export, deletion;
+  - `/admin`: an overview of aggregated figures as the start page (no personal data on it), accounts (including signing an account out everywhere), apps, groups, audit log.
 - Group owners and their scoped admin view.
-- **Done when:** everything in the console list can be done without curl.
+- **Done when:** everything in the management UI list can be done without curl.
 
 ### 0.5: complete
 - WebAuthn and passkeys, including passwordless sign-in.
 - Scheduled backups, audit retention, and migration job mode (Helm hooks and Argo CD waves).
+- Clean-up of single-app groups whose app was deleted longer ago than the audit retention period.
 - The full chart: frontend deployment, HPA, PDB, NetworkPolicy, ServiceMonitor, `ci/` values tested with chart-testing on kind.
 - Release workflow (images to GHCR, chart as OCI).
 - SonarQube integrated and its staleness behaviour documented.
@@ -306,6 +311,8 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 ## 6. After 1.0 (1.x candidates)
 
 - **App owners:** an owner group edits its app and links only groups it owns.
+- **Copying a group** with its members, as a new, unrelated group (`docs/USERS.md` A29).
+- **Hidden groups,** left out of a member's own group list, only if a need arises (`docs/USERS.md` A26).
 - **Access requests:** requests to join a group, and a "request access" screen when an app's access rule denies sign-in.
 - **Rotating refresh tokens for public clients** (mobile apps and backend-less SPAs), with reuse detection.
 - **`acr_values`:** apps can demand MFA for a single sign-in.
@@ -321,3 +328,6 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-14: second review. Replaced refresh rotation with stable refresh tokens for confidential apps (public clients get none until 1.x). Added groups in the ID token and userinfo, logout on membership removal, lean access tokens, group keys, session timeouts, the last-admin rule, sign-up notices, the honest limit of emergency key revocation, the post-restore checklist and the backup manifest. Split the first release in two (0.1 local, 0.2 cluster), giving 0.1 to 0.5 before 1.0. Access-rule enforcement moved to 0.1.
 - 2026-11-15: no legacy-option warnings before 1.0 (the `SESSION_TTL` refusal was removed). The old yUML diagrams were deleted, with a reminder to recreate that documentation before 1.0. The split of `internal/api` was done before the review of parts 2 and 3.
 - 2026-11-15: `/api/v1` replaced the old routes without aliases. Users set their own email only once verification exists (0.3); emails set by administrators count as verified.
+- 2026-11-15: the "console" is now called the management UI (account area and admin area), and the hosted pages the sign-in pages. `docs/USERS.md` lists the users and their requirements, `docs/PAGES.md` the pages. Decided: users see their groups, owners see linked apps and add members by exact username or email, admins can sign an account out everywhere. App admins stay in 1.x but their part is documented. Proposed, not yet decided: hidden groups and single-app groups.
+- 2026-11-15: hidden groups moved to the 1.x candidates. The admin area opens on an overview with aggregated figures only; pages with personal data are opened deliberately.
+- 2026-11-15: single-app groups decided (backend in 0.1, clean-up with audit retention in 0.5). Copying groups added to the 1.x candidates. Personal data appears only where someone went to see it: the account area also opens on a start page without personal details, and the profile masks the email until shown.

@@ -16,7 +16,7 @@ import (
 
 // Config is everything Guardian needs to start.
 type Config struct {
-	// PublicAddr serves browsers and apps (hosted pages, OIDC endpoints, /api). It sits behind the ingress.
+	// PublicAddr serves browsers and apps (sign-in pages, OIDC endpoints, /api/v1). It sits behind the ingress.
 	PublicAddr string
 	// InternalAddr serves /metrics, /healthz and /readyz. It must only be reachable in the cluster.
 	InternalAddr string

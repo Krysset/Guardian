@@ -8,7 +8,7 @@ Guardian is a hobby project under active development. It is not ready for produc
 ## Status
 
 Work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md). The backend (Go and PostgreSQL) has the OIDC core. The
-console frontend and the Helm chart are not built yet.
+management UI (the web frontend for `/account` and `/admin`) and the Helm chart are not built yet.
 
 ## Run it locally
 
@@ -55,4 +55,5 @@ GUARDIAN_TEST_DB=1 DB_HOST=localhost DB_USER=postgres DB_NAME=guardian_test go t
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how Guardian is built and why.
 - [docs/INTEGRATION.md](docs/INTEGRATION.md): how to connect an app.
 - [docs/openapi.yaml](docs/openapi.yaml): the JSON API, `/api/v1`.
+- [docs/USERS.md](docs/USERS.md) and [docs/PAGES.md](docs/PAGES.md): who uses Guardian, what they need, and the pages that serve it.
 - [Agents.md](Agents.md): notes for AI agents working on this repository.
