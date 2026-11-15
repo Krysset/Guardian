@@ -30,9 +30,9 @@ func call(h http.HandlerFunc, r *http.Request) *httptest.ResponseRecorder {
 }
 
 func TestDiscoveryDocument(t *testing.T) {
-	oldIssuer, oldURL := Issuer, IntrospectionURL
-	Issuer, IntrospectionURL = "https://auth.test", ""
-	t.Cleanup(func() { Issuer, IntrospectionURL = oldIssuer, oldURL })
+	oldIssuer := Issuer
+	Issuer = "https://auth.test"
+	t.Cleanup(func() { Issuer = oldIssuer })
 
 	fetch := func() map[string]any {
 		rec := call(discovery, httptest.NewRequest("GET", "/.well-known/openid-configuration", nil))
@@ -51,13 +51,14 @@ func TestDiscoveryDocument(t *testing.T) {
 		"issuer": "https://auth.test", "authorization_endpoint": "https://auth.test/authorize",
 		"token_endpoint": "https://auth.test/token", "userinfo_endpoint": "https://auth.test/userinfo",
 		"jwks_uri": "https://auth.test/jwks.json", "end_session_endpoint": "https://auth.test/logout",
+		"revocation_endpoint": "https://auth.test/revoke",
 	} {
 		if m[key] != want {
 			t.Errorf("%s = %v, want %s", key, m[key], want)
 		}
 	}
 	if _, present := m["introspection_endpoint"]; present {
-		t.Error("introspection_endpoint must not be advertised unless configured")
+		t.Error("introspection was removed and must not be advertised")
 	}
 	asStrings := func(key string) []string {
 		var out []string
@@ -72,7 +73,7 @@ func TestDiscoveryDocument(t *testing.T) {
 	if got := asStrings("code_challenge_methods_supported"); len(got) != 1 || got[0] != "S256" {
 		t.Errorf("PKCE methods = %v (plain must not be offered)", got)
 	}
-	if got := asStrings("grant_types_supported"); strings.Join(got, ",") != "authorization_code,refresh_token" {
+	if got := asStrings("grant_types_supported"); strings.Join(got, ",") != "authorization_code,refresh_token,client_credentials" {
 		t.Errorf("grant types = %v", got)
 	}
 	if got := asStrings("id_token_signing_alg_values_supported"); len(got) != 1 || got[0] != "RS256" {
@@ -81,10 +82,13 @@ func TestDiscoveryDocument(t *testing.T) {
 	if m["backchannel_logout_supported"] != true || m["backchannel_logout_session_supported"] != true {
 		t.Error("back-channel logout must be advertised")
 	}
-
-	IntrospectionURL = "http://guardian-internal.guardian.svc:3002/introspect"
-	if got := fetch()["introspection_endpoint"]; got != IntrospectionURL {
-		t.Errorf("introspection_endpoint = %v", got)
+	scopes := strings.Join(asStrings("scopes_supported"), ",")
+	if !strings.Contains(scopes, "groups") || strings.Contains(scopes, "phone") {
+		t.Errorf("scopes = %v, want groups and no phone", scopes)
+	}
+	claims := strings.Join(asStrings("claims_supported"), ",")
+	if !strings.Contains(claims, "groups") || !strings.Contains(claims, "amr") || strings.Contains(claims, "phone") {
+		t.Errorf("claims = %v, want groups and amr and no phone claims", claims)
 	}
 }
 
@@ -97,8 +101,8 @@ func TestInternalRouterBasics(t *testing.T) {
 		t.Errorf("/healthz = %d", rec.Code)
 	}
 
-	// introspection must not be reachable with GET, and the public API must not exist on this listener
-	for _, c := range []struct{ method, path string }{{"GET", "/introspect"}, {"GET", "/authorize"}, {"POST", "/token"}, {"GET", "/login"}} {
+	// introspection is gone, and the public API must not exist on this listener
+	for _, c := range []struct{ method, path string }{{"POST", "/introspect"}, {"GET", "/authorize"}, {"POST", "/token"}, {"GET", "/login"}} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
 		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
@@ -113,55 +117,56 @@ func TestInternalRouterBasics(t *testing.T) {
 	}
 }
 
-func TestIntrospectRejectsUnauthenticatedCallers(t *testing.T) {
-	h := GetInternalRouter()
-	before := promtest.ToFloat64(introspections.WithLabelValues("unauthorized"))
-
-	post := func(basicUser, basicPass string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/introspect", strings.NewReader("token=abc"))
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if basicUser != "" {
-			r.SetBasicAuth(basicUser, basicPass)
-		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, r)
-		return rec
+func postForm(h http.HandlerFunc, body, basicUser, basicPass string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if basicUser != "" {
+		r.SetBasicAuth(basicUser, basicPass)
 	}
+	return call(h, r)
+}
 
-	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"no credentials":      post("", ""),
-		"malformed client id": post("not-a-uuid", "secret"),
+func TestTokenAndRevokeRejectUnauthenticatedClients(t *testing.T) {
+	before := promtest.ToFloat64(tokenRequests.WithLabelValues("refresh_token", "refused"))
+	for _, ep := range []struct {
+		name string
+		h    http.HandlerFunc
+		body string
+	}{
+		{"token", tokenEndpoint, "grant_type=refresh_token&refresh_token=abc"},
+		{"revoke", revokeEndpoint, "token=abc"},
 	} {
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s: status %d, want 401", name, rec.Code)
-		}
-		if rec.Header().Get("WWW-Authenticate") == "" {
-			t.Errorf("%s: missing WWW-Authenticate", name)
-		}
-		if rec.Header().Get("Cache-Control") != "no-store" {
-			t.Errorf("%s: introspection responses must be no-store", name)
-		}
-		var body map[string]string
-		json.Unmarshal(rec.Body.Bytes(), &body)
-		if body["error"] != "invalid_client" {
-			t.Errorf("%s: error = %q", name, body["error"])
-		}
-		if strings.Contains(rec.Body.String(), `"active"`) {
-			t.Errorf("%s: an unauthenticated caller must learn nothing about the token", name)
+		for name, rec := range map[string]*httptest.ResponseRecorder{
+			"no credentials":      postForm(ep.h, ep.body, "", ""),
+			"malformed client id": postForm(ep.h, ep.body, "not-a-uuid", "secret"),
+		} {
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("%s, %s: status %d, want 401", ep.name, name, rec.Code)
+			}
+			if rec.Header().Get("WWW-Authenticate") == "" || rec.Header().Get("Cache-Control") != "no-store" {
+				t.Errorf("%s, %s: headers %v", ep.name, name, rec.Header())
+			}
+			var body map[string]string
+			json.Unmarshal(rec.Body.Bytes(), &body)
+			if body["error"] != "invalid_client" {
+				t.Errorf("%s, %s: error = %q", ep.name, name, body["error"])
+			}
 		}
 	}
-	if got := promtest.ToFloat64(introspections.WithLabelValues("unauthorized")); got != before+2 {
-		t.Errorf("unauthorized counter went %v -> %v, want +2", before, got)
+	if got := promtest.ToFloat64(tokenRequests.WithLabelValues("refresh_token", "refused")); got != before+2 {
+		t.Errorf("refused counter went %v -> %v, want +2", before, got)
+	}
+	// whatever a client sends as grant_type, the metric keeps a fixed set of labels
+	if grantLabel("../../etc") != "other" || grantLabel("refresh_token") != "refresh_token" {
+		t.Error("grantLabel lets arbitrary values through")
 	}
 }
 
-func TestIntrospectRejectsOversizedBodies(t *testing.T) {
-	r := httptest.NewRequest("POST", "/introspect", strings.NewReader("token="+strings.Repeat("a", 100_000)))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	GetInternalRouter().ServeHTTP(rec, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status %d, want 400", rec.Code)
+func TestTokenAndRevokeRejectOversizedBodies(t *testing.T) {
+	for name, h := range map[string]http.HandlerFunc{"token": tokenEndpoint, "revoke": revokeEndpoint} {
+		if rec := postForm(h, "token="+strings.Repeat("a", 100_000), "", ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, rec.Code)
+		}
 	}
 }
 
@@ -233,7 +238,7 @@ func TestAddAppValidation(t *testing.T) {
 		"redirect with fragment":      with("redirect_uris", []string{"https://billing.test/cb#x"}),
 		"bad post-logout uri":         with("post_logout_redirect_uris", []string{"ftp://x/y"}),
 		"bad back-channel uri":        with("backchannel_logout_uri", "http://billing.test/bcl"),
-		"ttl too small":               with("access_token_ttl_seconds", 59),
+		"ttl too small":               with("access_token_ttl_seconds", 14),
 		"unknown access rule":         with("access_rule", "everyone"),
 		"group id is not an id":       with("group_ids", []string{"nope"}),
 		"ttl too large":               with("access_token_ttl_seconds", 86401),

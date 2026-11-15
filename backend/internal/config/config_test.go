@@ -17,8 +17,9 @@ func setValid(t *testing.T) {
 		"DB_HOST": "db", "DB_USER": "guardian", "DB_NAME": "guardian", "DB_PASSWORD": "",
 		"DB_PORT": "", "DB_SSLMODE": "", "DB_MAX_CONNS": "",
 		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEY": validKey,
-		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "", "INTROSPECTION_URL": "",
-		"SESSION_TTL": "", "TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
+		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "",
+		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "",
+		"TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
 		"LOG_FORMAT": "", "LOG_LEVEL": "",
 	} {
 		t.Setenv(k, v)
@@ -34,8 +35,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.PublicAddr != ":3001" || cfg.InternalAddr != ":3002" {
 		t.Errorf("addresses = %q, %q", cfg.PublicAddr, cfg.InternalAddr)
 	}
-	if cfg.SessionTTL != 7*24*time.Hour || cfg.TrustedProxyHops != 0 {
-		t.Errorf("session ttl = %v, hops = %d", cfg.SessionTTL, cfg.TrustedProxyHops)
+	if cfg.SessionIdleTimeout != 7*24*time.Hour || cfg.SessionMaxLifetime != 30*24*time.Hour || cfg.TrustedProxyHops != 0 {
+		t.Errorf("session idle = %v, max = %v, hops = %d", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime, cfg.TrustedProxyHops)
 	}
 	if cfg.DB.Port != 5432 || cfg.DB.SSLMode != "disable" || cfg.DB.MaxConns != 20 {
 		t.Errorf("db = %+v", cfg.DB)
@@ -52,8 +53,8 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 	setValid(t)
 	for k, v := range map[string]string{
 		"PUBLIC_ADDR": ":8080", "INTERNAL_ADDR": ":8081", "ISSUER_URL": "https://auth.example.com/",
-		"ALLOWED_ORIGINS": " https://a.example/ , ,https://b.example", "INTROSPECTION_URL": "http://internal/introspect",
-		"SESSION_TTL": "2h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
+		"ALLOWED_ORIGINS":      " https://a.example/ , ,https://b.example",
+		"SESSION_IDLE_TIMEOUT": "2h", "SESSION_MAX_LIFETIME": "12h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
 		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret",
 		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug",
 	} {
@@ -69,8 +70,8 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 	if got := strings.Join(cfg.AllowedOrigins, "|"); got != "https://a.example|https://b.example" {
 		t.Errorf("origins = %q", got)
 	}
-	if cfg.PublicAddr != ":8080" || cfg.InternalAddr != ":8081" || cfg.IntrospectionURL != "http://internal/introspect" ||
-		cfg.SessionTTL != 2*time.Hour || cfg.TrustedProxyHops != 2 || cfg.AdminInitialPassword != "pw" {
+	if cfg.PublicAddr != ":8080" || cfg.InternalAddr != ":8081" || cfg.SessionIdleTimeout != 2*time.Hour ||
+		cfg.SessionMaxLifetime != 12*time.Hour || cfg.TrustedProxyHops != 2 || cfg.AdminInitialPassword != "pw" {
 		t.Errorf("cfg = %+v", cfg)
 	}
 	if cfg.DB.Port != 6543 || cfg.DB.SSLMode != "require" || cfg.DB.MaxConns != 5 || cfg.DB.Password != "secret" {
@@ -85,8 +86,8 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	setValid(t)
 	for k, v := range map[string]string{
 		"DB_HOST": "", "DB_PORT": "abc", "DB_SSLMODE": "maybe", "DB_MAX_CONNS": "0",
-		"ISSUER_URL": "", "KEY_ENCRYPTION_KEY": "", "SESSION_TTL": "soon", "TRUSTED_PROXY_HOPS": "-1",
-		"LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
+		"ISSUER_URL": "", "KEY_ENCRYPTION_KEY": "", "SESSION_IDLE_TIMEOUT": "soon", "SESSION_MAX_LIFETIME": "-1h",
+		"TRUSTED_PROXY_HOPS": "-1", "LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
 	} {
 		t.Setenv(k, v)
 	}
@@ -95,13 +96,27 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 		t.Fatal("Load accepted a broken configuration")
 	}
 	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "ISSUER_URL",
-		"KEY_ENCRYPTION_KEY", "SESSION_TTL", "TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL"} {
+		"KEY_ENCRYPTION_KEY", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
+		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("the error does not mention %s:\n%v", name, err)
 		}
 	}
 	if cfg.Log.Format != "json" || cfg.Log.Level != "info" {
 		t.Errorf("log settings must stay usable when invalid, got %+v", cfg.Log)
+	}
+}
+
+func TestIdleTimeoutCannotExceedTheMaximumLifetime(t *testing.T) {
+	setValid(t)
+	t.Setenv("SESSION_IDLE_TIMEOUT", "48h")
+	t.Setenv("SESSION_MAX_LIFETIME", "24h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "must not be longer") {
+		t.Errorf("idle longer than the maximum: %v", err)
+	}
+	t.Setenv("SESSION_IDLE_TIMEOUT", "24h")
+	if _, err := Load(); err != nil {
+		t.Errorf("idle equal to the maximum must be accepted: %v", err)
 	}
 }
 

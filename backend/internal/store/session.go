@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -11,49 +12,59 @@ import (
 // read path is a pure SELECT.
 const touchInterval = 5 * time.Minute
 
-// CreateSession stores a new SSO session. sessionHash is the hash of the cookie value.
-func CreateSession(accountID, sessionHash, ip, userAgent string, ttl time.Duration) (Session, error) {
+// CreateSession stores a new SSO session. sessionHash is the hash of the cookie value. The session ends
+// maxLifetime from now at the latest, whatever the activity.
+func CreateSession(accountID, sessionHash, ip, userAgent string, maxLifetime time.Duration) (Session, error) {
 	s := Session{AccountID: accountID}
 	err := GetDatabaseConnection().QueryRow(
 		`INSERT INTO session (session_hash, account_id, ip_address, user_agent, expires_at)
 		 VALUES ($1, $2, NULLIF($3, '')::inet, NULLIF($4, ''), $5)
-		 RETURNING id, auth_time, expires_at, last_seen_at`,
-		sessionHash, accountID, ip, userAgent, time.Now().Add(ttl)).Scan(&s.ID, &s.AuthTime, &s.ExpiresAt, &s.LastSeenAt)
+		 RETURNING id, auth_time, amr, expires_at, last_seen_at`,
+		sessionHash, accountID, ip, userAgent, time.Now().Add(maxLifetime)).
+		Scan(&s.ID, &s.AuthTime, scanArray(&s.AMR), &s.ExpiresAt, &s.LastSeenAt)
 	return s, err
 }
 
-// GetSessionByHash returns the session only if it is live and its account is active.
-func GetSessionByHash(sessionHash string) (Session, error) {
+// liveSession is the one definition of "this session can still be used": not revoked, before its
+// absolute end, used within the idle timeout ($2, in seconds), and its account is active.
+const liveSession = `SELECT s.id, s.account_id, s.auth_time, s.amr, s.expires_at, s.last_seen_at
+	FROM session s JOIN account a ON a.id = s.account_id
+	WHERE %s = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+	  AND s.last_seen_at > now() - make_interval(secs => $2)
+	  AND a.status = 'active' AND a.deleted_at IS NULL`
+
+func loadLiveSession(column, value string, idleTimeout time.Duration) (Session, error) {
 	var s Session
-	err := GetDatabaseConnection().QueryRow(
-		`SELECT s.id, s.account_id, s.auth_time, s.expires_at, s.last_seen_at
-		 FROM session s JOIN account a ON a.id = s.account_id
-		 WHERE s.session_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
-		   AND a.status = 'active' AND a.deleted_at IS NULL`, sessionHash).
-		Scan(&s.ID, &s.AccountID, &s.AuthTime, &s.ExpiresAt, &s.LastSeenAt)
+	err := GetDatabaseConnection().QueryRow(fmt.Sprintf(liveSession, column), value, idleTimeout.Seconds()).
+		Scan(&s.ID, &s.AccountID, &s.AuthTime, scanArray(&s.AMR), &s.ExpiresAt, &s.LastSeenAt)
 	if err != nil {
 		return Session{}, err
 	}
+	// Using a session keeps it from going idle. The write is skipped when the last one was recent.
 	if time.Since(s.LastSeenAt) > touchInterval {
 		GetDatabaseConnection().Exec(`UPDATE session SET last_seen_at = now() WHERE id = $1`, s.ID)
 	}
 	return s, nil
 }
 
-func SessionActive(sessionID string) bool {
+// GetSessionByHash returns the session for a cookie value's hash, only if it is live (see liveSession).
+func GetSessionByHash(sessionHash string, idleTimeout time.Duration) (Session, error) {
+	return loadLiveSession("s.session_hash", sessionHash, idleTimeout)
+}
+
+// GetLiveSession returns the session with this id, only if it is live (see liveSession). Token refreshes
+// and userinfo use it, so an app that keeps refreshing keeps the session from going idle.
+func GetLiveSession(sessionID string, idleTimeout time.Duration) (Session, error) {
 	if !IsUUID(sessionID) {
-		return false
+		return Session{}, sql.ErrNoRows
 	}
-	var ok bool
-	err := GetDatabaseConnection().QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM session WHERE id = $1 AND revoked_at IS NULL AND expires_at > now())`,
-		sessionID).Scan(&ok)
-	return err == nil && ok
+	return loadLiveSession("s.id::text", sessionID, idleTimeout)
 }
 
 // RevokeSession ends a session and every refresh token issued under it, and returns the apps that
-// need a back-channel logout notification. Access tokens of the session stop being valid by
-// themselves (introspection requires a non-revoked session). Returns no targets if already revoked.
+// need a back-channel logout notification. Access tokens already issued under the session cannot be
+// refreshed any more and are refused by userinfo; they expire within the app's token lifetime.
+// Returns no targets if already revoked.
 func RevokeSession(sessionID string) ([]LogoutTarget, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {

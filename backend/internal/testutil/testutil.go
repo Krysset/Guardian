@@ -204,10 +204,11 @@ type AppOptions struct {
 	TTLSeconds     int
 	AccessRule     string   // "anyone" by default in tests, so every account may sign in; set "groups" to test the rule
 	GroupIDs       []string // groups linked to the app
+	MachineAPI     bool     // allow the client_credentials grant (machine API)
 }
 
 // CreateApp registers an app and returns it with its plaintext client secret ("" for public apps).
-// Defaults: confidential, redirect https://<name>.test/callback, scopes openid profile email offline_access,
+// Defaults: confidential, redirect https://<name>.test/callback, scopes openid profile email groups offline_access,
 // open to every account.
 func CreateApp(t testing.TB, name string, o AppOptions) (db.App, string) {
 	t.Helper()
@@ -218,7 +219,7 @@ func CreateApp(t testing.TB, name string, o AppOptions) (db.App, string) {
 		o.PostLogoutURIs = []string{"https://" + name + ".test/"}
 	}
 	if o.Scopes == nil {
-		o.Scopes = []string{"openid", "profile", "email", "offline_access"}
+		o.Scopes = []string{"openid", "profile", "email", "groups", "offline_access"}
 	}
 	if o.AccessRule == "" {
 		o.AccessRule = "anyone"
@@ -241,6 +242,14 @@ func CreateApp(t testing.TB, name string, o AppOptions) (db.App, string) {
 	}, o.Scopes, secretHash)
 	if err != nil {
 		t.Fatalf("create app %s: %v", name, err)
+	}
+	if o.MachineAPI {
+		if err := db.SetMachineAccess(app.ID, true); err != nil {
+			t.Fatalf("machine access for %s: %v", name, err)
+		}
+		if app, err = db.GetApp(app.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return app, secret
 }
@@ -299,21 +308,4 @@ func Session(t testing.TB, accountID string) (db.Session, string) {
 		t.Fatal(err)
 	}
 	return s, cookie
-}
-
-// Token stores an opaque access token directly and returns the plaintext token. A negative ttl makes it
-// already expired; an empty sessionID makes it session-less.
-func Token(t testing.TB, app db.App, accountID, sessionID string, ttl time.Duration, scopes ...string) string {
-	t.Helper()
-	if len(scopes) == 0 {
-		scopes = []string{"openid"}
-	}
-	token, err := auth.RandomToken(32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SaveAccessToken(auth.HashToken(token), app.ID, accountID, sessionID, scopes, time.Now().Add(ttl)); err != nil {
-		t.Fatal(err)
-	}
-	return token
 }

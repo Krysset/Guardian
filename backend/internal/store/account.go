@@ -10,7 +10,7 @@ import (
 
 const accountColumns = `id, username, COALESCE(display_name, ''), COALESCE(given_name, ''), COALESCE(family_name, ''),
 	COALESCE(picture_url, ''), COALESCE(locale, ''), COALESCE(zoneinfo, ''),
-	COALESCE(email, ''), email_verified_at IS NOT NULL, COALESCE(phone_number, ''), phone_verified_at IS NOT NULL,
+	COALESCE(email, ''), email_verified_at IS NOT NULL,
 	status, must_change_password, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -18,7 +18,7 @@ type scanner interface{ Scan(dest ...any) error }
 func scanAccount(s scanner, extra ...any) (Account, error) {
 	var a Account
 	dest := []any{&a.ID, &a.Username, &a.DisplayName, &a.GivenName, &a.FamilyName, &a.PictureURL, &a.Locale, &a.Zoneinfo,
-		&a.Email, &a.EmailVerified, &a.PhoneNumber, &a.PhoneVerified, &a.Status, &a.MustChangePassword, &a.CreatedAt, &a.UpdatedAt}
+		&a.Email, &a.EmailVerified, &a.Status, &a.MustChangePassword, &a.CreatedAt, &a.UpdatedAt}
 	dest = append(dest, extra...)
 	err := s.Scan(dest...)
 	return a, err
@@ -98,29 +98,39 @@ func TouchLogin(id string) {
 }
 
 // SoftDeleteAccount disables the account and ends all its sessions and refresh tokens, in one
-// transaction. Access tokens stop being valid on their own: introspection requires an active account
-// and a non-revoked session. It refuses to delete the last administrator (ErrLastAdmin).
-func SoftDeleteAccount(id string) error {
+// transaction. From then on every refresh fails, and userinfo refuses the account's access tokens. It
+// returns the back-channel logouts to send, so apps that support them drop the user at once.
+// It refuses to delete the last administrator (ErrLastAdmin).
+func SoftDeleteAccount(id string) ([]LogoutNotice, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	adminGroupID, err := lockAdminGroup(tx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var isAdmin bool
 	if err := tx.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM group_member WHERE group_id = $1 AND account_id = $2)`, adminGroupID, id).Scan(&isAdmin); err != nil {
-		return err
+		return nil, err
 	}
 	if isAdmin {
 		if n, err := otherPermanentAdmins(tx, adminGroupID, id); err != nil {
-			return err
+			return nil, err
 		} else if n == 0 {
-			return ErrLastAdmin
+			return nil, ErrLastAdmin
 		}
+	}
+	// Collect who to tell before the sessions are revoked.
+	notices, err := logoutNotices(tx,
+		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
+		 FROM session s JOIN session_app sa ON sa.session_id = s.id JOIN app a ON a.id = sa.app_id
+		 WHERE s.account_id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+		   AND a.backchannel_logout_uri IS NOT NULL`, id)
+	if err != nil {
+		return nil, err
 	}
 	stmts := []string{
 		`UPDATE account SET deleted_at = now(), status = 'disabled' WHERE id = $1 AND deleted_at IS NULL`,
@@ -131,10 +141,33 @@ func SoftDeleteAccount(id string) error {
 	}
 	for _, q := range stmts {
 		if _, err := tx.Exec(q, id); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return tx.Commit()
+	return notices, tx.Commit()
+}
+
+// queryer is the part of *sql.DB and *sql.Tx that logoutNotices needs.
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// logoutNotices runs a query that returns client_id, backchannel_logout_uri, account_id, session_id.
+func logoutNotices(q queryer, query string, args ...any) ([]LogoutNotice, error) {
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LogoutNotice
+	for rows.Next() {
+		var n LogoutNotice
+		if err := rows.Scan(&n.ClientID, &n.URI, &n.AccountID, &n.SessionID); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // SetAdminPasswordIfUnset gives the seeded admin account its first password. Returns true if it changed anything.

@@ -28,7 +28,7 @@ func sessionFromRequest(r *http.Request) (db.Session, bool) {
 	if err != nil || c.Value == "" {
 		return db.Session{}, false
 	}
-	s, err := db.GetSessionByHash(auth.HashToken(c.Value))
+	s, err := db.GetSessionByHash(auth.HashToken(c.Value), SessionIdleTimeout)
 	if err != nil {
 		return db.Session{}, false
 	}
@@ -41,13 +41,13 @@ func startSession(w http.ResponseWriter, r *http.Request, accountID string) (db.
 	if err != nil {
 		return db.Session{}, err
 	}
-	sess, err := db.CreateSession(accountID, auth.HashToken(token), clientIP(r), r.UserAgent(), SessionTTL)
+	sess, err := db.CreateSession(accountID, auth.HashToken(token), clientIP(r), r.UserAgent(), SessionMaxLifetime)
 	if err != nil {
 		return db.Session{}, err
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: token, Path: "/",
-		Expires: sess.ExpiresAt, MaxAge: int(SessionTTL.Seconds()),
+		Expires: sess.ExpiresAt, MaxAge: int(SessionMaxLifetime.Seconds()),
 		HttpOnly: true, Secure: secureCookies,
 		// Lax: the cookie must be sent when an app redirects the browser to /authorize.
 		SameSite: http.SameSiteLaxMode,

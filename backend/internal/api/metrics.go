@@ -14,8 +14,8 @@ import (
 )
 
 // Prometheus metrics, scraped from the INTERNAL listener (/metrics). They are what tells you whether the
-// database needs help: watch guardian_http_request_duration_seconds{route="/introspect"} and the
-// guardian_db_* pool gauges before adding any caching.
+// database needs help: watch guardian_http_request_duration_seconds{route="/token"}, the token counters
+// and the guardian_db_* pool gauges before adding any caching.
 var (
 	httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "guardian", Name: "http_requests_total", Help: "HTTP requests by listener, route pattern, method and status.",
@@ -26,9 +26,11 @@ var (
 		Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5},
 	}, []string{"listener", "route", "method"})
 
-	introspections = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "guardian", Name: "introspections_total", Help: "Token introspections by result.",
-	}, []string{"result"}) // active | inactive | error | unauthorized
+	// tokenRequests counts answers of the token endpoint. Refreshes are the steady load: one per signed-in
+	// user per app per token lifetime.
+	tokenRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "token_requests_total", Help: "Token endpoint requests by grant and result.",
+	}, []string{"grant", "result"}) // authorization_code | refresh_token | other  x  issued | refused | error
 
 	loginsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "guardian", Name: "logins_total", Help: "Interactive login attempts by result.",

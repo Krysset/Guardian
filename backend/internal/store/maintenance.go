@@ -25,9 +25,9 @@ func StartMaintenance(ctx context.Context) {
 
 func cleanup() {
 	stmts := []string{
-		`DELETE FROM access_token WHERE expires_at < now() - interval '1 day'`,
 		`DELETE FROM authorization_code WHERE expires_at < now() - interval '1 day'`,
-		`DELETE FROM refresh_token WHERE expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days'`,
+		// Refresh tokens of ended sessions go when their session row is deleted below (ON DELETE CASCADE).
+		`DELETE FROM refresh_token WHERE revoked_at < now() - interval '7 days'`,
 		`DELETE FROM account_token WHERE expires_at < now() - interval '7 days'`,
 		`DELETE FROM session WHERE expires_at < now() - interval '30 days'`,
 		`DELETE FROM rate_limit WHERE window_start < now() - interval '1 day'`,

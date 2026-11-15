@@ -14,7 +14,7 @@ func IsUUID(s string) bool { return uuidRe.MatchString(s) }
 // appColumns includes the allowed scopes, so one query loads a complete App.
 const appColumns = `id, name, pretty_name, description, COALESCE(logo_url, ''), COALESCE(homepage_url, ''),
 	client_id, client_type, token_endpoint_auth_method, grant_types, redirect_uris, post_logout_redirect_uris,
-	COALESCE(backchannel_logout_uri, ''), require_pkce, is_first_party, access_token_ttl_seconds, refresh_token_ttl_seconds, enabled,
+	COALESCE(backchannel_logout_uri, ''), require_pkce, is_first_party, access_token_ttl_seconds, refresh_mode, enabled,
 	ARRAY(SELECT scope_name FROM app_scope WHERE app_scope.app_id = app.id ORDER BY scope_name),
 	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1)`
 
@@ -23,7 +23,7 @@ func scanApp(s scanner) (App, error) {
 	err := s.Scan(&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
 		&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
 		scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
-		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshTokenTTL, &a.Enabled,
+		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
 		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs))
 	return a, err
 }
@@ -37,20 +37,23 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	}
 	defer tx.Rollback()
 
-	authMethod := "client_secret_basic"
+	// An app with a secret may refresh: a stolen refresh token is useless without the secret. An app
+	// without one (a browser-only or mobile app) gets no refresh tokens for now.
+	authMethod, grants, refreshMode := "client_secret_basic", []string{"authorization_code", "refresh_token"}, "stable"
 	if a.ClientType == "public" {
-		authMethod = "none"
+		authMethod, grants, refreshMode = "none", []string{"authorization_code"}, "none"
 	}
 	var id string
 	err = tx.QueryRow(
 		`INSERT INTO app (name, pretty_name, description, logo_url, homepage_url, client_type, token_endpoint_auth_method,
-			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds, access_rule)
-		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 900),
-		         COALESCE(NULLIF($13, ''), 'groups'))
+			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds, access_rule,
+			grant_types, refresh_mode)
+		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 300),
+		         COALESCE(NULLIF($13, ''), 'groups'), $14, $15)
 		 RETURNING id`,
 		a.Name, a.PrettyName, a.Description, a.LogoURL, a.HomepageURL, a.ClientType, authMethod,
 		strArray(a.RedirectURIs), strArray(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
-		a.AccessTokenTTL, a.AccessRule).Scan(&id)
+		a.AccessTokenTTL, a.AccessRule, grants, refreshMode).Scan(&id)
 	if err != nil {
 		slog.Error("failed to create an app", "app", a.Name, "error", err)
 		return App{}, err

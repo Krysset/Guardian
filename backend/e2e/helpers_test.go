@@ -32,7 +32,7 @@ const testIssuer = "http://guardian.test"
 
 var (
 	pubSrv   *httptest.Server // the public listener (what browsers and apps reach through the ingress)
-	intSrv   *httptest.Server // the internal listener (introspection, metrics, probes)
+	intSrv   *httptest.Server // the internal listener (metrics, probes)
 	testKeys *auth.Keys
 )
 
@@ -43,8 +43,8 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		os.Setenv("ISSUER_URL", testIssuer)
-		os.Setenv("INTROSPECTION_URL", "http://internal.test/introspect")
-		os.Setenv("SESSION_TTL", "1h")
+		os.Setenv("SESSION_IDLE_TIMEOUT", "30m")
+		os.Setenv("SESSION_MAX_LIFETIME", "1h")
 		os.Setenv("KEY_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
 		testutil.DeleteSigningKeys()
 		cfg, err := config.Load()
@@ -239,7 +239,7 @@ func (p authParams) values() url.Values {
 	v.Set("redirect_uri", redirect)
 	scope := p.scope
 	if scope == "" {
-		scope = "openid profile email offline_access"
+		scope = "openid profile email"
 	}
 	v.Set("scope", scope)
 	if p.nonce != "" {
@@ -329,38 +329,36 @@ func refreshRequest(t *testing.T, app db.App, secret, refreshToken string) (int,
 	return tokenRequest(t, app, secret, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}})
 }
 
-func introspectToken(t *testing.T, caller db.App, secret, token string) (int, map[string]any) {
+// verifyAccessToken checks an access token the way an app does on its own, without asking Guardian:
+// signature, issuer, audience, expiry and the at+jwt type. It returns the claims.
+func verifyAccessToken(t *testing.T, app db.App, token string) jwt.MapClaims {
 	t.Helper()
-	req, _ := http.NewRequest("POST", intSrv.URL+"/introspect", strings.NewReader(url.Values{"token": {token}}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if secret != "" {
-		req.SetBasicAuth(caller.ClientID, secret)
+	tok := parseJWT(t, token, jwt.WithIssuer(testIssuer), jwt.WithAudience(app.ClientID), jwt.WithExpirationRequired())
+	if tok.Header["typ"] != "at+jwt" {
+		t.Fatalf("access token typ = %v, want at+jwt", tok.Header["typ"])
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp.StatusCode, decodeMap(t, resp)
+	return tok.Claims.(jwt.MapClaims)
 }
 
-func mustActive(t *testing.T, caller db.App, secret, token string) map[string]any {
+// refreshed uses the refresh token and requires fresh tokens back.
+func refreshed(t *testing.T, app db.App, secret, refreshToken string) tokenSet {
 	t.Helper()
-	status, m := introspectToken(t, caller, secret, token)
-	if status != 200 || m["active"] != true {
-		t.Fatalf("token should be active: %d %v", status, m)
+	status, raw := refreshRequest(t, app, secret, refreshToken)
+	if status != http.StatusOK {
+		t.Fatalf("refresh: %d %v", status, raw)
 	}
-	return m
+	return tokenSet{Access: str(raw["access_token"]), Refresh: str(raw["refresh_token"]), ID: str(raw["id_token"]), Raw: raw}
 }
 
-func mustInactive(t *testing.T, caller db.App, secret, token string) {
+// refreshRefused requires the refresh to be refused with invalid_grant, which an app treats as a logout.
+func refreshRefused(t *testing.T, app db.App, secret, refreshToken string) {
 	t.Helper()
-	status, m := introspectToken(t, caller, secret, token)
-	if status != 200 || m["active"] != false || len(m) != 1 {
-		t.Fatalf("token should be inactive with nothing else disclosed: %d %v", status, m)
+	if status, raw := refreshRequest(t, app, secret, refreshToken); status != http.StatusBadRequest || raw["error"] != "invalid_grant" {
+		t.Fatalf("refresh should be refused with invalid_grant: %d %v", status, raw)
 	}
 }
 
-// groupList returns the "groups" claim of an introspection answer.
+// groupList returns the "groups" claim of a token or a userinfo answer.
 func groupList(m map[string]any) []string {
 	out := []string{}
 	if arr, ok := m["groups"].([]any); ok {

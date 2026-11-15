@@ -271,6 +271,20 @@ func RemoveGroupMember(groupID, accountID string) error {
 	return tx.Commit()
 }
 
+// GroupChangeLogoutNotices returns the back-channel logouts to send after the account left the group:
+// one for each live session of the account in each app that is linked to that group. Those apps drop
+// what they hold for the user, who then signs in again and gets tokens without the group, or is
+// refused by the app's access rule. Apps that are not linked to the group are not disturbed.
+func GroupChangeLogoutNotices(accountID, groupID string) ([]LogoutNotice, error) {
+	return logoutNotices(GetDatabaseConnection(),
+		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
+		 FROM session s
+		 JOIN session_app sa ON sa.session_id = s.id
+		 JOIN app a ON a.id = sa.app_id AND a.backchannel_logout_uri IS NOT NULL
+		 JOIN app_group ag ON ag.app_id = a.id AND ag.group_id = $2
+		 WHERE s.account_id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`, accountID, groupID)
+}
+
 // AccountInGroup reports whether the account is an active member of the group with this key.
 func AccountInGroup(accountID, groupKey string) (bool, error) {
 	var ok bool

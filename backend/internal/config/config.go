@@ -18,7 +18,7 @@ import (
 type Config struct {
 	// PublicAddr serves browsers and apps (hosted pages, OIDC endpoints, /api). It sits behind the ingress.
 	PublicAddr string
-	// InternalAddr serves /introspect, /metrics, /healthz and /readyz. It must only be reachable in the cluster.
+	// InternalAddr serves /metrics, /healthz and /readyz. It must only be reachable in the cluster.
 	InternalAddr string
 
 	// IssuerURL is the public base URL of Guardian as browsers see it, without a trailing slash.
@@ -27,13 +27,14 @@ type Config struct {
 	// AllowedOrigins are extra browser origins allowed to send state-changing requests to /api.
 	// IssuerURL is always allowed.
 	AllowedOrigins []string
-	// IntrospectionURL is the cluster-internal introspection URL advertised in OIDC discovery. Optional.
-	IntrospectionURL string
 	// TrustedProxyHops is how many reverse proxies in front of Guardian append to X-Forwarded-For.
 	// 0 ignores the header.
 	TrustedProxyHops int
-	// SessionTTL is how long a sign-in session lasts.
-	SessionTTL time.Duration
+	// SessionIdleTimeout ends a sign-in session that has not been used for this long. Using Guardian's
+	// pages or refreshing an app's tokens counts as use.
+	SessionIdleTimeout time.Duration
+	// SessionMaxLifetime ends a sign-in session this long after sign-in, however active it is.
+	SessionMaxLifetime time.Duration
 
 	// KeyEncryptionKey is the 32-byte AES key that encrypts signing keys at rest.
 	KeyEncryptionKey []byte
@@ -88,9 +89,9 @@ func Load() (Config, error) {
 	cfg := Config{
 		PublicAddr:           envOr("PUBLIC_ADDR", ":3001"),
 		InternalAddr:         envOr("INTERNAL_ADDR", ":3002"),
-		IntrospectionURL:     os.Getenv("INTROSPECTION_URL"),
 		AdminInitialPassword: os.Getenv("ADMIN_INITIAL_PASSWORD"),
-		SessionTTL:           7 * 24 * time.Hour,
+		SessionIdleTimeout:   7 * 24 * time.Hour,
+		SessionMaxLifetime:   30 * 24 * time.Hour,
 	}
 
 	var err error
@@ -117,13 +118,20 @@ func Load() (Config, error) {
 		}
 	}
 
-	if v := os.Getenv("SESSION_TTL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			fail("SESSION_TTL must be a positive Go duration such as 168h, got %q", v)
-		} else {
-			cfg.SessionTTL = d
+	duration := func(key string, into *time.Duration) {
+		if v := os.Getenv(key); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				fail("%s must be a positive Go duration such as 168h, got %q", key, v)
+			} else {
+				*into = d
+			}
 		}
+	}
+	duration("SESSION_IDLE_TIMEOUT", &cfg.SessionIdleTimeout)
+	duration("SESSION_MAX_LIFETIME", &cfg.SessionMaxLifetime)
+	if cfg.SessionIdleTimeout > cfg.SessionMaxLifetime {
+		fail("SESSION_IDLE_TIMEOUT (%s) must not be longer than SESSION_MAX_LIFETIME (%s)", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime)
 	}
 
 	if v := os.Getenv("TRUSTED_PROXY_HOPS"); v != "" {

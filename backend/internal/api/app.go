@@ -38,8 +38,8 @@ type addAppRequest struct {
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris"`
 	BackchannelLogoutURI   string   `json:"backchannel_logout_uri"`
 	IsFirstParty           bool     `json:"is_first_party"`
-	AccessTokenTTLSeconds  int      `json:"access_token_ttl_seconds"` // optional, 60-86400, default 900
-	Scopes                 []string `json:"scopes"`                   // defaults to openid, profile, email
+	AccessTokenTTLSeconds  int      `json:"access_token_ttl_seconds"` // optional, 15-86400, default 300
+	Scopes                 []string `json:"scopes"`                   // defaults to openid, profile, email, groups
 	AccessRule             string   `json:"access_rule"`              // "groups" (default) or "anyone"
 	GroupIDs               []string `json:"group_ids"`                // groups linked to the app
 }
@@ -76,12 +76,14 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.AccessTokenTTLSeconds != 0 && (req.AccessTokenTTLSeconds < 60 || req.AccessTokenTTLSeconds > 86400) {
-		RespondWithError(w, http.StatusBadRequest, "access_token_ttl_seconds must be between 60 and 86400")
+	// The token lifetime is how stale an app's view of a user can get. Below 15 seconds apps would do
+	// little else than refresh. 60 seconds or more is recommended, because clocks differ.
+	if req.AccessTokenTTLSeconds != 0 && (req.AccessTokenTTLSeconds < 15 || req.AccessTokenTTLSeconds > 86400) {
+		RespondWithError(w, http.StatusBadRequest, "access_token_ttl_seconds must be between 15 and 86400")
 		return
 	}
 	if len(req.Scopes) == 0 {
-		req.Scopes = []string{"openid", "profile", "email"}
+		req.Scopes = []string{"openid", "profile", "email", "groups"}
 	}
 	if req.AccessRule == "" {
 		req.AccessRule = "groups"
@@ -137,6 +139,7 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 		ID         string   `json:"id"`
 		AccessRule string   `json:"access_rule"`
 		GroupIDs   []string `json:"group_ids"`
+		MachineAPI *bool    `json:"machine_api"` // optional: the app's own read-only access to /api/v1/apps/self
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -144,6 +147,22 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 	if !db.IsUUID(req.ID) || !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
 		RespondWithError(w, http.StatusBadRequest, "id must be an app id; access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
 		return
+	}
+	if req.MachineAPI != nil {
+		// Checked first, so a refused request changes nothing.
+		app, err := db.GetApp(req.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			RespondWithError(w, http.StatusNotFound, "App not found")
+			return
+		}
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+			return
+		}
+		if *req.MachineAPI && app.ClientType != "confidential" {
+			RespondWithError(w, http.StatusBadRequest, "Only apps with a secret can have machine API access")
+			return
+		}
 	}
 	switch err := db.SetAppAccess(req.ID, req.AccessRule, req.GroupIDs); {
 	case errors.Is(err, sql.ErrNoRows):
@@ -156,7 +175,14 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
 		return
 	}
-	db.Audit("app.access_changed", accountID(r), req.ID, clientIP(r), map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs})
+	if req.MachineAPI != nil {
+		if err := db.SetMachineAccess(req.ID, *req.MachineAPI); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+			return
+		}
+	}
+	db.Audit("app.access_changed", accountID(r), req.ID, clientIP(r),
+		map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs, "machine_api": req.MachineAPI})
 	app, err := db.GetApp(req.ID)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Failed to load the app")

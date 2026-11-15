@@ -144,7 +144,7 @@ func TestVerifyPKCE(t *testing.T) {
 func TestBuildClaimsReleasesOnlyWhatScopesAllow(t *testing.T) {
 	acct := db.Account{
 		ID: "11111111-1111-1111-1111-111111111111", Username: "alice", DisplayName: "Alice A", GivenName: "Alice",
-		Email: "alice@example.com", EmailVerified: true, PhoneNumber: "+46700000000", PhoneVerified: false,
+		Email: "alice@example.com", EmailVerified: true,
 		PictureURL: "https://x.test/a.png", Locale: "sv-SE",
 	}
 	keys := func(m map[string]any) []string {
@@ -184,9 +184,9 @@ func TestBuildClaimsReleasesOnlyWhatScopesAllow(t *testing.T) {
 		t.Error("empty values must be omitted")
 	}
 
-	phone := buildClaims(acct, []string{"phone_number", "phone_number_verified"})
-	if phone["phone_number"] != "+46700000000" || phone["phone_number_verified"] != false {
-		t.Errorf("phone claims = %v", phone)
+	// phone claims were removed; even if a scope listed them, nothing is released
+	if got := buildClaims(acct, []string{"phone_number", "phone_number_verified", "birthdate"}); len(got) != 1 {
+		t.Errorf("removed claims were released: %v", keys(got))
 	}
 
 	// email_verified alone must not reveal the address, and an account without email releases no email claims

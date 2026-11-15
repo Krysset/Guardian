@@ -10,13 +10,12 @@ import (
 
 var (
 	// Issuer is the public base URL of this service, e.g. https://auth.example.com (no trailing slash).
-	Issuer     string
-	SessionTTL = 7 * 24 * time.Hour
+	Issuer string
 
-	// IntrospectionURL is the cluster-internal URL services use to introspect tokens, e.g.
-	// http://guardian-internal.guardian.svc:3002/introspect. Advertised in OIDC discovery when set,
-	// so libraries that auto-discover it (Spring, oauth2-proxy, ...) need no extra configuration.
-	IntrospectionURL string
+	// SessionIdleTimeout ends a sign-in session that has not been used for this long;
+	// SessionMaxLifetime ends it this long after sign-in, however active it is.
+	SessionIdleTimeout = 7 * 24 * time.Hour
+	SessionMaxLifetime = 30 * 24 * time.Hour
 
 	signingKeys       *auth.Keys
 	secureCookies     bool
@@ -34,9 +33,9 @@ var (
 // Configure must be called once at startup, before serving. The configuration is already validated.
 func Configure(cfg config.Config, keys *auth.Keys) {
 	Issuer = cfg.IssuerURL
-	SessionTTL = cfg.SessionTTL
+	SessionIdleTimeout = cfg.SessionIdleTimeout
+	SessionMaxLifetime = cfg.SessionMaxLifetime
 	trustedProxyHops = cfg.TrustedProxyHops
-	IntrospectionURL = cfg.IntrospectionURL
 
 	allowedOrigins = map[string]bool{Issuer: true}
 	for _, o := range cfg.AllowedOrigins {

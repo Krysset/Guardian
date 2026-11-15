@@ -58,15 +58,10 @@ CREATE TABLE IF NOT EXISTS account (
 	picture_url          TEXT,                          -- picture
 	locale               TEXT,                          -- e.g. 'sv-SE'
 	zoneinfo             TEXT,                          -- e.g. 'Europe/Stockholm'
-	birthdate            DATE,
 
 	-- Email (OIDC scope: email)
 	email                TEXT,
 	email_verified_at    TIMESTAMPTZ,
-
-	-- Phone (OIDC scope: phone) - store E.164
-	phone_number         TEXT,
-	phone_verified_at    TIMESTAMPTZ,
 
 	created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- OIDC `updated_at`
@@ -76,7 +71,6 @@ CREATE TABLE IF NOT EXISTS account (
 -- Case-insensitive uniqueness (no citext extension needed)
 CREATE UNIQUE INDEX IF NOT EXISTS ux_account_username ON account (lower(username));
 CREATE UNIQUE INDEX IF NOT EXISTS ux_account_email    ON account (lower(email))  WHERE email IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_account_phone    ON account (phone_number)  WHERE phone_number IS NOT NULL;
 
 -- -----------------------------------------------------------------------------
 -- APPS (= OIDC clients)
@@ -97,7 +91,13 @@ CREATE TABLE IF NOT EXISTS app (
 	token_endpoint_auth_method  TEXT NOT NULL DEFAULT 'client_secret_basic'
 	                            CHECK (token_endpoint_auth_method IN
 	                                   ('client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none')),
+	-- 'client_credentials' here gives the app its own tokens for Guardian's read-only machine API.
 	grant_types                 TEXT[] NOT NULL DEFAULT ARRAY['authorization_code', 'refresh_token'],
+	-- How the app gets refresh tokens. 'stable': one refresh token per sign-in, valid as long as the
+	-- session is (for apps with a secret). 'none': no refresh tokens (for apps without a secret).
+	-- Rotating refresh tokens for apps without a secret are planned; add 'rotating' here then.
+	refresh_mode                TEXT NOT NULL DEFAULT 'stable'
+	                            CHECK (refresh_mode IN ('stable', 'none')),
 	redirect_uris               TEXT[] NOT NULL DEFAULT '{}',   -- exact match only
 	post_logout_redirect_uris   TEXT[] NOT NULL DEFAULT '{}',
 	backchannel_logout_uri      TEXT,
@@ -105,8 +105,10 @@ CREATE TABLE IF NOT EXISTS app (
 
 	require_pkce                BOOLEAN NOT NULL DEFAULT TRUE,
 	is_first_party              BOOLEAN NOT NULL DEFAULT FALSE, -- skips the consent screen
-	access_token_ttl_seconds    INT NOT NULL DEFAULT 900,
-	refresh_token_ttl_seconds   INT NOT NULL DEFAULT 2592000,
+	-- Lifetime of access and ID tokens. It is also how stale an app's view of a user can get: group
+	-- changes, logout and disabling reach the app when it next refreshes.
+	access_token_ttl_seconds    INT NOT NULL DEFAULT 300
+	                            CHECK (access_token_ttl_seconds BETWEEN 15 AND 86400),
 	enabled                     BOOLEAN NOT NULL DEFAULT TRUE,
 	-- Who may sign in to this app. 'groups': only members of a group linked to it (app_group).
 	-- 'anyone': every account. The default denies, so a new app is closed until it is opened on purpose.
@@ -129,7 +131,7 @@ CREATE INDEX IF NOT EXISTS ix_app_secret_app ON app_secret (app_id);
 
 -- -----------------------------------------------------------------------------
 -- OIDC SCOPES  (what an app may *ask to know* about / do on behalf of a user)
--- Standard scopes: openid, profile, email, phone, address, offline_access.
+-- Standard scopes: openid, profile, email, offline_access. Guardian adds: groups.
 -- Custom scopes belong to an app (app_id set), e.g. 'photos:read'.
 -- `claims` lists the claims released by the scope.
 -- -----------------------------------------------------------------------------
@@ -208,8 +210,8 @@ CREATE TABLE IF NOT EXISTS session (
 	ip_address        INET,
 	user_agent        TEXT,
 	created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	expires_at        TIMESTAMPTZ NOT NULL,
+	last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- activity; the idle timeout counts from here
+	expires_at        TIMESTAMPTZ NOT NULL,                             -- absolute end, whatever the activity
 	revoked_at        TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS ix_session_account ON session (account_id);
@@ -230,38 +232,26 @@ CREATE TABLE IF NOT EXISTS authorization_code (
 	used_at                TIMESTAMPTZ
 );
 
--- Rotating refresh tokens. If a rotated token is reused, revoke the whole family.
+-- Refresh tokens. An app gets one per sign-in and keeps using it: it is not replaced at each refresh.
+-- It is only usable with the app's secret, and only while its session is alive, so it ends with logout,
+-- disabling and the session timeouts. Only the hash is stored.
+-- family_id is unused for now: it is kept for rotating refresh tokens (apps without a secret), where
+-- every token that descends from one sign-in shares a family.
 CREATE TABLE IF NOT EXISTS refresh_token (
 	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	token_hash  TEXT NOT NULL UNIQUE,
-	family_id   UUID NOT NULL,
+	family_id   UUID NOT NULL DEFAULT gen_random_uuid(),
 	app_id      UUID NOT NULL REFERENCES app(id)     ON DELETE CASCADE,
 	account_id  UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-	session_id  UUID REFERENCES session(id) ON DELETE SET NULL,
+	session_id  UUID NOT NULL REFERENCES session(id) ON DELETE CASCADE,
 	scopes      TEXT[] NOT NULL,
 	created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	expires_at  TIMESTAMPTZ NOT NULL,
-	rotated_at  TIMESTAMPTZ,
 	revoked_at  TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS ix_refresh_family  ON refresh_token (family_id);
+CREATE INDEX IF NOT EXISTS ix_refresh_session ON refresh_token (session_id);
 CREATE INDEX IF NOT EXISTS ix_refresh_account ON refresh_token (account_id);
 
--- Opaque access tokens. Only the hash is stored. A token is valid only while this row is live AND its
--- account is active AND its session is not revoked, so logout / disable / app-disable kill tokens at once.
-CREATE TABLE IF NOT EXISTS access_token (
-	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	token_hash  TEXT NOT NULL UNIQUE,
-	app_id      UUID NOT NULL REFERENCES app(id)     ON DELETE CASCADE,
-	account_id  UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-	session_id  UUID REFERENCES session(id) ON DELETE CASCADE,
-	scopes      TEXT[] NOT NULL,
-	created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	expires_at  TIMESTAMPTZ NOT NULL,
-	revoked_at  TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS ix_access_token_session ON access_token (session_id);
-CREATE INDEX IF NOT EXISTS ix_access_token_expires ON access_token (expires_at);
+-- Access tokens are signed JWTs and are not stored anywhere.
 
 -- Fixed-window counters for rate limiting (login attempts, sign-ups). UNLOGGED = no WAL, much cheaper,
 -- and losing the counters in a database crash is harmless. Shared by all Guardian replicas.
@@ -271,6 +261,17 @@ CREATE UNLOGGED TABLE IF NOT EXISTS rate_limit (
 	hits          INT NOT NULL DEFAULT 0,
 	PRIMARY KEY (key, window_start)
 );
+
+-- Accounts that have signed in to an app at least once. The machine API lets an app look up these
+-- accounts, and members of its linked groups, but nobody else.
+CREATE TABLE IF NOT EXISTS app_user (
+	app_id               UUID NOT NULL REFERENCES app(id)     ON DELETE CASCADE,
+	account_id           UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+	first_signed_in_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	last_signed_in_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (app_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS ix_app_user_account ON app_user (account_id);
 
 -- Apps that received tokens under an SSO session. Used to fan out back-channel logout.
 CREATE TABLE IF NOT EXISTS session_app (
@@ -293,13 +294,13 @@ CREATE TABLE IF NOT EXISTS signing_key (
 );
 
 -- -----------------------------------------------------------------------------
--- ONE-TIME TOKENS (replaces password_reset_code + account_access_token)
+-- ONE-TIME TOKENS (password reset, email verification, re-authentication, invites)
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS account_token (
 	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	account_id  UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
 	purpose     TEXT NOT NULL
-	            CHECK (purpose IN ('password_reset', 'email_verify', 'phone_verify', 'reauth', 'invite')),
+	            CHECK (purpose IN ('password_reset', 'email_verify', 'reauth', 'invite')),
 	token_hash  TEXT NOT NULL,
 	metadata    JSONB NOT NULL DEFAULT '{}',          -- e.g. the new email being verified
 	created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -357,10 +358,12 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM scope) THEN
 		INSERT INTO scope (name, description, claims) VALUES
 			('openid',         'Verify your identity',                    ARRAY['sub']),
-			('profile',        'Your name, username and profile picture', ARRAY['name','given_name','family_name','preferred_username','picture','locale','zoneinfo','birthdate','updated_at']),
+			('profile',        'Your name, username and profile picture', ARRAY['name','given_name','family_name','preferred_username','picture','locale','zoneinfo','updated_at']),
 			('email',          'Your email address',                      ARRAY['email','email_verified']),
-			('phone',          'Your phone number',                       ARRAY['phone_number','phone_number_verified']),
-			('offline_access', 'Stay signed in / access when you are away', ARRAY[]::TEXT[]);
+			('groups',         'Which of this app''s groups you are in',    ARRAY['groups']),
+			-- Accepted so that apps which always ask for it keep working. It changes nothing: refresh
+			-- tokens never outlive the sign-in session.
+			('offline_access', 'Stay signed in while your session lasts', ARRAY[]::TEXT[]);
 	END IF;
 END $$;
 

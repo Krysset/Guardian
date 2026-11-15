@@ -13,8 +13,6 @@ type Account struct {
 	Zoneinfo           string    `json:"zoneinfo,omitempty"`
 	Email              string    `json:"email,omitempty"`
 	EmailVerified      bool      `json:"email_verified"`
-	PhoneNumber        string    `json:"phone_number,omitempty"`
-	PhoneVerified      bool      `json:"phone_number_verified"`
 	Status             string    `json:"status"`
 	MustChangePassword bool      `json:"must_change_password"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -38,8 +36,8 @@ type App struct {
 	BackchannelLogoutURI    string   `json:"backchannel_logout_uri,omitempty"`
 	RequirePKCE             bool     `json:"require_pkce"`
 	IsFirstParty            bool     `json:"is_first_party"`
-	AccessTokenTTL          int      `json:"access_token_ttl_seconds"`
-	RefreshTokenTTL         int      `json:"refresh_token_ttl_seconds"`
+	AccessTokenTTL          int      `json:"access_token_ttl_seconds"` // lifetime of access and ID tokens; also how stale the app's view of a user can get
+	RefreshMode             string   `json:"refresh_mode"`             // "stable" (apps with a secret) or "none"
 	Enabled                 bool     `json:"enabled"`
 	AccessRule              string   `json:"access_rule"`      // "groups" (only members of linked groups may sign in) or "anyone"
 	GroupIDs                []string `json:"group_ids"`        // groups linked to the app
@@ -56,7 +54,8 @@ type Session struct {
 	ID         string
 	AccountID  string
 	AuthTime   time.Time
-	ExpiresAt  time.Time
+	AMR        []string  // how the user proved who they are, for the OIDC amr claim
+	ExpiresAt  time.Time // absolute end of the session
 	LastSeenAt time.Time
 }
 
@@ -73,7 +72,6 @@ type AuthCode struct {
 
 type RefreshToken struct {
 	ID        string
-	FamilyID  string
 	AppID     string
 	AccountID string
 	SessionID string
@@ -92,4 +90,11 @@ type SigningKey struct {
 type LogoutTarget struct {
 	ClientID string
 	URI      string
+}
+
+// LogoutNotice is one back-channel logout to send: this app must drop what it holds for this session.
+type LogoutNotice struct {
+	LogoutTarget
+	AccountID string
+	SessionID string
 }

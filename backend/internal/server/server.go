@@ -47,8 +47,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	api.RegisterDBMetrics()
 	db.StartMaintenance(ctx)
 
-	// Two listeners: the public one goes through the ingress; the internal one (introspection, metrics,
-	// probes) is only exposed as a ClusterIP Service and protected by a NetworkPolicy.
+	// Two listeners: the public one goes through the ingress; the internal one (metrics and probes) is only exposed as a ClusterIP Service and protected by a NetworkPolicy.
 	public := newServer(cfg.PublicAddr, PublicRouter())
 	internal := newServer(cfg.InternalAddr, InternalRouter())
 
@@ -90,12 +89,15 @@ func PublicRouter() http.Handler {
 	r := chi.NewRouter()
 	// No request logger on purpose: it would log authorization codes found in query strings.
 	r.Use(middleware.Recoverer, api.Metrics("public"))
-	api.MountOIDC(r) // /authorize /token /userinfo /login /logout /jwks.json /.well-known/...
+	api.MountOIDC(r) // /authorize /token /revoke /userinfo /login /logout /jwks.json /.well-known/...
 	r.Mount("/api", apiRouter())
+	// The machine API authenticates with Bearer tokens, not cookies, so it is not behind the
+	// same-origin check of the browser API.
+	r.Mount("/api/v1/apps/self", api.GetMachineSubrouter())
 	return r
 }
 
-// InternalRouter serves /introspect, /metrics, /healthz and /readyz. It must only be reachable in the cluster.
+// InternalRouter serves /metrics, /healthz and /readyz. It must only be reachable in the cluster.
 func InternalRouter() http.Handler {
 	return api.GetInternalRouter()
 }

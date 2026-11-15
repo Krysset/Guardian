@@ -18,23 +18,30 @@ import (
 
 // ---- Sessions ---------------------------------------------------------------
 
+const idle = time.Hour // idle timeout used by these tests
+
 func TestSessionLookupAndExpiry(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "gina")
 	sess, cookie := testutil.Session(t, acct.ID)
 
-	got, err := db.GetSessionByHash(auth.HashToken(cookie))
+	got, err := db.GetSessionByHash(auth.HashToken(cookie), idle)
 	if err != nil || got.ID != sess.ID || got.AccountID != acct.ID {
 		t.Fatalf("lookup failed: %+v, %v", got, err)
 	}
-	if !db.SessionActive(sess.ID) {
-		t.Error("SessionActive = false for a live session")
+	if len(got.AMR) != 1 || got.AMR[0] != "pwd" {
+		t.Errorf("amr = %v, want [pwd]", got.AMR)
 	}
-	if _, err := db.GetSessionByHash(auth.HashToken("some-other-cookie")); !errors.Is(err, sql.ErrNoRows) {
+	if byID, err := db.GetLiveSession(sess.ID, idle); err != nil || byID.ID != sess.ID {
+		t.Errorf("GetLiveSession: %+v, %v", byID, err)
+	}
+	if _, err := db.GetSessionByHash(auth.HashToken("some-other-cookie"), idle); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("unknown cookie: %v", err)
 	}
-	if db.SessionActive("not-a-uuid") || db.SessionActive("00000000-0000-0000-0000-000000000000") {
-		t.Error("SessionActive must be false for malformed or unknown ids")
+	for _, id := range []string{"not-a-uuid", "00000000-0000-0000-0000-000000000000", ""} {
+		if _, err := db.GetLiveSession(id, idle); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("GetLiveSession(%q): %v, want sql.ErrNoRows", id, err)
+		}
 	}
 
 	// the raw cookie value is never stored, only its hash
@@ -45,20 +52,46 @@ func TestSessionLookupAndExpiry(t *testing.T) {
 		t.Error("hashed session cookie not stored")
 	}
 
+	// past its absolute end
 	expired, err := db.CreateSession(acct.ID, auth.HashToken("expired"), "203.0.113.5", "ua", -time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.GetSessionByHash(auth.HashToken("expired")); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := db.GetSessionByHash(auth.HashToken("expired"), idle); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("expired session accepted: %v", err)
 	}
-	if db.SessionActive(expired.ID) {
-		t.Error("expired session reported active")
+	if _, err := db.GetLiveSession(expired.ID, idle); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expired session accepted by id: %v", err)
 	}
 
 	testutil.Exec(t, `UPDATE account SET status = 'disabled' WHERE id = $1`, acct.ID)
-	if _, err := db.GetSessionByHash(auth.HashToken(cookie)); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := db.GetSessionByHash(auth.HashToken(cookie), idle); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("session of a disabled account accepted: %v", err)
+	}
+	if _, err := db.GetLiveSession(sess.ID, idle); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("session of a disabled account accepted by id: %v", err)
+	}
+}
+
+func TestIdleSessionsEndAndUseKeepsThemAlive(t *testing.T) {
+	testutil.Reset(t)
+	acct := testutil.CreateAccount(t, "ivy")
+	sess, cookie := testutil.Session(t, acct.ID)
+
+	// unused for longer than the idle timeout: over, however far away the absolute end is
+	testutil.Exec(t, `UPDATE session SET last_seen_at = now() - interval '61 minutes' WHERE id = $1`, sess.ID)
+	if _, err := db.GetSessionByHash(auth.HashToken(cookie), idle); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("an idle session was accepted: %v", err)
+	}
+	if _, err := db.GetLiveSession(sess.ID, idle); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("an idle session was accepted by id: %v", err)
+	}
+	// with a longer idle timeout the same session is fine, and using it resets the clock
+	if _, err := db.GetLiveSession(sess.ID, 2*time.Hour); err != nil {
+		t.Fatalf("within a longer idle timeout: %v", err)
+	}
+	if _, err := db.GetLiveSession(sess.ID, idle); err != nil {
+		t.Errorf("using the session must keep it from going idle: %v", err)
 	}
 }
 
@@ -69,7 +102,7 @@ func TestSessionLastSeenIsWrittenSparingly(t *testing.T) {
 	hash := auth.HashToken(cookie)
 
 	testutil.Exec(t, `UPDATE session SET last_seen_at = now() - interval '2 minutes' WHERE id = $1`, sess.ID)
-	if _, err := db.GetSessionByHash(hash); err != nil {
+	if _, err := db.GetSessionByHash(hash, idle); err != nil {
 		t.Fatal(err)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM session WHERE id = $1 AND last_seen_at < now() - interval '90 seconds'`, sess.ID); n != 1 {
@@ -77,7 +110,7 @@ func TestSessionLastSeenIsWrittenSparingly(t *testing.T) {
 	}
 
 	testutil.Exec(t, `UPDATE session SET last_seen_at = now() - interval '10 minutes' WHERE id = $1`, sess.ID)
-	if _, err := db.GetSessionByHash(hash); err != nil {
+	if _, err := db.GetLiveSession(sess.ID, idle); err != nil {
 		t.Fatal(err)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM session WHERE id = $1 AND last_seen_at > now() - interval '1 minute'`, sess.ID); n != 1 {
@@ -93,11 +126,9 @@ func TestRevokeSessionEndsEverythingUnderIt(t *testing.T) {
 	sess, cookie := testutil.Session(t, acct.ID)
 	db.TrackSessionApp(sess.ID, withHook.ID)
 	db.TrackSessionApp(sess.ID, noHook.ID)
-	token := testutil.Token(t, withHook, acct.ID, sess.ID, time.Hour)
 
-	family, _ := auth.NewUUID()
 	refresh := auth.HashToken("refresh-1")
-	if err := db.SaveRefreshToken(refresh, family, withHook.ID, acct.ID, sess.ID, []string{"openid"}, time.Now().Add(time.Hour)); err != nil {
+	if err := db.SaveRefreshToken(refresh, withHook.ID, acct.ID, sess.ID, []string{"openid"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,16 +139,13 @@ func TestRevokeSessionEndsEverythingUnderIt(t *testing.T) {
 	if len(targets) != 1 || targets[0].ClientID != withHook.ClientID || targets[0].URI != "http://127.0.0.1:9/bcl" {
 		t.Fatalf("only apps with a back-channel URI must be notified, got %+v", targets)
 	}
-	if _, err := db.GetSessionByHash(auth.HashToken(cookie)); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := db.GetSessionByHash(auth.HashToken(cookie), idle); !errors.Is(err, sql.ErrNoRows) {
 		t.Error("revoked session still resolves")
 	}
-	if db.SessionActive(sess.ID) {
-		t.Error("revoked session still active")
+	if _, err := db.GetLiveSession(sess.ID, idle); !errors.Is(err, sql.ErrNoRows) {
+		t.Error("revoked session still live")
 	}
-	if _, err := db.IntrospectAccessToken(auth.HashToken(token), withHook.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Error("access token of a revoked session is still active")
-	}
-	if _, err := db.RotateRefreshToken(refresh, withHook.ID, auth.HashToken("refresh-2"), time.Now().Add(time.Hour)); !errors.Is(err, db.ErrInvalidGrant) {
+	if _, err := db.GetRefreshToken(refresh, withHook.ID); !errors.Is(err, db.ErrInvalidGrant) {
 		t.Errorf("refresh token of a revoked session still works: %v", err)
 	}
 
@@ -209,86 +237,91 @@ func TestConcurrentRedemptionsOfOneCodeYieldExactlyOneWinner(t *testing.T) {
 
 // ---- Refresh tokens ---------------------------------------------------------
 
-func TestRefreshTokenRotationAndReuseDetection(t *testing.T) {
+func TestRefreshTokensAreStableAndBoundToTheirApp(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "liam")
 	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
 	other, _ := testutil.CreateApp(t, "other", testutil.AppOptions{})
 	sess, _ := testutil.Session(t, acct.ID)
-	family, _ := auth.NewUUID()
-	h := func(s string) string { return auth.HashToken(s) }
-	in := func() time.Time { return time.Now().Add(time.Hour) }
+	h := auth.HashToken("r1")
 
-	if err := db.SaveRefreshToken(h("r1"), family, app.ID, acct.ID, sess.ID, []string{"openid", "offline_access"}, in()); err != nil {
+	if err := db.SaveRefreshToken(h, app.ID, acct.ID, sess.ID, []string{"openid", "groups"}); err != nil {
 		t.Fatal(err)
 	}
-
-	// a different app cannot redeem it, and that does not burn it
-	if _, err := db.RotateRefreshToken(h("r1"), other.ID, h("x"), in()); !errors.Is(err, db.ErrInvalidGrant) {
-		t.Fatalf("redeemed by the wrong app: %v", err)
+	// using it does not use it up: it is the same token every time
+	for i := 0; i < 3; i++ {
+		rt, err := db.GetRefreshToken(h, app.ID)
+		if err != nil || rt.AccountID != acct.ID || rt.SessionID != sess.ID || len(rt.Scopes) != 2 {
+			t.Fatalf("use %d: %+v, %v", i+1, rt, err)
+		}
 	}
-	old, err := db.RotateRefreshToken(h("r1"), app.ID, h("r2"), in())
-	if err != nil {
-		t.Fatal(err)
+	// another app cannot use it
+	if _, err := db.GetRefreshToken(h, other.ID); !errors.Is(err, db.ErrInvalidGrant) {
+		t.Errorf("used by the wrong app: %v", err)
 	}
-	if old.AccountID != acct.ID || old.SessionID != sess.ID || old.FamilyID != family || len(old.Scopes) != 2 {
-		t.Fatalf("rotation lost context: %+v", old)
-	}
-	if _, err := db.RotateRefreshToken(h("r2"), app.ID, h("r3"), in()); err != nil {
-		t.Fatalf("the rotated token must be usable: %v", err)
-	}
-
-	// presenting an already-rotated token = theft signal: revoke the whole family
-	if _, err := db.RotateRefreshToken(h("r1"), app.ID, h("r4"), in()); !errors.Is(err, db.ErrTokenReuse) {
-		t.Fatalf("reuse not detected: %v", err)
-	}
-	if _, err := db.RotateRefreshToken(h("r3"), app.ID, h("r5"), in()); !errors.Is(err, db.ErrInvalidGrant) {
-		t.Fatalf("the newest token of a compromised family must be revoked, got %v", err)
-	}
-	if _, err := db.RotateRefreshToken(h("unknown"), app.ID, h("r6"), in()); !errors.Is(err, db.ErrInvalidGrant) {
+	if _, err := db.GetRefreshToken(auth.HashToken("unknown"), app.ID); !errors.Is(err, db.ErrInvalidGrant) {
 		t.Errorf("unknown token: %v", err)
 	}
+	// only the hash is stored
 	if n := testutil.Count(t, `SELECT count(*) FROM refresh_token WHERE token_hash = $1`, "r1"); n != 0 {
 		t.Error("plaintext refresh token stored")
 	}
 }
 
-func TestExpiredRefreshTokenIsRejected(t *testing.T) {
+func TestRevokingARefreshToken(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "mia")
 	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
-	family, _ := auth.NewUUID()
-	if err := db.SaveRefreshToken(auth.HashToken("old"), family, app.ID, acct.ID, "", []string{"openid"}, time.Now().Add(-time.Minute)); err != nil {
+	other, _ := testutil.CreateApp(t, "other", testutil.AppOptions{})
+	sess, _ := testutil.Session(t, acct.ID)
+	h := auth.HashToken("r1")
+	if err := db.SaveRefreshToken(h, app.ID, acct.ID, sess.ID, []string{"openid"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.RotateRefreshToken(auth.HashToken("old"), app.ID, auth.HashToken("new"), time.Now().Add(time.Hour)); !errors.Is(err, db.ErrInvalidGrant) {
-		t.Fatalf("expired refresh token accepted: %v", err)
+	// another app cannot revoke it
+	if ok, err := db.RevokeRefreshToken(h, other.ID); err != nil || ok {
+		t.Errorf("revoked by another app: %v, %v", ok, err)
+	}
+	if ok, err := db.RevokeRefreshToken(h, app.ID); err != nil || !ok {
+		t.Fatalf("revoke: %v, %v", ok, err)
+	}
+	if _, err := db.GetRefreshToken(h, app.ID); !errors.Is(err, db.ErrInvalidGrant) {
+		t.Errorf("a revoked token still works: %v", err)
+	}
+	// revoking twice reports that nothing changed
+	if ok, err := db.RevokeRefreshToken(h, app.ID); err != nil || ok {
+		t.Errorf("second revoke: %v, %v", ok, err)
+	}
+	// the session itself is untouched: revoking one app's token does not sign the user out elsewhere
+	if _, err := db.GetLiveSession(sess.ID, idle); err != nil {
+		t.Errorf("the session ended with the token: %v", err)
 	}
 }
 
-func TestConcurrentRotationOfOneRefreshTokenHasOneWinner(t *testing.T) {
+func TestConcurrentUseOfOneRefreshTokenAllSucceeds(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "noah")
 	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
-	family, _ := auth.NewUUID()
-	if err := db.SaveRefreshToken(auth.HashToken("shared"), family, app.ID, acct.ID, "", []string{"openid"}, time.Now().Add(time.Hour)); err != nil {
+	sess, _ := testutil.Session(t, acct.ID)
+	h := auth.HashToken("shared")
+	if err := db.SaveRefreshToken(h, app.ID, acct.ID, sess.ID, []string{"openid"}); err != nil {
 		t.Fatal(err)
 	}
-	var wins int32
+	// several replicas of an app, or a retry after a lost answer, use the token at the same time
+	var ok int32
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
-			next := auth.HashToken("next-" + string(rune('a'+i)))
-			if _, err := db.RotateRefreshToken(auth.HashToken("shared"), app.ID, next, time.Now().Add(time.Hour)); err == nil {
-				atomic.AddInt32(&wins, 1)
+			if _, err := db.GetRefreshToken(h, app.ID); err == nil {
+				atomic.AddInt32(&ok, 1)
 			}
-		}(i)
+		}()
 	}
 	wg.Wait()
-	if wins != 1 {
-		t.Fatalf("%d concurrent rotations succeeded, want exactly 1", wins)
+	if ok != 8 {
+		t.Fatalf("%d of 8 concurrent uses succeeded, want all", ok)
 	}
 }
 
@@ -442,14 +475,21 @@ func TestSeededAdminHasNoPasswordUntilBootstrapped(t *testing.T) {
 func TestSoftDeleteLocksTheAccountOutEverywhere(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "olga")
-	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
+	hooked, _ := testutil.CreateApp(t, "hooked", testutil.AppOptions{BackchannelURI: "http://127.0.0.1:9/bcl"})
+	plain, _ := testutil.CreateApp(t, "plain", testutil.AppOptions{})
 	sess, cookie := testutil.Session(t, acct.ID)
-	token := testutil.Token(t, app, acct.ID, sess.ID, time.Hour)
-	family, _ := auth.NewUUID()
-	db.SaveRefreshToken(auth.HashToken("rt"), family, app.ID, acct.ID, sess.ID, []string{"openid"}, time.Now().Add(time.Hour))
-
-	if err := db.SoftDeleteAccount(acct.ID); err != nil {
+	db.TrackSessionApp(sess.ID, hooked.ID)
+	db.TrackSessionApp(sess.ID, plain.ID)
+	if err := db.SaveRefreshToken(auth.HashToken("rt"), hooked.ID, acct.ID, sess.ID, []string{"openid"}); err != nil {
 		t.Fatal(err)
+	}
+
+	notices, err := db.SoftDeleteAccount(acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notices) != 1 || notices[0].ClientID != hooked.ClientID || notices[0].SessionID != sess.ID || notices[0].AccountID != acct.ID {
+		t.Errorf("only the app with a back-channel URI must be told, got %+v", notices)
 	}
 	if _, err := db.GetAccount(acct.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Error("deleted account still readable")
@@ -457,13 +497,10 @@ func TestSoftDeleteLocksTheAccountOutEverywhere(t *testing.T) {
 	if _, _, err := db.GetAccountByUsername("olga"); !errors.Is(err, sql.ErrNoRows) {
 		t.Error("deleted account still found by username (login must fail)")
 	}
-	if _, err := db.GetSessionByHash(auth.HashToken(cookie)); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := db.GetSessionByHash(auth.HashToken(cookie), idle); !errors.Is(err, sql.ErrNoRows) {
 		t.Error("session survived account deletion")
 	}
-	if _, err := db.IntrospectAccessToken(auth.HashToken(token), app.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Error("access token survived account deletion")
-	}
-	if _, err := db.RotateRefreshToken(auth.HashToken("rt"), app.ID, auth.HashToken("rt2"), time.Now().Add(time.Hour)); !errors.Is(err, db.ErrInvalidGrant) {
+	if _, err := db.GetRefreshToken(auth.HashToken("rt"), hooked.ID); !errors.Is(err, db.ErrInvalidGrant) {
 		t.Error("refresh token survived account deletion")
 	}
 	// current behaviour: the username stays reserved by the soft-deleted row
@@ -483,11 +520,11 @@ func TestAppRegistrationDefaults(t *testing.T) {
 	if len(app.Scopes) != 2 || app.Scopes[0] != "email" || app.Scopes[1] != "openid" {
 		t.Errorf("scopes = %v (unknown scopes must be ignored)", app.Scopes)
 	}
-	if app.AccessTokenTTL != 900 || app.RefreshTokenTTL <= 0 || !app.RequirePKCE || !app.Enabled || app.IsFirstParty {
+	if app.AccessTokenTTL != 300 || !app.RequirePKCE || !app.Enabled || app.IsFirstParty {
 		t.Errorf("unexpected defaults: %+v", app)
 	}
-	if app.TokenEndpointAuthMethod != "client_secret_basic" || len(app.GrantTypes) != 2 {
-		t.Errorf("auth method / grants: %+v", app)
+	if app.TokenEndpointAuthMethod != "client_secret_basic" || len(app.GrantTypes) != 2 || app.RefreshMode != "stable" {
+		t.Errorf("auth method / grants / refresh mode: %+v", app)
 	}
 	custom, _ := testutil.CreateApp(t, "slow", testutil.AppOptions{TTLSeconds: 3600})
 	if custom.AccessTokenTTL != 3600 {
@@ -496,6 +533,14 @@ func TestAppRegistrationDefaults(t *testing.T) {
 	pub, pubSecret := testutil.CreateApp(t, "spa", testutil.AppOptions{Public: true})
 	if pubSecret != "" || pub.ClientType != "public" || pub.TokenEndpointAuthMethod != "none" {
 		t.Errorf("public app: %+v", pub)
+	}
+	// an app without a secret gets no refresh tokens (for now)
+	if pub.RefreshMode != "none" || len(pub.GrantTypes) != 1 || pub.GrantTypes[0] != "authorization_code" {
+		t.Errorf("public app refresh: mode %q, grants %v", pub.RefreshMode, pub.GrantTypes)
+	}
+	// the token lifetime cannot go below 15 seconds, whatever writes the row
+	if _, err := db.GetDatabaseConnection().Exec(`UPDATE app SET access_token_ttl_seconds = 14 WHERE id = $1`, app.ID); err == nil {
+		t.Error("the database accepted a token lifetime below 15 seconds")
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM app_secret WHERE app_id = $1`, pub.ID); n != 0 {
 		t.Error("public apps must have no secret")
@@ -761,11 +806,13 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 	acct := testutil.CreateAccount(t, "quinn")
 	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
 
-	oldToken := testutil.Token(t, app, acct.ID, "", -48*time.Hour)
-	recentlyExpired := testutil.Token(t, app, acct.ID, "", -time.Hour)
-	liveToken := testutil.Token(t, app, acct.ID, "", time.Hour)
 	ancient, _ := db.CreateSession(acct.ID, auth.HashToken("ancient"), "", "ua", -31*24*time.Hour)
 	recentSession, _ := db.CreateSession(acct.ID, auth.HashToken("recent"), "", "ua", -24*time.Hour)
+	live, _ := db.CreateSession(acct.ID, auth.HashToken("live"), "", "ua", time.Hour)
+	db.SaveRefreshToken(auth.HashToken("rt-ancient"), app.ID, acct.ID, ancient.ID, []string{"openid"})
+	db.SaveRefreshToken(auth.HashToken("rt-revoked-long-ago"), app.ID, acct.ID, live.ID, []string{"openid"})
+	db.SaveRefreshToken(auth.HashToken("rt-live"), app.ID, acct.ID, live.ID, []string{"openid"})
+	testutil.Exec(t, `UPDATE refresh_token SET revoked_at = now() - interval '8 days' WHERE token_hash = $1`, auth.HashToken("rt-revoked-long-ago"))
 	db.SaveAuthCode(auth.HashToken("old-code"), db.AuthCode{AppID: app.ID, AccountID: acct.ID, RedirectURI: "https://billing.test/callback",
 		Scopes: []string{"openid"}, AuthTime: time.Now()}, -48*time.Hour)
 	testutil.Exec(t, `INSERT INTO rate_limit (key, window_start, hits) VALUES ('old', now() - interval '2 days', 3), ('fresh', now(), 1)`)
@@ -780,18 +827,17 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	exists := func(q string, args ...any) bool { return testutil.Count(t, q, args...) == 1 }
-	if exists(`SELECT count(*) FROM access_token WHERE token_hash = $1`, auth.HashToken(oldToken)) {
-		t.Error("an access token expired 2 days ago was kept")
+	rt := func(name string) bool {
+		return exists(`SELECT count(*) FROM refresh_token WHERE token_hash = $1`, auth.HashToken(name))
 	}
-	if !exists(`SELECT count(*) FROM access_token WHERE token_hash = $1`, auth.HashToken(recentlyExpired)) ||
-		!exists(`SELECT count(*) FROM access_token WHERE token_hash = $1`, auth.HashToken(liveToken)) {
-		t.Error("recent or live tokens were removed")
-	}
-	if exists(`SELECT count(*) FROM session WHERE id = $1`, ancient.ID) {
-		t.Error("a session expired 31 days ago was kept")
+	if exists(`SELECT count(*) FROM session WHERE id = $1`, ancient.ID) || rt("rt-ancient") {
+		t.Error("a session expired 31 days ago, or its refresh token, was kept")
 	}
 	if !exists(`SELECT count(*) FROM session WHERE id = $1`, recentSession.ID) {
 		t.Error("a recently expired session was removed")
+	}
+	if rt("rt-revoked-long-ago") || !rt("rt-live") {
+		t.Error("refresh tokens were not cleaned correctly")
 	}
 	if exists(`SELECT count(*) FROM authorization_code WHERE code_hash = $1`, auth.HashToken("old-code")) {
 		t.Error("an old authorization code was kept")

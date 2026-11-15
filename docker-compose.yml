@@ -22,7 +22,6 @@ services:
       PUBLIC_ADDR: ":3001"
       INTERNAL_ADDR: ":3002"
       ISSUER_URL: http://localhost:3001
-      INTROSPECTION_URL: http://backend:3002/introspect
       TRUSTED_PROXY_HOPS: "0"
       # Dev-only key (base64 of 32 bytes). Generate a real one with: openssl rand -base64 32
       KEY_ENCRYPTION_KEY: ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtYW55d2hlcmU=

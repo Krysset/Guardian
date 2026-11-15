@@ -1,116 +1,142 @@
-# Integrating a service with Guardian
+# Integrating an app with Guardian
 
-> **Partly outdated (2026-11-13).** The design moved to groups plus short-lived JWT access tokens, and `/introspect` is removed. See the decisions log at the top of `docs/ROADMAP.md`. Sections about opaque tokens, introspection, per-app permissions and immediate revocation describe the old design. They will be rewritten in milestone M2.
+Guardian is a standard OpenID Connect provider. Use any OIDC library, ask for the `groups` scope, and map
+groups to your own permissions. Your app checks access tokens by itself; it does not call Guardian on every
+request.
 
-Everything a service needs is: **one OIDC login** and **one HTTP call per request**. No JWT validation,
-no JWKS, no key rotation, no token caching.
-
-## 1. Register the service (once, as a Guardian admin)
+## 1. Register the app (once, as a Guardian administrator)
 
 ```
-POST /api/service/add            (admin session, JSON)
+POST /api/service/add            (administrator session, JSON)
 {
   "name": "billing",
   "pretty_name": "Billing",
   "description": "Invoices",
   "redirect_uris": ["https://billing.example.com/auth/callback"],
   "post_logout_redirect_uris": ["https://billing.example.com/"],
-  "backchannel_logout_uri": "https://billing.example.com/auth/backchannel-logout",   // optional
-  "access_token_ttl_seconds": 28800,                                                  // optional, see below
-  "scopes": ["openid", "profile", "email", "offline_access"]
+  "backchannel_logout_uri": "https://billing.example.com/auth/backchannel-logout",   // optional, recommended
+  "access_token_ttl_seconds": 300,                                                    // optional, see below
+  "scopes": ["openid", "profile", "email", "groups"],
+  "access_rule": "groups",                                                            // or "anyone"
+  "group_ids": ["<id of billing-users>", "<id of billing-approvers>"]
 }
 ```
 
-The response contains `client_id` and, once, `client_secret`. Put both in a Kubernetes Secret.
-Then define the permissions your service understands (they are opaque strings to Guardian):
+The answer contains `client_id` and, once, `client_secret`. Keep both in a Kubernetes Secret.
 
-```
-POST /api/access/permissions     { "app_id": "<id>", "name": "invoices.approve", "pretty_name": "Approve invoices" }
-POST /api/access/grant-role      { "account_id": "<id>", "role_id": "<id>" }
-POST /api/access/grant-permission{ "account_id": "<id>", "permission_id": "<id>", "attributes": {"limit": 5000} }
-```
+- **`access_rule`:** with `groups` (the default) only members of a linked group can sign in to the app;
+  Guardian refuses everyone else before your app sees them. With `anyone` every account can sign in.
+- **`group_ids`:** the groups your app is told about. Your app never sees any other group a user is in.
+  Change both later with `POST /api/service/access` (`{"id", "access_rule", "group_ids"}`).
+- Groups are managed under `/api/groups`. A group's `key` (for example `billing-approvers`) never changes;
+  that is the value your app receives.
 
-## 2. Log users in (browser)
+## 2. Sign users in
 
-Use any OIDC library with the discovery URL `https://<guardian>/.well-known/openid-configuration`,
-the authorization-code flow with PKCE, and scopes `openid profile email`. After the callback, keep the
-returned **access token in your server-side session** (never in the browser). Your own session cookie
-is only a pointer to it.
+Use your OIDC library with:
 
-## 3. Authorize every request (service to Guardian, in-cluster)
+- discovery URL `https://<guardian>/.well-known/openid-configuration`;
+- the authorization code flow with PKCE;
+- scopes `openid profile email groups`.
 
-```
-POST http://guardian-internal.guardian.svc:3002/introspect
-Authorization: Basic base64(client_id:client_secret)
-Content-Type: application/x-www-form-urlencoded
+The token response holds:
 
-token=<the user's access token>
-```
+| Token | What it is | Lifetime |
+|---|---|---|
+| `id_token` | Who the user is: `sub`, profile claims, `groups`, `sid`, `amr`. For your login code. | `access_token_ttl_seconds` |
+| `access_token` | A signed JWT (`typ: at+jwt`, RFC 9068) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr` and `groups`. No profile data. Send it to your own APIs. | `access_token_ttl_seconds` |
+| `refresh_token` | Gets new tokens. Only for apps with a client secret. It stays the same until the user's Guardian session ends. | the session |
 
-```json
-{ "active": true, "sub": "<account id>", "client_id": "<app the token was issued to>",
-  "scope": "openid profile", "exp": 1767225600, "iat": 1767224700, "sid": "<session id>",
-  "permissions": ["invoices.read", "invoices.approve"],
-  "attributes": { "invoices.approve": { "limit": 5000 } } }
-```
+Keep tokens on your server, never in the browser.
 
-* `active: false` means logged out, revoked, expired or disabled: end your session and send the user to login.
-* `permissions` are the user's permissions **in your app**, computed from the database at that moment.
-  `attributes` are the optional app-defined JSON from direct grants.
-* **Do not cache the answer.** That is what makes revocation immediate. It is a cheap, indexed lookup.
-* If Guardian is unreachable, **fail closed** (503), do not fall back to the last answer.
+## 3. Check access tokens yourself
 
-Go:
+Validate every access token locally: signature against Guardian's JWKS (`jwks_uri`, RS256), `iss`, `aud`
+(your `client_id`), `exp`, and the header `typ` must be `at+jwt`. Every JWT library does this. Then read
+`groups` and decide what the user may do.
 
-```go
-func requirePermission(perm string, next http.Handler) http.Handler {
-	client := &http.Client{Timeout: 2 * time.Second}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		form := url.Values{"token": {accessTokenFromSession(r)}}
-		req, _ := http.NewRequestWithContext(r.Context(), "POST", introspectURL, strings.NewReader(form.Encode()))
-		req.SetBasicAuth(clientID, clientSecret)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode != 200 { http.Error(w, "auth unavailable", 503); return }
-		defer resp.Body.Close()
-		var t struct {
-			Active      bool     `json:"active"`
-			Sub         string   `json:"sub"`
-			Permissions []string `json:"permissions"`
-		}
-		if json.NewDecoder(resp.Body).Decode(&t) != nil { http.Error(w, "auth unavailable", 503); return }
-		if !t.Active { endSession(w, r); http.Redirect(w, r, "/login", http.StatusFound); return }
-		if !slices.Contains(t.Permissions, perm) { http.Error(w, "forbidden", 403); return }
-		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), t.Sub)))
-	})
-}
-```
+Identify users by `sub`. Never by username or email: both can change, and a freed username can be taken by
+someone else.
 
-Python:
+## 4. Refresh, and what a refresh means
 
-```python
-def introspect(token):
-    r = requests.post(INTROSPECT_URL, data={"token": token}, auth=(CLIENT_ID, CLIENT_SECRET), timeout=2)
-    r.raise_for_status()
-    return r.json()          # {"active": false} or the document above
-```
+Refresh before the access token expires: `grant_type=refresh_token` with your client credentials.
 
-## 4. Service-to-service calls on behalf of a user
+Every refresh is checked against live data: the user's session, the account, your app, the access rule and
+the user's groups. So **group changes, logout and disabled accounts reach your app at its next refresh**,
+within `access_token_ttl_seconds`. Each refresh returns a new access token and a new ID token with the
+current groups and profile.
 
-Pass the user's access token as `Authorization: Bearer <token>`. The receiving service introspects it
-**as itself** and gets the user's permissions in *its own* app. `client_id` in the answer tells it which app
-the token was issued to, so it can refuse tokens from apps it does not trust.
+How to react to a failed refresh:
+
+- **`400 invalid_grant`:** the user is signed out, disabled or no longer allowed into your app. End your
+  session for them.
+- **A network error or a 5xx:** Guardian is unreachable. Keep the user signed in and retry for about one
+  more token lifetime, so a Guardian restart does not sign everyone out of every app.
+
+The refresh token does not change. Several replicas of your app, or a retry after a lost answer, can use it
+at the same time.
+
+`GET /userinfo` with an access token also checks live data and returns the current claims and groups. It is
+useful when you want to know "right now", but it is a call to Guardian, so do not use it on every request.
 
 ## 5. Logout
 
-* Users log out at Guardian (`/logout`), or your app redirects to `end_session_endpoint` with `id_token_hint`.
-* Guardian ends the SSO session; **every access token of that session becomes inactive at once**, so your next
-  introspection already returns `active: false`.
-* Optional but nice: implement the back-channel logout endpoint you registered. Guardian POSTs a signed
-  `logout_token` (JWT) with the user's `sid`; verify it with the OIDC library and delete your sessions for that `sid`.
+- Users sign out at Guardian (`/logout`), or your app sends them to `end_session_endpoint` with
+  `id_token_hint`.
+- **Back-channel logout (recommended):** register `backchannel_logout_uri`. Guardian POSTs a signed
+  `logout_token` (`typ: logout+jwt`) with the user's `sub` and `sid` when the session ends, when the account
+  is deleted, and when the user leaves a group linked to your app. Verify it with your OIDC library and drop
+  your session for that `sid`. This makes those changes immediate for your app instead of waiting for the
+  next refresh.
+- To end only your own refresh token, for example when the user signs out of your app alone, call
+  `POST /revoke` (RFC 7009) with `token=<refresh token>` and your client credentials.
+
+## Reading groups and users without a signed-in user (machine API)
+
+Sometimes an app needs to know about users who are not signed in right now, for example to show "who can
+approve invoices". For that an app with a secret can use Guardian's read-only machine API.
+
+1. An administrator turns it on: `POST /api/service/access` with `"machine_api": true` (together with the
+   app's `access_rule` and `group_ids`).
+2. The app gets a token for itself: `POST /token` with `grant_type=client_credentials` and its client
+   credentials. The token's audience is Guardian, it has no user, and it lives `access_token_ttl_seconds`.
+   Get a new one when it expires; there is no refresh token.
+3. The app calls, with `Authorization: Bearer <token>`:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/apps/self` | The app's own name, client id, access rule and scopes. |
+| `GET /api/v1/apps/self/groups` | The groups linked to the app, with `key`, `display_name`, `description` and `member_count`. |
+| `GET /api/v1/apps/self/groups/{key}/members` | The active members of one linked group. |
+| `GET /api/v1/apps/self/users/{sub}` | One account, by `sub`. |
+
+What an app can see:
+
+- **Groups:** only those linked to it. Any other group answers 404.
+- **Accounts:** members of its linked groups, and accounts that have signed in to it. Any other account
+  answers 404, exactly like an account that does not exist.
+- **Claims:** what the app's allowed scopes permit (for example no email without the `email` scope), plus
+  `groups` (only linked groups) if the app may use the `groups` scope.
+
+Turning machine access off, or disabling the app, stops the app's existing tokens at once. A user's access
+token is never accepted here.
 
 ## Choosing `access_token_ttl_seconds`
 
-Revocation does not depend on the TTL (introspection is live), so make it as long as your own session
-(for example 8 hours) and you never need refresh tokens. If you prefer short tokens, request `offline_access`
-and use the refresh token grant.
+It is how stale your app's view of a user can get, if your app does not implement back-channel logout.
+
+- Default: 300 seconds (5 minutes). Minimum: 15. Maximum: 86400.
+- 60 seconds or more is recommended: clocks differ a little, and your JWT library adds its own leeway.
+- An admin panel or anything sensitive: 60 seconds. Ordinary apps: the default.
+
+## Apps that do not refresh
+
+Some off-the-shelf apps read the ID token once at sign-in and then keep their own session. Group changes
+reach such an app only when its own session ends or when it receives a back-channel logout. Check how the app
+behaves when you connect it.
+
+## What Guardian does not decide
+
+Guardian knows who a user is and which of your app's groups they are in. Rules about individual records
+("may this user open invoice 42?") belong in your app.

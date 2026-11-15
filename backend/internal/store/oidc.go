@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidGrant = errors.New("invalid grant")
-	ErrTokenReuse   = errors.New("refresh token reuse detected")
-)
+var ErrInvalidGrant = errors.New("invalid grant")
 
 // ---- Authorization codes ----------------------------------------------------
 
@@ -40,60 +37,43 @@ func ConsumeAuthCode(codeHash string) (AuthCode, error) {
 }
 
 // ---- Refresh tokens ---------------------------------------------------------
+//
+// An app with a secret gets one refresh token per sign-in and keeps using it until the session ends. It
+// is not replaced at each refresh, so several replicas of an app, or a retry after a lost answer, can
+// use it at the same time. What a refresh may return is decided at refresh time, from the session,
+// the account, the app and the groups as they are then.
 
-func SaveRefreshToken(tokenHash, familyID, appID, accountID, sessionID string, scopes []string, expires time.Time) error {
+func SaveRefreshToken(tokenHash, appID, accountID, sessionID string, scopes []string) error {
 	_, err := GetDatabaseConnection().Exec(
-		`INSERT INTO refresh_token (token_hash, family_id, app_id, account_id, session_id, scopes, expires_at)
-		 VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7)`,
-		tokenHash, familyID, appID, accountID, sessionID, strArray(scopes), expires)
+		`INSERT INTO refresh_token (token_hash, app_id, account_id, session_id, scopes) VALUES ($1, $2, $3, $4, $5)`,
+		tokenHash, appID, accountID, sessionID, strArray(scopes))
 	return err
 }
 
-// RotateRefreshToken redeems oldHash and stores newHash in the same family, atomically.
-// Presenting an already-rotated token revokes the whole family (it was probably stolen).
-func RotateRefreshToken(oldHash, appID, newHash string, newExpires time.Time) (RefreshToken, error) {
-	tx, err := GetDatabaseConnection().Begin()
-	if err != nil {
-		return RefreshToken{}, err
-	}
-	defer tx.Rollback()
-
+// GetRefreshToken returns the app's refresh token with this hash if it has not been revoked. Whether its
+// session is still live is for the caller to check (GetLiveSession).
+func GetRefreshToken(tokenHash, appID string) (RefreshToken, error) {
 	var rt RefreshToken
-	var rotated, revoked sql.NullTime
-	var expires time.Time
-	err = tx.QueryRow(
-		`SELECT id, family_id, app_id, account_id, COALESCE(session_id::text, ''), scopes, rotated_at, revoked_at, expires_at
-		 FROM refresh_token WHERE token_hash = $1 AND app_id = $2 FOR UPDATE`, oldHash, appID).
-		Scan(&rt.ID, &rt.FamilyID, &rt.AppID, &rt.AccountID, &rt.SessionID, scanArray(&rt.Scopes), &rotated, &revoked, &expires)
+	err := GetDatabaseConnection().QueryRow(
+		`SELECT id, app_id, account_id, session_id, scopes FROM refresh_token
+		 WHERE token_hash = $1 AND app_id = $2 AND revoked_at IS NULL`, tokenHash, appID).
+		Scan(&rt.ID, &rt.AppID, &rt.AccountID, &rt.SessionID, scanArray(&rt.Scopes))
 	if errors.Is(err, sql.ErrNoRows) {
 		return RefreshToken{}, ErrInvalidGrant
 	}
-	if err != nil {
-		return RefreshToken{}, err
-	}
-	if revoked.Valid || time.Now().After(expires) {
-		return RefreshToken{}, ErrInvalidGrant
-	}
-	if rotated.Valid {
-		if _, err := tx.Exec(`UPDATE refresh_token SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL`, rt.FamilyID); err != nil {
-			return RefreshToken{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return RefreshToken{}, err
-		}
-		return RefreshToken{}, ErrTokenReuse
-	}
+	return rt, err
+}
 
-	if _, err := tx.Exec(`UPDATE refresh_token SET rotated_at = now() WHERE id = $1`, rt.ID); err != nil {
-		return RefreshToken{}, err
+// RevokeRefreshToken ends one refresh token of the app (RFC 7009). It reports whether a token was revoked.
+func RevokeRefreshToken(tokenHash, appID string) (bool, error) {
+	res, err := GetDatabaseConnection().Exec(
+		`UPDATE refresh_token SET revoked_at = now() WHERE token_hash = $1 AND app_id = $2 AND revoked_at IS NULL`,
+		tokenHash, appID)
+	if err != nil {
+		return false, err
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO refresh_token (token_hash, family_id, app_id, account_id, session_id, scopes, expires_at)
-		 VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7)`,
-		newHash, rt.FamilyID, rt.AppID, rt.AccountID, rt.SessionID, strArray(rt.Scopes), newExpires); err != nil {
-		return RefreshToken{}, err
-	}
-	return rt, tx.Commit()
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // ---- Signing keys -----------------------------------------------------------
@@ -152,53 +132,4 @@ func GetPublishedSigningKeys() ([]SigningKey, error) {
 		out = append(out, k)
 	}
 	return out, rows.Err()
-}
-
-// ---- Access tokens (opaque) -------------------------------------------------
-
-func SaveAccessToken(tokenHash, appID, accountID, sessionID string, scopes []string, expires time.Time) error {
-	_, err := GetDatabaseConnection().Exec(
-		`INSERT INTO access_token (token_hash, app_id, account_id, session_id, scopes, expires_at)
-		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6)`,
-		tokenHash, appID, accountID, sessionID, strArray(scopes), expires)
-	return err
-}
-
-// TokenInfo is what introspection knows about a live access token.
-type TokenInfo struct {
-	AccountID string
-	AppID     string // app the token was issued to
-	ClientID  string // ...and its client_id
-	SessionID string // "" if none
-	Scopes    []string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
-	Groups    []string // the account's groups that are linked to callerAppID, computed NOW
-}
-
-// IntrospectAccessToken answers "is this token valid right now, and which of callerAppID's groups is its
-// user in?" with ONE query against live data. The token is valid only while: not expired or revoked, its
-// app is enabled, its account is active, and its session (if any) is not revoked. callerAppID may be ""
-// when groups are not needed. Returns sql.ErrNoRows for any invalid token.
-func IntrospectAccessToken(tokenHash, callerAppID string) (TokenInfo, error) {
-	var ti TokenInfo
-	err := GetDatabaseConnection().QueryRow(
-		`SELECT t.account_id, t.app_id, a.client_id, COALESCE(t.session_id::text, ''), t.scopes, t.created_at, t.expires_at,
-		        ARRAY(SELECT g.key FROM group_member m
-		              JOIN user_group g ON g.id = m.group_id
-		              JOIN app_group ag ON ag.group_id = g.id AND ag.app_id = NULLIF($2, '')::uuid
-		              WHERE m.account_id = t.account_id AND `+activeMember+` ORDER BY g.key)
-		 FROM access_token t
-		 JOIN app a ON a.id = t.app_id AND a.enabled
-		 JOIN account acc ON acc.id = t.account_id AND acc.status = 'active' AND acc.deleted_at IS NULL
-		 LEFT JOIN session s ON s.id = t.session_id
-		 WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()
-		   AND (t.session_id IS NULL OR s.revoked_at IS NULL)`,
-		tokenHash, callerAppID).
-		Scan(&ti.AccountID, &ti.AppID, &ti.ClientID, &ti.SessionID, scanArray(&ti.Scopes), &ti.IssuedAt, &ti.ExpiresAt,
-			scanArray(&ti.Groups))
-	if err != nil {
-		return TokenInfo{}, err
-	}
-	return ti, nil
 }

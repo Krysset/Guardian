@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"guardian/internal/auth"
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
 )
@@ -327,7 +326,7 @@ func TestTheLastAdministratorCannotBeRemoved(t *testing.T) {
 	if err := db.AddGroupMember(admins, seeded.ID, "", &later); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("giving the only administrator an expiry: %v, want ErrLastAdmin", err)
 	}
-	if err := db.SoftDeleteAccount(seeded.ID); !errors.Is(err, db.ErrLastAdmin) {
+	if _, err := db.SoftDeleteAccount(seeded.ID); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("deleting the only administrator: %v, want ErrLastAdmin", err)
 	}
 	if ok, _ := db.IsAdmin(seeded.ID); !ok {
@@ -363,7 +362,7 @@ func TestTheLastAdministratorCannotBeRemoved(t *testing.T) {
 		t.Error("the removed administrator is still an administrator")
 	}
 	// ...and now the second one is the last
-	if err := db.SoftDeleteAccount(second.ID); !errors.Is(err, db.ErrLastAdmin) {
+	if _, err := db.SoftDeleteAccount(second.ID); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("deleting the administrator that is now the last: %v, want ErrLastAdmin", err)
 	}
 	// removing someone from another group is never affected by the rule
@@ -409,7 +408,7 @@ func TestADeletedAccountLeavesItsGroups(t *testing.T) {
 	g := testutil.Group(t, "crew", "")
 	gone := testutil.AdminAccount(t, "gone")
 	testutil.AddMember(t, g, gone.ID)
-	if err := db.SoftDeleteAccount(gone.ID); err != nil {
+	if _, err := db.SoftDeleteAccount(gone.ID); err != nil {
 		t.Fatalf("deleting one of two administrators: %v", err)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM group_member WHERE account_id = $1`, gone.ID); n != 0 {
@@ -420,158 +419,39 @@ func TestADeletedAccountLeavesItsGroups(t *testing.T) {
 	}
 }
 
-// ---- Introspection reports groups -------------------------------------------
+// ---- Telling apps about group changes ----------------------------------------
 
-func TestRemovingAMemberIsVisibleToTheNextIntrospection(t *testing.T) {
+func TestLeavingAGroupNotifiesOnlyTheAppsLinkedToIt(t *testing.T) {
 	testutil.Reset(t)
-	approvers := testutil.Group(t, "approvers", "")
-	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{GroupIDs: []string{approvers}})
+	finance := testutil.Group(t, "finance", "")
+	other := testutil.Group(t, "other", "")
+	linked, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{BackchannelURI: "http://127.0.0.1:9/billing", GroupIDs: []string{finance}})
+	unlinked, _ := testutil.CreateApp(t, "wiki", testutil.AppOptions{BackchannelURI: "http://127.0.0.1:9/wiki", GroupIDs: []string{other}})
+	noHook, _ := testutil.CreateApp(t, "plain", testutil.AppOptions{GroupIDs: []string{finance}})
 	user := testutil.CreateAccount(t, "carol")
-	sess, _ := testutil.Session(t, user.ID)
-	hash := auth.HashToken(testutil.Token(t, app, user.ID, sess.ID, time.Hour))
+	testutil.AddMember(t, finance, user.ID)
 
-	groups := func() []string {
-		info, err := db.IntrospectAccessToken(hash, app.ID)
-		if err != nil {
-			t.Fatal(err)
+	live, _ := testutil.Session(t, user.ID)
+	ended, _ := testutil.Session(t, user.ID)
+	for _, s := range []string{live.ID, ended.ID} {
+		for _, app := range []db.App{linked, unlinked, noHook} {
+			db.TrackSessionApp(s, app.ID)
 		}
-		return info.Groups
 	}
-	if len(groups()) != 0 {
-		t.Fatal("no groups expected yet")
-	}
-	testutil.AddMember(t, approvers, user.ID)
-	if got := groups(); !slices.Equal(got, []string{"approvers"}) {
-		t.Fatalf("after adding: %v", got)
-	}
-	if err := db.RemoveGroupMember(approvers, user.ID); err != nil {
+	if _, err := db.RevokeSession(ended.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := groups(); len(got) != 0 {
-		t.Fatalf("after removal the group must be gone immediately, got %v", got)
-	}
-}
 
-func TestIntrospectionReturnsTheGroupsOfTheCallerNotTheTokenApp(t *testing.T) {
-	testutil.Reset(t)
-	readers := testutil.Group(t, "invoice-readers", "")
-	editors := testutil.Group(t, "page-editors", "")
-	billing, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{GroupIDs: []string{readers}})
-	wiki, _ := testutil.CreateApp(t, "wiki", testutil.AppOptions{GroupIDs: []string{editors}})
-	user := testutil.CreateAccount(t, "dave")
-	testutil.AddMember(t, readers, user.ID)
-	testutil.AddMember(t, editors, user.ID)
-	hash := auth.HashToken(testutil.Token(t, billing, user.ID, "", time.Hour)) // issued to billing
-
-	asBilling, err := db.IntrospectAccessToken(hash, billing.ID)
-	if err != nil || !slices.Equal(asBilling.Groups, []string{"invoice-readers"}) {
-		t.Fatalf("billing sees %v (%v)", asBilling.Groups, err)
-	}
-	asWiki, err := db.IntrospectAccessToken(hash, wiki.ID)
-	if err != nil || !slices.Equal(asWiki.Groups, []string{"page-editors"}) {
-		t.Fatalf("wiki sees %v (%v)", asWiki.Groups, err)
-	}
-	if asWiki.ClientID != billing.ClientID || asWiki.AppID != billing.ID {
-		t.Error("the token's own app must be reported so callers can refuse tokens they do not trust")
-	}
-	none, err := db.IntrospectAccessToken(hash, "")
-	if err != nil || len(none.Groups) != 0 {
-		t.Fatalf("no caller app must yield no groups, got %v (%v)", none.Groups, err)
-	}
-}
-
-func TestIntrospectionValidityRules(t *testing.T) {
-	testutil.Reset(t)
-	cases := []struct {
-		name   string
-		mutate func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string // returns token to introspect
-		active bool
-	}{
-		{"valid", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string { return token }, true},
-		{"unknown token", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			return "not-a-token"
-		}, false},
-		{"token without session is valid", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			return testutil.Token(t, app, acct.ID, "", time.Hour)
-		}, true},
-		{"expired token", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			return testutil.Token(t, app, acct.ID, sess.ID, -time.Minute)
-		}, false},
-		{"revoked token", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			testutil.Exec(t, `UPDATE access_token SET revoked_at = now() WHERE token_hash = $1`, auth.HashToken(token))
-			return token
-		}, false},
-		{"session revoked (logout)", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			if _, err := db.RevokeSession(sess.ID); err != nil {
-				t.Fatal(err)
-			}
-			return token
-		}, false},
-		{"session merely expired still counts (offline access outlives the SSO session)", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			testutil.Exec(t, `UPDATE session SET expires_at = now() - interval '1 hour' WHERE id = $1`, sess.ID)
-			return token
-		}, true},
-		{"account deleted", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			if err := db.SoftDeleteAccount(acct.ID); err != nil {
-				t.Fatal(err)
-			}
-			return token
-		}, false},
-		{"account disabled", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			testutil.Exec(t, `UPDATE account SET status = 'disabled' WHERE id = $1`, acct.ID)
-			return token
-		}, false},
-		{"app disabled", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			testutil.Exec(t, `UPDATE app SET enabled = FALSE WHERE id = $1`, app.ID)
-			return token
-		}, false},
-		{"app removed", func(t *testing.T, app db.App, acct db.Account, sess db.Session, token string) string {
-			if err := db.RemoveApp(app.ID); err != nil {
-				t.Fatal(err)
-			}
-			return token
-		}, false},
-	}
-	for i, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			app, _ := testutil.CreateApp(t, "app"+string(rune('a'+i)), testutil.AppOptions{})
-			acct := testutil.CreateAccount(t, "user"+string(rune('a'+i)))
-			sess, _ := testutil.Session(t, acct.ID)
-			token := testutil.Token(t, app, acct.ID, sess.ID, time.Hour)
-			probe := c.mutate(t, app, acct, sess, token)
-
-			_, err := db.IntrospectAccessToken(auth.HashToken(probe), app.ID)
-			switch {
-			case c.active && err != nil:
-				t.Errorf("token should be active, got %v", err)
-			case !c.active && !errors.Is(err, sql.ErrNoRows):
-				t.Errorf("token should be inactive (sql.ErrNoRows), got %v", err)
-			}
-		})
-	}
-}
-
-func TestIntrospectionReportsTokenMetadata(t *testing.T) {
-	testutil.Reset(t)
-	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
-	user := testutil.CreateAccount(t, "frank")
-	sess, _ := testutil.Session(t, user.ID)
-	token := testutil.Token(t, app, user.ID, sess.ID, time.Hour, "openid", "email")
-
-	info, err := db.IntrospectAccessToken(auth.HashToken(token), app.ID)
+	notices, err := db.GroupChangeLogoutNotices(user.ID, finance)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.AccountID != user.ID || info.SessionID != sess.ID || info.ClientID != app.ClientID {
-		t.Errorf("ids: %+v", info)
+	if len(notices) != 1 || notices[0].ClientID != linked.ClientID || notices[0].SessionID != live.ID ||
+		notices[0].AccountID != user.ID || notices[0].URI != "http://127.0.0.1:9/billing" {
+		t.Fatalf("notices = %+v, want one for billing and the live session only", notices)
 	}
-	if len(info.Scopes) != 2 || info.Scopes[0] != "openid" || info.Scopes[1] != "email" {
-		t.Errorf("scopes = %v", info.Scopes)
-	}
-	if d := time.Until(info.ExpiresAt); d < 55*time.Minute || d > time.Hour+time.Minute {
-		t.Errorf("expires in %v", d)
-	}
-	if time.Since(info.IssuedAt) > time.Minute {
-		t.Errorf("issued %v ago", time.Since(info.IssuedAt))
+	// someone who was never signed in to anything causes no notices
+	if none, err := db.GroupChangeLogoutNotices(testutil.CreateAccount(t, "dave").ID, finance); err != nil || len(none) != 0 {
+		t.Errorf("notices for an account without sessions: %+v, %v", none, err)
 	}
 }

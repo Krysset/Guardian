@@ -1,7 +1,7 @@
 # Testing Guardian
 
 > **Status:** the whole suite was run for the first time on 2026-11-14 (Go 1.24, PostgreSQL 16, with `-race`):
-> 102 tests, all passing, none skipped (119 after the configuration, migration and group tests; last full run with Go 1.26 and the pgx driver). The first run found one real bug, an app could not be registered through
+> 102 tests, all passing, none skipped (124 after the configuration, migration, group, token and machine API tests; last full run with Go 1.26 and the pgx driver). The first run found one real bug, an app could not be registered through
 > the API without `post_logout_redirect_uris`, which is fixed. When something fails, read the message first: it
 > may be a bug in the test, not in Guardian.
 
@@ -32,21 +32,23 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 |---|---|---|---|
 | Unit | `internal/config`, `internal/auth`, `internal/server`, and `util_test.go`, `handlers_test.go`, `templates_test.go` in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, HTML escaping and security headers, request validation, metrics labelling, discovery document |
 | Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, the last-administrator rule also under concurrency), token introspection validity rules, immediate revocation, single-use codes (also under concurrency), refresh rotation and theft detection, rate-limit counters, client secrets, cleanup job |
-| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: login, SSO, tokens, introspection, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, admin APIs, metrics |
+| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: login, SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, admin APIs, metrics |
 
 ## Requirements and the tests that pin them down
 
 | Requirement | Tests |
 |---|---|
-| Group changes are effective immediately | `TestRemovingAMemberIsVisibleToTheNextIntrospection`, `TestE2EGroupChangesByAnAdminAreImmediate`, `TestAnAppOnlySeesTheGroupsLinkedToIt` |
-| An app only sees the groups linked to it | `TestAnAppOnlySeesTheGroupsLinkedToIt`, `TestIntrospectionReturnsTheGroupsOfTheCallerNotTheTokenApp` |
+| Group changes reach an app at its next refresh, and at once with back-channel logout | `TestE2EGroupChangesReachTheAppAtItsNextRefresh`, `TestE2ELeavingAGroupEndsAccessAndNotifiesTheApp`, `TestLeavingAGroupNotifiesOnlyTheAppsLinkedToIt` |
+| An app only sees the groups linked to it | `TestAnAppOnlySeesTheGroupsLinkedToIt`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens` |
 | The access rule decides who may sign in to an app | `TestE2EAppAccessRuleDecidesWhoMaySignIn`, `TestAppAccessRule` |
 | Only administrators manage Guardian; owners manage only their groups' members | `TestE2EGroupAndAppAPIsAreForAdministrators`, `TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups`, `TestGroupOwnersAreTheMembersOfTheOwnerGroup` |
+| An app's machine API shows only its own groups and users | `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers`, `TestAnAppMayKnowItsGroupMembersAndItsUsersOnly`, `TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers` |
+| Refresh tokens are stable and re-check everything | `TestE2ERefreshTokensAreStableAndRecheckEverything`, `TestE2ESessionTimeoutsEndRefreshes`, `TestConcurrentUseOfOneRefreshTokenAllSucceeds` |
 | There is always an administrator | `TestE2ETheLastAdministratorIsProtected`, `TestTheLastAdministratorCannotBeRemoved`, `TestAdministratorsRemovingEachOtherAtTheSameTimeLeaveOne` |
 | Logout ends everything everywhere | `TestE2ESingleSignOnAndLogoutEverywhere`, `TestRevokeSessionEndsEverythingUnderIt` |
-| Account deletion / app disabling lock out at once | `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EDisablingAnAppKillsItsTokensAndLogins`, `TestIntrospectionValidityRules` |
-| Services integrate with one call | `TestE2EIntrospectionAuthenticationAndBoundaries`, `TestIntrospectionReturnsTheGroupsOfTheCallerNotTheTokenApp` |
-| Introspection is internal only | `TestE2EIntrospectionAuthenticationAndBoundaries`, `TestInternalRouterBasics` |
+| Account deletion / app disabling stop refreshes and userinfo at once | `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EDisablingAnAppStopsItsRefreshesAndLogins`, `TestSoftDeleteLocksTheAccountOutEverywhere` |
+| Access tokens are lean signed JWTs that apps verify themselves | `TestE2ELoginIssuesSignedAccessAndIDTokens`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens` |
+| Introspection is gone; internal endpoints are not public | `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens`, `TestInternalRouterBasics` |
 | Open sign-up with rate limiting | `TestE2ESignUpIsOpenButRateLimited`, `TestE2ELoginThrottlingAndNoUserEnumeration`, `TestRateLimit*` |
 | Secrets never stored in plaintext | cookie, token, code, secret and password assertions in the e2e and database tests |
 | A database from another schema revision is refused, not half-used | `TestADatabaseFromAnotherSchemaRevisionIsRefused`, `TestInitMigrationCarriesItsFingerprint` |
@@ -59,7 +61,7 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 * `TRUSTED_PROXY_HOPS` end to end (only the IP function is unit tested).
 * Graceful SIGTERM shutdown, `/readyz` failing when the database is down, connection-pool limits.
 * Kubernetes manifests and the NetworkPolicy.
-* Load and latency: use `guardian_http_request_duration_seconds{route="/introspect"}` from a staging deployment.
+* Load and latency: use `guardian_http_request_duration_seconds{route="/token"}` and `guardian_token_requests_total` from a staging deployment.
 * Email verification, password reset, MFA (not implemented).
 
 ## Known fragile spots

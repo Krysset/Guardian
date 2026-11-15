@@ -261,7 +261,14 @@ func removeGroupMember(w http.ResponseWriter, r *http.Request) {
 		groupFail(w, err)
 		return
 	}
+	// Apps linked to this group are told to drop what they hold for the user, so the change reaches apps
+	// with back-channel logout at once instead of at their next refresh.
+	notices, err := db.GroupChangeLogoutNotices(member, group.ID)
+	if err != nil {
+		slog.Error("failed to look up apps to notify about a group change", "error", err)
+	}
+	sendLogoutNotices(notices)
 	db.Audit("group.member_removed", accountID(r), "", clientIP(r),
-		map[string]any{"group": group.ID, "key": group.Key, "account": member, "via": via})
+		map[string]any{"group": group.ID, "key": group.Key, "account": member, "via": via, "apps_notified": len(notices)})
 	RespondWithSuccess(w)
 }

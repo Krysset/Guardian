@@ -42,12 +42,13 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `internal/config/` — every environment variable in one place, validated at startup; all problems are reported at once.
   - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
     - Public `:3001`: OIDC, hosted pages, `/api`.
-    - Internal `:3002`: `/introspect`, `/metrics`, `/healthz`, `/readyz`.
+    - Internal `:3002`: `/metrics`, `/healthz`, `/readyz`.
   - `internal/api/` — HTTP handlers, still one package:
     - `oidc.go` — discovery, authorize, token, userinfo, jwks, consent.
     - `login.go` — login/logout and back-channel logout.
     - `account.go`, `app.go`, `groups.go` — `/api/account`, `/api/service`, `/api/groups` (REST style).
-    - `introspect.go` — internal router.
+    - `machine.go` — the machine API at `/api/v1/apps/self` (Bearer `client_credentials` tokens) and the client_credentials grant.
+    - `internal.go` — internal router (metrics and probes).
     - `templates.go` — inline hosted-page HTML.
     - `middleware.go` — session, CSRF, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `RequireSameOrigin`.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
@@ -55,10 +56,10 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
   - `internal/testutil/` — helpers for tests that need Postgres.
   - `e2e/` — end-to-end tests over HTTP against both routers.
-  - Tests: 119, all passing (`docs/TESTING.md`).
+  - Tests: 124, all passing (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
-- `docs/` — `ARCHITECTURE.md`, `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`, plus yUML diagrams.
+- `docs/` — `ARCHITECTURE.md` (design decisions, load, mermaid diagrams), `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`. The old yUML diagrams were deleted (2026-11-15); recreating app-to-Guardian communication diagrams is a 1.0 docs item in `docs/ROADMAP.md`.
 
 ## Data model (backend/migrations/00001_init.sql)
 - `account` — the OIDC subject; profile columns map 1:1 to standard claims. Status is pending, active, disabled or locked. Soft delete via `deleted_at`.
@@ -69,7 +70,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `group_member` — membership, with optional `expires_at`. Expired rows do not count.
   - `app_group` — which groups an app is told about.
   - `app.access_rule` — `groups` (the default: only members of a linked group may sign in) or `anyone`.
-- Session and token tables: `session` (SSO), `authorization_code`, `refresh_token` (rotating families), `access_token` (opaque and hashed; to be removed with JWT access tokens), `session_app` (for back-channel logout), `signing_key`.
+- Session and token tables: `session` (SSO; `last_seen_at` drives the idle timeout, `expires_at` is the absolute end), `authorization_code`, `refresh_token` (one stable token per sign-in and app, bound to the session; `family_id` unused, kept for rotation later), `session_app` (for back-channel logout), `signing_key`. Access tokens are signed JWTs and are not stored.
 - `account_token` — one-time tokens for reset, verification, re-authentication and invites. `account_mfa` holds TOTP, WebAuthn and recovery codes. Both are unused so far.
 - `rate_limit` (UNLOGGED) and `audit_log` (append-only).
 - Seed data: standard scopes; the system group `guardian-admins`; and an `admin` account in that group with no password, set at startup from `ADMIN_INITIAL_PASSWORD` or logged once. No app is seeded.
@@ -186,7 +187,7 @@ charts/guardian/
   - `docker-compose.yml` with the right `DB_*` names, ports 3001/3002, a dev key, Postgres 16 with a health check, and Mailpit.
   - CI at `.github/workflows/backend.yml` (format check, vet, tests against Postgres, image build).
   - `.gitattributes`, `.gitignore`, `README.md` and `TESTING.md` updates.
-- **No tests were deleted.** The tests for introspection and the old permission model pass, so they stay until those features are removed in the groups and JWT work.
+- **No tests were deleted in M0.** The tests for introspection and the old permission model were replaced in the groups and tokens work.
 - **Not verified:** the Docker image build and `docker compose up` (no Docker available to the agent), and the CI workflow (nothing has been pushed).
 - **Left to the owner:** pushing, and merging `oidc-refactor` into `dev`.
 - **Fixed since, in the groups work:** admin routes used to mix `OnlyAdmin` and `RequirePermission`, and any signed-in user could list all apps.
@@ -253,10 +254,24 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - Store: `internal/store/groups.go`. The last-administrator rule lives there: one active account must always be in `guardian-admins` through a membership without an expiry. It is enforced on member removal, on adding an expiry and on account deletion, under a row lock on the administrators group.
     - API: `/api/groups` (REST). Administrators do everything; a group's owners (members of its owner group) may only list, add and remove its members. `/api/service` is now administrators only, with `POST /api/service/access` for the access rule and linked groups.
     - Sign-in: `/authorize` enforces the app's access rule; refused accounts get a 403 page, or `access_denied` with `prompt=none`.
-    - Introspection now returns `groups` instead of `permissions`. It is removed in part 2.
     - **Schema revision check:** `00001_init.sql` records a fingerprint of itself (table `schema_revision`; comments and blank lines do not count) when it creates a database. `store.VerifySchemaRevision` compares it at every start and refuses a database made by another revision, with a message that says to recreate it. So after any edit to `00001_init.sql`, existing development databases must be recreated (`docker compose down -v`); tell the owner when a change needs that.
-  - **Part 2, tokens: next.** Lean JWT access tokens (`at+jwt`), the `groups` scope in the ID token, userinfo and access token, stable refresh tokens for confidential apps with re-checks at refresh (including the access rule), no refresh tokens for public apps, session idle and absolute timeouts, back-channel logout on membership removal, removal of `/introspect` and the `access_token` table, the 15-second lifetime floor, and removal of `phone_number`, `birthdate` and the `phone` scope.
-  - **Part 3:** `client_credentials` and the machine API.
+  - **Part 2, tokens: done and tested, staged for review (2026-11-15).**
+    - Access tokens are signed JWTs (`typ: at+jwt`) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr`, `jti` and, with the `groups` scope, `groups`. No profile data. Not stored. The ID token carries profile claims and `groups`, and is issued again at every refresh.
+    - `api.issueTokens` is the single place that decides whether a user may (still) have tokens for an app. Every code exchange and every refresh goes through it and re-checks live data: session (idle and absolute), account, the app's access rule, groups.
+    - Refresh tokens: `refresh_mode` per app, `stable` (confidential apps; one token per sign-in, never replaced, valid while the session lives) or `none` (public apps). A refresh returns no new refresh token. `offline_access` is accepted but changes nothing.
+    - `POST /revoke` (RFC 7009) for refresh tokens, confidential apps only, always 200.
+    - `/userinfo` verifies the access token (rejects ID tokens by `typ`) and checks session, account and app live; returns current groups.
+    - Sessions: `SESSION_IDLE_TIMEOUT` (default 168h) and `SESSION_MAX_LIFETIME` (default 720h) replace `SESSION_TTL` (removed; no warning for it). Refreshes and userinfo count as use.
+    - Back-channel logout also on account deletion and on leaving a group (only apps linked to that group).
+    - Removed: `/introspect`, the `access_token` table, `INTROSPECTION_URL`, `phone_number`, `birthdate`, the `phone` scope. Token lifetime 15-86400 seconds (database CHECK), default 300.
+    - Metric `guardian_token_requests_total{grant,result}` replaces the introspection counter.
+    - `docs/INTEGRATION.md` is rewritten for the new design.
+  - **Part 3, machine API: done and tested, staged for review (2026-11-15).**
+    - `client_credentials` grant for confidential apps that have it in `grant_types`; turned on and off with `"machine_api"` on `POST /api/service/access` (checked before anything changes). Token: `at+jwt`, `sub` = `client_id` = the app's client id, `aud` = the issuer, no `sid`, lifetime `access_token_ttl_seconds`, no refresh token.
+    - `GET /api/v1/apps/self`, `/groups`, `/groups/{key}/members`, `/users/{sub}`. Read-only. Mounted outside the cookie API, so no same-origin check.
+    - Every request re-checks that the app is enabled and still has the grant, so turning access off stops existing tokens at once. User access tokens are refused (audience and `sid`).
+    - Visibility: linked groups only; accounts that are active members of a linked group, or that have signed in to the app (new table `app_user`, written when an authorization code is exchanged). Anything else is the same 404 as an unknown account. Claims follow the app's allowed scopes.
+    - The owner was away and asked for work to continue and be reviewed together: part 2 and part 3 are staged together on `dev`. Separate diffs are in `.tools/review/` (git-ignored).
   - **Part 4:** split `internal/api` into `oidc`, `web`, `httpx` and `internalapi`.
   - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
 - **How to build and test in the cloud workspace:**
@@ -264,10 +279,11 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - Modules: tar `backend/vendor` in the VM and unpack it in the cloud copy. When dependencies change, the code that imports them must exist first, then the owner runs `go get`, `go mod tidy` and `go mod vendor` in `backend`.
   - Use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
   - Postgres in the cloud workspace is killed between turns; restart it at the start of each command that needs it.
-- `docs/ARCHITECTURE.md` and `INTEGRATION.md` still describe the old introspection design (they are marked as outdated). They are rewritten during 0.1.
+- `docs/ARCHITECTURE.md` was rewritten for the current design on 2026-11-15 (staged with parts 2 and 3). Its four mermaid diagrams render with `mmdc`; keep them in sync when the design changes.
 
 ## Working conventions
 - Keep this file and `docs/ROADMAP.md` current; they are the hand-off between sessions.
 - Never let staleness exceed the app's configured `access_token_ttl_seconds`; every refresh must re-check session, account, app and groups.
 - No feature may depend on the number of backend replicas, or on which cluster a replica runs in.
 - Secrets and tokens are stored only as hashes or encrypted values; never log query strings on OIDC routes.
+- No warnings or refusals for legacy or removed settings before 1.0: nothing is deployed until then, so old options are simply dropped.

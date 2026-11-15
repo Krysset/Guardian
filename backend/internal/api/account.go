@@ -116,7 +116,8 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid account id")
 		return
 	}
-	if err := db.SoftDeleteAccount(req.ID); err != nil {
+	notices, err := db.SoftDeleteAccount(req.ID)
+	if err != nil {
 		if errors.Is(err, db.ErrLastAdmin) {
 			RespondWithError(w, http.StatusConflict, "Guardian must keep at least one active administrator whose membership does not expire")
 			return
@@ -124,6 +125,7 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Failed to delete user")
 		return
 	}
+	sendLogoutNotices(notices) // apps that support back-channel logout drop the user at once
 	db.Audit("account.deleted", accountID(r), "", clientIP(r), map[string]any{"target": req.ID})
 	RespondWithSuccess(w)
 }

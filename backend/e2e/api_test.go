@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
 )
@@ -28,8 +30,9 @@ func (b *browser) call(method, path string, body any, want int) map[string]any {
 
 func members(group, account string) string { return "/api/groups/" + group + "/members/" + account }
 
-// Group changes made through the API are visible to the very next introspection.
-func TestE2EGroupChangesByAnAdminAreImmediate(t *testing.T) {
+// Group changes made through the API reach the app at its next refresh. The app's refresh token stays
+// the same; what it returns is decided at refresh time.
+func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	testutil.Reset(t)
 	svc, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
 	testutil.AdminAccount(t, "root")
@@ -38,8 +41,16 @@ func TestE2EGroupChangesByAnAdminAreImmediate(t *testing.T) {
 	admin := newBrowser(t)
 	admin.mustLogin("root")
 	ub := newBrowser(t)
-	tok := ub.signIn(svc, secret, "dave", "openid")
-	groups := func() []string { return groupList(mustActive(t, svc, secret, tok.Access)) }
+	tok := ub.signIn(svc, secret, "dave", "openid groups")
+	groups := func() []string {
+		fresh := refreshed(t, svc, secret, tok.Refresh)
+		inAccess := groupList(verifyAccessToken(t, svc, fresh.Access))
+		inID := groupList(parseJWT(t, fresh.ID).Claims.(jwt.MapClaims))
+		if fmt.Sprint(inAccess) != fmt.Sprint(inID) {
+			t.Fatalf("access token says %v, ID token says %v", inAccess, inID)
+		}
+		return inAccess
+	}
 	if len(groups()) != 0 {
 		t.Fatalf("a new user must be in no group: %v", groups())
 	}
@@ -60,10 +71,18 @@ func TestE2EGroupChangesByAnAdminAreImmediate(t *testing.T) {
 		t.Fatalf("after linking the group: %v, want [approvers] and never hr-sensitive", got)
 	}
 
-	// removing the member is effective at once
+	// userinfo always answers with the groups as they are now
+	if _, info := userinfoStatus(t, tok.Access); fmt.Sprint(groupList(info)) != "[approvers]" {
+		t.Errorf("userinfo groups = %v", info["groups"])
+	}
+
+	// removing the member reaches the next refresh, and userinfo at once
 	admin.call("DELETE", members(approvers, user.ID), nil, 200)
 	if len(groups()) != 0 {
-		t.Fatalf("after removing the member the group must be gone at once: %v", groups())
+		t.Fatalf("after removing the member the next refresh must not carry the group: %v", groups())
+	}
+	if _, info := userinfoStatus(t, tok.Access); len(groupList(info)) != 0 {
+		t.Errorf("userinfo still shows %v after the removal", info["groups"])
 	}
 
 	// memberships can expire; an expiry in the past is refused
@@ -328,65 +347,77 @@ func TestE2EAppAccessRuleDecidesWhoMaySignIn(t *testing.T) {
 	}
 }
 
-func TestE2EIntrospectionAuthenticationAndBoundaries(t *testing.T) {
+func TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens(t *testing.T) {
 	testutil.Reset(t)
-	testutil.CreateAccount(t, "alice")
+	user := testutil.CreateAccount(t, "alice")
+	if _, err := db.UpdateProfile(db.Account{ID: user.ID, DisplayName: "Alice A", Email: "alice@example.com"}); err != nil {
+		t.Fatal(err)
+	}
 	a, secA := testutil.CreateApp(t, "appa", testutil.AppOptions{FirstParty: true})
 	bApp, secB := testutil.CreateApp(t, "appb", testutil.AppOptions{FirstParty: true})
 	ga := testutil.Group(t, "a-group", "")
 	gb := testutil.Group(t, "b-group", "")
+	unlinked := testutil.Group(t, "hr-sensitive", "")
 	if err := db.SetAppAccess(a.ID, "anyone", []string{ga}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.SetAppAccess(bApp.ID, "anyone", []string{gb}); err != nil {
 		t.Fatal(err)
 	}
-	user, _, _ := db.GetAccountByUsername("alice")
-	testutil.AddMember(t, ga, user.ID)
-	testutil.AddMember(t, gb, user.ID)
+	for _, g := range []string{ga, gb, unlinked} {
+		testutil.AddMember(t, g, user.ID)
+	}
 	br := newBrowser(t)
-	tok := br.signIn(a, secA, "alice", "openid profile")
+	tokA := br.signIn(a, secA, "alice", "openid profile email groups")
+	tokB := br.signIn(bApp, secB, "alice", "openid groups")
 
-	// the answer reveals only what a service needs, nothing about the user's profile
-	m := mustActive(t, a, secA, tok.Access)
-	for _, k := range []string{"sub", "client_id", "scope", "token_type", "iat", "exp", "groups", "sid"} {
-		if m[k] == nil {
-			t.Errorf("introspection response lacks %q: %v", k, m)
+	claimsA := verifyAccessToken(t, a, tokA.Access)
+	if got := groupList(claimsA); fmt.Sprint(got) != "[a-group]" {
+		t.Errorf("app A's access token carries %v, want [a-group]", got)
+	}
+	if got := groupList(verifyAccessToken(t, bApp, tokB.Access)); fmt.Sprint(got) != "[b-group]" {
+		t.Errorf("app B's access token carries %v, want [b-group]", got)
+	}
+	// an access token is lean: who, for which app, which scopes and groups; no profile data
+	for _, k := range []string{"sub", "aud", "client_id", "scope", "sid", "amr", "jti", "iat", "exp"} {
+		if claimsA[k] == nil {
+			t.Errorf("access token lacks %q: %v", k, claimsA)
 		}
 	}
-	for _, leaked := range []string{"email", "name", "username", "preferred_username"} {
-		if _, ok := m[leaked]; ok {
-			t.Errorf("introspection leaked %q", leaked)
+	for _, leaked := range []string{"email", "name", "preferred_username", "email_verified"} {
+		if _, ok := claimsA[leaked]; ok {
+			t.Errorf("access token carries profile data %q", leaked)
 		}
 	}
+	// the ID token carries the profile data instead
+	idA := parseJWT(t, tokA.ID).Claims.(jwt.MapClaims)
+	if idA["email"] != "alice@example.com" || idA["name"] != "Alice A" || fmt.Sprint(groupList(idA)) != "[a-group]" {
+		t.Errorf("ID token claims = %v", idA)
+	}
+	// an access token for one app is not valid for another
+	if _, err := jwt.Parse(tokA.Access, testKeys.Keyfunc, jwt.WithValidMethods([]string{"RS256"}),
+		jwt.WithAudience(bApp.ClientID)); err == nil {
+		t.Error("app A's access token passes app B's audience check")
+	}
+	// without the groups scope there is no groups claim at all
+	plain := br.signIn(a, secA, "alice", "openid")
+	if _, ok := verifyAccessToken(t, a, plain.Access)["groups"]; ok {
+		t.Error("a token without the groups scope carries groups")
+	}
+	if _, ok := parseJWT(t, plain.ID).Claims.(jwt.MapClaims)["groups"]; ok {
+		t.Error("an ID token without the groups scope carries groups")
+	}
 
-	// another service gets the groups linked to IT for the same user, and learns which app the token belongs to
-	other := mustActive(t, bApp, secB, tok.Access)
-	if got := groupList(other); len(got) != 1 || got[0] != "b-group" || other["client_id"] != a.ClientID {
-		t.Errorf("app B sees %v / client_id %v", got, other["client_id"])
+	// client authentication at /token
+	status, body := tokenRequest(t, a, "wrong", url.Values{"grant_type": {"authorization_code"}, "code": {"x"}})
+	if status != http.StatusUnauthorized || body["error"] != "invalid_client" {
+		t.Errorf("/token with a wrong secret: %d %v", status, body)
 	}
-	if got := groupList(m); len(got) != 1 || got[0] != "a-group" {
-		t.Errorf("app A sees %v", got)
-	}
-
-	// caller authentication
-	if status, _ := introspectToken(t, a, "wrong-secret", tok.Access); status != http.StatusUnauthorized {
-		t.Errorf("wrong secret: %d", status)
-	}
-	if status, _ := introspectToken(t, a, "", tok.Access); status != http.StatusUnauthorized {
-		t.Errorf("no credentials: %d", status)
-	}
-	if status, _ := introspectToken(t, a, secB, tok.Access); status != http.StatusUnauthorized {
+	if status, _ := refreshRequest(t, a, secB, tokA.Refresh); status != http.StatusUnauthorized {
 		t.Errorf("another app's secret: %d", status)
 	}
-	mustInactive(t, a, secA, "garbage-token")
-	for _, blank := range []string{"", " "} {
-		if status, m := introspectToken(t, a, secA, blank); status != http.StatusBadRequest {
-			t.Errorf("blank token %q: %d %v, want 400", blank, status, m)
-		}
-	}
 
-	// introspection exists only on the internal listener
+	// introspection is gone, and the internal endpoints are not on the public listener
 	for _, path := range []string{"/introspect", "/metrics", "/healthz", "/readyz"} {
 		r := br.get(path)
 		if r.StatusCode != http.StatusNotFound && r.StatusCode != http.StatusMethodNotAllowed {
@@ -394,45 +425,75 @@ func TestE2EIntrospectionAuthenticationAndBoundaries(t *testing.T) {
 		}
 		drain(r)
 	}
-	req, _ := http.NewRequest("POST", pubSrv.URL+"/introspect", strings.NewReader("token="+tok.Access))
-	req.SetBasicAuth(a.ClientID, secA)
-	if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != http.StatusNotFound {
-		t.Errorf("POST /introspect on the public listener must be 404")
-	}
-
-	// token client authentication at /token
-	status, body := tokenRequest(t, a, "wrong", url.Values{"grant_type": {"authorization_code"}, "code": {"x"}})
-	if status != http.StatusUnauthorized || body["error"] != "invalid_client" {
-		t.Errorf("/token with a wrong secret: %d %v", status, body)
+	for _, srv := range []string{pubSrv.URL, intSrv.URL} {
+		resp, err := http.Post(srv+"/introspect", "application/x-www-form-urlencoded", strings.NewReader("token="+tokA.Access))
+		if err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("POST /introspect on %s must be 404", srv)
+		}
+		if resp != nil {
+			drain(resp)
+		}
 	}
 }
 
-func TestE2EDisablingAnAppKillsItsTokensAndLogins(t *testing.T) {
+func TestE2EDisablingAnAppStopsItsRefreshesAndLogins(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
 	a, secA := testutil.CreateApp(t, "appa", testutil.AppOptions{FirstParty: true})
 	b2, secB := testutil.CreateApp(t, "appb", testutil.AppOptions{FirstParty: true})
 	br := newBrowser(t)
-	tokA := br.signIn(a, secA, "alice", "openid offline_access")
+	tokA := br.signIn(a, secA, "alice", "openid")
 	tokB := br.signIn(b2, secB, "alice", "openid")
 
 	testutil.Exec(t, `UPDATE app SET enabled = FALSE WHERE id = $1`, a.ID)
-	mustInactive(t, b2, secB, tokA.Access) // tokens of a disabled app are dead
-	mustActive(t, b2, secB, tokB.Access)   // other apps are unaffected
-	if status, _ := introspectToken(t, a, secA, tokB.Access); status != http.StatusUnauthorized {
-		t.Errorf("a disabled app must not authenticate, got %d", status)
+	if status, _ := refreshRequest(t, a, secA, tokA.Refresh); status != http.StatusUnauthorized {
+		t.Errorf("a disabled app refreshed tokens: %d", status)
 	}
 	if status, _ := userinfoStatus(t, tokA.Access); status != http.StatusUnauthorized {
 		t.Errorf("userinfo for a disabled app's token = %d", status)
 	}
-	if status, _ := refreshRequest(t, a, secA, tokA.Refresh); status != http.StatusUnauthorized {
-		t.Errorf("a disabled app refreshed tokens: %d", status)
+	// other apps are unaffected
+	refreshed(t, b2, secB, tokB.Refresh)
+	if status, _ := userinfoStatus(t, tokB.Access); status != 200 {
+		t.Errorf("userinfo for another app's token = %d", status)
 	}
 	resp := br.get("/authorize?" + authParams{app: a, state: "s", challenge: strings.Repeat("a", 43)}.values().Encode())
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("authorize for a disabled app = %d", resp.StatusCode)
 	}
 	drain(resp)
+}
+
+func TestE2ELeavingAGroupEndsAccessAndNotifiesTheApp(t *testing.T) {
+	testutil.Reset(t)
+	testutil.AdminAccount(t, "root")
+	user := testutil.CreateAccount(t, "erin")
+	team := testutil.Group(t, "team", "")
+	endpoint, logouts := startReceiver(t)
+	app, secret := testutil.CreateApp(t, "intranet", testutil.AppOptions{FirstParty: true, AccessRule: "groups",
+		GroupIDs: []string{team}, BackchannelURI: endpoint})
+	testutil.AddMember(t, team, user.ID)
+
+	ub := newBrowser(t)
+	tok := ub.signIn(app, secret, "erin", "openid groups")
+	refreshed(t, app, secret, tok.Refresh)
+
+	admin := newBrowser(t)
+	admin.mustLogin("root")
+	admin.call("DELETE", members(team, user.ID), nil, 200)
+
+	// the app is told at once, for the user's session
+	lt := parseJWT(t, waitToken(t, logouts), jwt.WithIssuer(testIssuer), jwt.WithAudience(app.ClientID))
+	claims := lt.Claims.(jwt.MapClaims)
+	if lt.Header["typ"] != "logout+jwt" || claims["sub"] != user.ID || claims["sid"] != verifyAccessToken(t, app, tok.Access)["sid"] {
+		t.Errorf("logout token: typ %v, claims %v", lt.Header["typ"], claims)
+	}
+	// and an app that missed it finds out at its next refresh: the access rule is applied again
+	refreshRefused(t, app, secret, tok.Refresh)
+	// the user is still signed in to Guardian itself
+	me := ub.get("/api/account/me")
+	wantStatus(t, me, 200)
+	drain(me)
 }
 
 func TestE2ESignUpIsOpenButRateLimited(t *testing.T) {
@@ -689,10 +750,11 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	victim := testutil.CreateAccount(t, "victim")
 	testutil.CreateAccount(t, "bystander")
 	testutil.AdminAccount(t, "root")
-	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	endpoint, logouts := startReceiver(t)
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true, BackchannelURI: endpoint})
 
 	vb := newBrowser(t)
-	tok := vb.signIn(app, secret, "victim", "openid offline_access")
+	tok := vb.signIn(app, secret, "victim", "openid")
 	bb := newBrowser(t)
 	bb.mustLogin("bystander")
 	admin := newBrowser(t)
@@ -705,7 +767,7 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	r = admin.postJSON("/api/account/delete", map[string]any{"id": "not-a-uuid"})
 	wantStatus(t, r, http.StatusBadRequest)
 	drain(r)
-	mustActive(t, app, secret, tok.Access)
+	refreshed(t, app, secret, tok.Refresh)
 
 	r = admin.postJSON("/api/account/delete", map[string]any{"id": victim.ID})
 	wantStatus(t, r, 200)
@@ -714,9 +776,12 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	me := vb.get("/api/account/me")
 	wantStatus(t, me, http.StatusUnauthorized)
 	drain(me)
-	mustInactive(t, app, secret, tok.Access)
-	if status, _ := refreshRequest(t, app, secret, tok.Refresh); status != 400 {
-		t.Errorf("refresh after deletion: %d", status)
+	refreshRefused(t, app, secret, tok.Refresh)
+	if status, _ := userinfoStatus(t, tok.Access); status != http.StatusUnauthorized {
+		t.Errorf("userinfo after deletion: %d", status)
+	}
+	if lt := parseJWT(t, waitToken(t, logouts), jwt.WithAudience(app.ClientID)); lt.Claims.(jwt.MapClaims)["sub"] != victim.ID {
+		t.Errorf("the app was told about the wrong user: %v", lt.Claims)
 	}
 	login := newBrowser(t).login("victim", testutil.DefaultPassword, "")
 	wantStatus(t, login, http.StatusUnauthorized)
@@ -759,9 +824,11 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	if strings.Contains(fmt.Sprint(app), secret) || testutil.Count(t, `SELECT count(*) FROM app_secret WHERE secret_hash = $1`, secret) != 0 {
 		t.Error("the secret must be shown once and stored only as a hash")
 	}
-	// the returned credentials really work against the internal listener
+	// the returned credentials really authenticate the app (the bogus refresh token is then refused)
 	registered := db.App{ClientID: str(app["client_id"])}
-	mustInactive(t, registered, secret, "garbage")
+	if status, body := refreshRequest(t, registered, secret, "garbage"); status != http.StatusBadRequest || body["error"] != "invalid_grant" {
+		t.Errorf("the new credentials did not authenticate: %d %v", status, body)
+	}
 
 	// validation and conflicts
 	dup := admin.postJSON("/api/service/add", valid)
@@ -804,7 +871,7 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	rm := admin.sendJSON("DELETE", "/api/service/remove", map[string]any{"id": app["id"]})
 	wantStatus(t, rm, 200)
 	drain(rm)
-	if status, _ := introspectToken(t, registered, secret, "garbage"); status != http.StatusUnauthorized {
+	if status, _ := refreshRequest(t, registered, secret, "garbage"); status != http.StatusUnauthorized {
 		t.Errorf("a removed app still authenticates: %d", status)
 	}
 }
@@ -815,8 +882,8 @@ func TestE2EInternalListenerProbesAndMetrics(t *testing.T) {
 	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
 	br := newBrowser(t)
 	tok := br.signIn(app, secret, "alice", "openid")
-	mustActive(t, app, secret, tok.Access)
-	mustInactive(t, app, secret, "nope")
+	refreshed(t, app, secret, tok.Refresh)
+	refreshRefused(t, app, secret, "nope")
 
 	for _, p := range []string{"/healthz", "/readyz"} {
 		r := mustGet(t, intSrv.URL+p)
@@ -825,9 +892,11 @@ func TestE2EInternalListenerProbesAndMetrics(t *testing.T) {
 	}
 	m := readBody(t, mustGet(t, intSrv.URL+"/metrics"))
 	for _, want := range []string{
-		`guardian_introspections_total{result="active"}`, `guardian_introspections_total{result="inactive"}`,
+		`guardian_token_requests_total{grant="authorization_code",result="issued"}`,
+		`guardian_token_requests_total{grant="refresh_token",result="issued"}`,
+		`guardian_token_requests_total{grant="refresh_token",result="refused"}`,
 		`guardian_logins_total{result="success"}`, `guardian_http_request_duration_seconds_bucket`,
-		`listener="public"`, `listener="internal"`, `route="/introspect"`,
+		`listener="public"`, `listener="internal"`, `route="/token"`,
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("/metrics lacks %s", want)
@@ -849,4 +918,123 @@ func mustGet(t *testing.T, u string) *http.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+// clientToken gets a token for the app itself with the client_credentials grant.
+func clientToken(t *testing.T, app db.App, secret string) string {
+	t.Helper()
+	status, raw := tokenRequest(t, app, secret, url.Values{"grant_type": {"client_credentials"}})
+	if status != http.StatusOK || raw["refresh_token"] != nil || raw["id_token"] != nil {
+		t.Fatalf("client_credentials: %d %v", status, raw)
+	}
+	return str(raw["access_token"])
+}
+
+// machineGet calls the machine API with a Bearer token.
+func machineGet(t *testing.T, token, path string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest("GET", pubSrv.URL+"/api/v1/apps/self"+path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, readBody(t, resp)
+}
+
+func TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers(t *testing.T) {
+	testutil.Reset(t)
+	testutil.AdminAccount(t, "root")
+	staff := testutil.Group(t, "staff", "")
+	hr := testutil.Group(t, "hr", "")
+	app, secret := testutil.CreateApp(t, "intranet", testutil.AppOptions{FirstParty: true, GroupIDs: []string{staff},
+		MachineAPI: true, Scopes: []string{"openid", "profile", "groups"}})
+	other, otherSecret := testutil.CreateApp(t, "wiki", testutil.AppOptions{FirstParty: true, GroupIDs: []string{hr}})
+	member := testutil.CreateAccount(t, "member")
+	if _, err := db.UpdateProfile(db.Account{ID: member.ID, DisplayName: "Mem Ber", Email: "member@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	visitor := testutil.CreateAccount(t, "visitor")
+	stranger := testutil.CreateAccount(t, "stranger")
+	testutil.AddMember(t, staff, member.ID)
+	testutil.AddMember(t, hr, member.ID)
+
+	tok := clientToken(t, app, secret)
+	claims := parseJWT(t, tok, jwt.WithIssuer(testIssuer), jwt.WithAudience(testIssuer)).Claims.(jwt.MapClaims)
+	if claims["sub"] != app.ClientID || claims["client_id"] != app.ClientID || claims["sid"] != nil {
+		t.Errorf("client token claims = %v", claims)
+	}
+
+	// who am I
+	if status, body := machineGet(t, tok, ""); status != 200 || !strings.Contains(body, `"name":"intranet"`) {
+		t.Errorf("self: %d %.200s", status, body)
+	}
+	// only linked groups
+	status, body := machineGet(t, tok, "/groups")
+	if status != 200 || !strings.Contains(body, `"key":"staff"`) || strings.Contains(body, `"hr"`) || !strings.Contains(body, `"member_count":1`) {
+		t.Errorf("groups: %d %.300s", status, body)
+	}
+	// members of a linked group, with the claims the app's scopes allow: profile and groups, but no email
+	status, body = machineGet(t, tok, "/groups/staff/members")
+	if status != 200 || !strings.Contains(body, `"preferred_username":"member"`) || !strings.Contains(body, `"name":"Mem Ber"`) ||
+		!strings.Contains(body, `"groups":["staff"]`) || strings.Contains(body, "member@example.com") || strings.Contains(body, `"hr"`) {
+		t.Errorf("members: %d %.400s", status, body)
+	}
+	if status, _ := machineGet(t, tok, "/groups/hr/members"); status != http.StatusNotFound {
+		t.Errorf("a group not linked to the app: %d, want 404", status)
+	}
+
+	// users: group members and people who signed in to the app, nobody else, and the same 404 for both kinds of refusal
+	if status, body := machineGet(t, tok, "/users/"+member.ID); status != 200 || !strings.Contains(body, `"sub":"`+member.ID+`"`) {
+		t.Errorf("a member of a linked group: %d %.200s", status, body)
+	}
+	_, unknown := machineGet(t, tok, "/users/00000000-0000-0000-0000-000000000000")
+	for _, id := range []string{visitor.ID, stranger.ID} {
+		if status, body := machineGet(t, tok, "/users/"+id); status != http.StatusNotFound || body != unknown {
+			t.Errorf("an account the app may not know: %d %.100s (must look like an unknown account)", status, body)
+		}
+	}
+	vb := newBrowser(t)
+	vb.signIn(app, secret, "visitor", "openid")
+	if status, body := machineGet(t, tok, "/users/"+visitor.ID); status != 200 || !strings.Contains(body, `"groups":[]`) {
+		t.Errorf("after signing in to the app, the visitor must be visible: %d %.200s", status, body)
+	}
+	if status, _ := machineGet(t, tok, "/users/"+stranger.ID); status != http.StatusNotFound {
+		t.Error("the stranger became visible")
+	}
+
+	// tokens that are not this kind are refused
+	userTok := vb.signIn(app, secret, "visitor", "openid").Access
+	for name, bad := range map[string]string{"none": "", "garbage": "x.y.z", "a user's access token": userTok} {
+		if status, _ := machineGet(t, bad, "/groups"); status != http.StatusUnauthorized {
+			t.Errorf("%s: %d, want 401", name, status)
+		}
+	}
+	// an app without machine access cannot get such a token
+	if status, raw := tokenRequest(t, other, otherSecret, url.Values{"grant_type": {"client_credentials"}}); status != http.StatusBadRequest ||
+		raw["error"] != "unsupported_grant_type" {
+		t.Errorf("client_credentials without machine access: %d %v", status, raw)
+	}
+
+	// turning machine access off, or disabling the app, stops tokens that were already issued
+	admin := newBrowser(t)
+	admin.mustLogin("root")
+	admin.call("POST", "/api/service/access", map[string]any{"id": app.ID, "access_rule": "anyone", "group_ids": []string{staff}, "machine_api": false}, 200)
+	if status, _ := machineGet(t, tok, "/groups"); status != http.StatusUnauthorized {
+		t.Errorf("after turning machine access off: %d, want 401", status)
+	}
+	admin.call("POST", "/api/service/access", map[string]any{"id": app.ID, "access_rule": "anyone", "group_ids": []string{staff}, "machine_api": true}, 200)
+	tok = clientToken(t, app, secret)
+	testutil.Exec(t, `UPDATE app SET enabled = FALSE WHERE id = $1`, app.ID)
+	if status, _ := machineGet(t, tok, "/groups"); status != http.StatusUnauthorized {
+		t.Errorf("after disabling the app: %d, want 401", status)
+	}
+	// an app without a secret cannot be given machine access, and the refused request changes nothing
+	spa, _ := testutil.CreateApp(t, "spa", testutil.AppOptions{Public: true, AccessRule: "groups"})
+	admin.call("POST", "/api/service/access", map[string]any{"id": spa.ID, "access_rule": "anyone", "group_ids": []string{}, "machine_api": true}, 400)
+	if fresh, _ := db.GetApp(spa.ID); fresh.AccessRule != "groups" {
+		t.Error("a refused request changed the app's access rule")
+	}
 }

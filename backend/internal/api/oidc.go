@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ func MountOIDC(r chi.Router) {
 	r.Get("/jwks.json", jwks)
 	r.Get("/authorize", authorize)
 	r.Post("/token", tokenEndpoint)
+	r.Post("/revoke", revokeEndpoint)
 	r.Get("/userinfo", userinfo)
 	r.Post("/userinfo", userinfo)
 
@@ -37,30 +39,27 @@ func MountOIDC(r chi.Router) {
 // ---- Discovery & keys -------------------------------------------------------
 
 func discovery(w http.ResponseWriter, r *http.Request) {
-	meta := map[string]any{
-		"issuer":                                Issuer,
-		"authorization_endpoint":                Issuer + "/authorize",
-		"token_endpoint":                        Issuer + "/token",
-		"userinfo_endpoint":                     Issuer + "/userinfo",
-		"jwks_uri":                              Issuer + "/jwks.json",
-		"end_session_endpoint":                  Issuer + "/logout",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256"},
-		"scopes_supported":                      []string{"openid", "profile", "email", "phone", "offline_access"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
-		"code_challenge_methods_supported":      []string{"S256"},
+	RespondWithJSON(w, http.StatusOK, map[string]any{
+		"issuer":                                     Issuer,
+		"authorization_endpoint":                     Issuer + "/authorize",
+		"token_endpoint":                             Issuer + "/token",
+		"userinfo_endpoint":                          Issuer + "/userinfo",
+		"revocation_endpoint":                        Issuer + "/revoke",
+		"jwks_uri":                                   Issuer + "/jwks.json",
+		"end_session_endpoint":                       Issuer + "/logout",
+		"response_types_supported":                   []string{"code"},
+		"grant_types_supported":                      []string{"authorization_code", "refresh_token", "client_credentials"},
+		"subject_types_supported":                    []string{"public"},
+		"id_token_signing_alg_values_supported":      []string{"RS256"},
+		"scopes_supported":                           []string{"openid", "profile", "email", "groups", "offline_access"},
+		"token_endpoint_auth_methods_supported":      []string{"client_secret_basic", "client_secret_post", "none"},
+		"revocation_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
+		"code_challenge_methods_supported":           []string{"S256"},
 		"claims_supported": []string{"sub", "name", "given_name", "family_name", "preferred_username", "picture",
-			"locale", "zoneinfo", "updated_at", "email", "email_verified", "phone_number", "phone_number_verified", "sid", "auth_time"},
+			"locale", "zoneinfo", "updated_at", "email", "email_verified", "groups", "sid", "auth_time", "amr"},
 		"backchannel_logout_supported":         true,
 		"backchannel_logout_session_supported": true,
-	}
-	if IntrospectionURL != "" {
-		meta["introspection_endpoint"] = IntrospectionURL
-		meta["introspection_endpoint_auth_methods_supported"] = []string{"client_secret_basic", "client_secret_post"}
-	}
-	RespondWithJSON(w, http.StatusOK, meta)
+	})
 }
 
 func jwks(w http.ResponseWriter, r *http.Request) {
@@ -334,20 +333,38 @@ func verifyPKCE(verifier, challenge string) bool {
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 
+// refuse answers a token request with an OAuth error and counts it.
+func refuse(w http.ResponseWriter, grant string, status int, code, desc string) {
+	result := "refused"
+	if status >= 500 {
+		result = "error"
+	}
+	tokenRequests.WithLabelValues(grantLabel(grant), result).Inc()
+	oauthError(w, status, code, desc)
+}
+
+// grantLabel keeps the metric's label values to a fixed set, whatever a client sends.
+func grantLabel(grant string) string {
+	if grant == "authorization_code" || grant == "refresh_token" || grant == "client_credentials" {
+		return grant
+	}
+	return "other"
+}
+
 func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	if err := r.ParseForm(); err != nil {
-		oauthError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
-		return
-	}
-	app, ok := authenticateClient(r)
-	if !ok {
-		oauthError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		refuse(w, "", http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
 	}
 	grant := r.PostFormValue("grant_type")
+	app, ok := authenticateClient(r)
+	if !ok {
+		refuse(w, grant, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		return
+	}
 	if !contains(app.GrantTypes, grant) {
-		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "Grant type not allowed for this client")
+		refuse(w, grant, http.StatusBadRequest, "unsupported_grant_type", "Grant type not allowed for this client")
 		return
 	}
 
@@ -355,123 +372,146 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		ac, err := db.ConsumeAuthCode(auth.HashToken(r.PostFormValue("code")))
 		if err != nil || ac.AppID != app.ID || ac.RedirectURI != r.PostFormValue("redirect_uri") {
-			oauthError(w, http.StatusBadRequest, "invalid_grant", "Invalid, expired or already used code")
+			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Invalid, expired or already used code")
 			return
 		}
 		if ac.CodeChallenge != "" && !verifyPKCE(r.PostFormValue("code_verifier"), ac.CodeChallenge) {
-			oauthError(w, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
+			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 			return
 		}
-		if ac.SessionID != "" && !db.SessionActive(ac.SessionID) {
-			oauthError(w, http.StatusBadRequest, "invalid_grant", "Session has ended")
-			return
-		}
-		refresh := ""
-		if contains(ac.Scopes, "offline_access") && contains(app.GrantTypes, "refresh_token") {
-			family, err := auth.NewUUID()
-			if err == nil {
-				refresh, err = auth.RandomToken(32)
-			}
-			if err == nil {
-				err = db.SaveRefreshToken(auth.HashToken(refresh), family, app.ID, ac.AccountID, ac.SessionID, ac.Scopes,
-					time.Now().Add(time.Duration(app.RefreshTokenTTL)*time.Second))
-			}
-			if err != nil {
-				oauthError(w, http.StatusInternalServerError, "server_error", "")
-				return
+		if issueTokens(w, grant, app, ac.AccountID, ac.SessionID, ac.Scopes, ac.Nonce, app.RefreshMode == "stable") {
+			// Remember that this account has used the app, so the app may look it up later.
+			if err := db.RecordAppUser(app.ID, ac.AccountID); err != nil {
+				slog.Error("failed to record an app user", "error", err)
 			}
 		}
-		issueTokens(w, app, ac.AccountID, ac.SessionID, ac.Scopes, ac.Nonce, ac.AuthTime, refresh)
 
 	case "refresh_token":
-		newToken, err := auth.RandomToken(32)
-		if err != nil {
-			oauthError(w, http.StatusInternalServerError, "server_error", "")
-			return
-		}
-		old, err := db.RotateRefreshToken(auth.HashToken(r.PostFormValue("refresh_token")), app.ID,
-			auth.HashToken(newToken), time.Now().Add(time.Duration(app.RefreshTokenTTL)*time.Second))
-		if err == db.ErrInvalidGrant || err == db.ErrTokenReuse {
-			oauthError(w, http.StatusBadRequest, "invalid_grant", "Invalid or expired refresh token")
+		// The refresh token itself never changes. What it returns is decided now, from live data.
+		rt, err := db.GetRefreshToken(auth.HashToken(r.PostFormValue("refresh_token")), app.ID)
+		if errors.Is(err, db.ErrInvalidGrant) {
+			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Invalid or revoked refresh token")
 			return
 		}
 		if err != nil {
-			oauthError(w, http.StatusInternalServerError, "server_error", "")
+			refuse(w, grant, http.StatusInternalServerError, "server_error", "")
 			return
 		}
-		issueTokens(w, app, old.AccountID, old.SessionID, old.Scopes, "", time.Time{}, newToken)
+		issueTokens(w, grant, app, rt.AccountID, rt.SessionID, rt.Scopes, "", false)
+
+	case "client_credentials":
+		issueClientToken(w, app)
 
 	default:
-		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
+		refuse(w, grant, http.StatusBadRequest, "unsupported_grant_type", "")
 	}
 }
 
-// issueTokens builds the token response. The access token is an opaque random string (only its hash is
-// stored): it carries no claims, can be revoked instantly, and services check it by calling /introspect.
-// An ID token (a signed JWT, as OIDC login libraries expect) is only issued for the code grant.
-func issueTokens(w http.ResponseWriter, app db.App, accountID, sessionID string, scopes []string,
-	nonce string, authTime time.Time, refreshToken string) {
+// issueTokens answers a token request. It is the one place that decides whether a user may (still) have
+// tokens for an app, and it decides from live data every time: the session must be alive, the account
+// active, and the app's access rule satisfied. Every refresh passes through here, which is why logout,
+// disabling an account and group changes reach an app within one token lifetime.
+//
+// The access token is a signed JWT (RFC 9068) that the app validates by itself, so apps never call
+// Guardian per request. It is deliberately lean: who, for which app, which scopes and groups. Profile
+// data goes into the ID token, which is issued again at every refresh, and into /userinfo.
+//
+// It reports whether tokens were issued.
+func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, sessionID string, scopes []string,
+	nonce string, newRefreshToken bool) bool {
 
+	sess, err := db.GetLiveSession(sessionID, SessionIdleTimeout)
+	if err != nil || sess.AccountID != accountID {
+		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "The sign-in session has ended")
+		return false
+	}
 	acct, err := db.GetAccount(accountID)
 	if err != nil || acct.Status != "active" {
-		oauthError(w, http.StatusBadRequest, "invalid_grant", "Account is not available")
-		return
+		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Account is not available")
+		return false
+	}
+	groups, err := db.AccountAppGroups(accountID, app.ID)
+	if err != nil {
+		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		return false
+	}
+	if app.AccessRule != "anyone" && len(groups) == 0 {
+		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "The account no longer has access to this app")
+		return false
 	}
 
 	now := time.Now()
 	ttl := time.Duration(app.AccessTokenTTL) * time.Second
-	scopeStr := strings.Join(scopes, " ")
-
-	accessToken, err := auth.RandomToken(32)
-	if err == nil {
-		err = db.SaveAccessToken(auth.HashToken(accessToken), app.ID, accountID, sessionID, scopes, now.Add(ttl))
-	}
+	withGroups := contains(scopes, "groups")
+	jti, err := auth.RandomToken(16)
 	if err != nil {
-		slog.Error("failed to issue an access token", "error", err)
-		oauthError(w, http.StatusInternalServerError, "server_error", "")
-		return
+		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		return false
 	}
 
+	accessClaims := jwt.MapClaims{
+		"iss": Issuer, "sub": acct.ID, "aud": app.ClientID, "client_id": app.ClientID,
+		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "jti": jti,
+		"scope": strings.Join(scopes, " "), "sid": sess.ID, "amr": sess.AMR,
+	}
+	idClaims := jwt.MapClaims{
+		"iss": Issuer, "sub": acct.ID, "aud": app.ClientID,
+		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "auth_time": sess.AuthTime.Unix(),
+		"sid": sess.ID, "amr": sess.AMR,
+	}
+	if nonce != "" {
+		idClaims["nonce"] = nonce
+	}
+	if withGroups {
+		accessClaims["groups"] = groups
+		idClaims["groups"] = groups
+	}
+	names, _ := db.GetScopeClaims(scopes)
+	for k, v := range buildClaims(acct, names) {
+		if _, exists := idClaims[k]; !exists {
+			idClaims[k] = v
+		}
+	}
+
+	accessToken, err := signingKeys.Sign(accessClaims, accessTokenType)
+	if err != nil {
+		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		return false
+	}
+	idToken, err := signingKeys.Sign(idClaims, "")
+	if err != nil {
+		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		return false
+	}
 	resp := map[string]any{
-		"access_token": accessToken, "token_type": "Bearer",
-		"expires_in": int(ttl.Seconds()), "scope": scopeStr,
+		"access_token": accessToken, "token_type": "Bearer", "id_token": idToken,
+		"expires_in": int(ttl.Seconds()), "scope": strings.Join(scopes, " "),
 	}
 
-	if !authTime.IsZero() {
-		idClaims := jwt.MapClaims{
-			"iss": Issuer, "sub": acct.ID, "aud": app.ClientID,
-			"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "auth_time": authTime.Unix(),
+	if newRefreshToken {
+		refresh, err := auth.RandomToken(32)
+		if err == nil {
+			err = db.SaveRefreshToken(auth.HashToken(refresh), app.ID, acct.ID, sess.ID, scopes)
 		}
-		if nonce != "" {
-			idClaims["nonce"] = nonce
-		}
-		if sessionID != "" {
-			idClaims["sid"] = sessionID
-		}
-		names, _ := db.GetScopeClaims(scopes)
-		for k, v := range buildClaims(acct, names) {
-			if _, exists := idClaims[k]; !exists {
-				idClaims[k] = v
-			}
-		}
-		idToken, err := signingKeys.Sign(idClaims, "")
 		if err != nil {
-			oauthError(w, http.StatusInternalServerError, "server_error", "")
-			return
+			slog.Error("failed to save a refresh token", "error", err)
+			refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+			return false
 		}
-		resp["id_token"] = idToken
+		resp["refresh_token"] = refresh
 	}
-	if refreshToken != "" {
-		resp["refresh_token"] = refreshToken
-	}
-	if sessionID != "" {
-		db.TrackSessionApp(sessionID, app.ID) // so back-channel logout knows to notify this app
-	}
+	db.TrackSessionApp(sess.ID, app.ID) // so back-channel logout knows to notify this app
 
+	tokenRequests.WithLabelValues(grantLabel(grant), "issued").Inc()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	RespondWithJSON(w, http.StatusOK, resp)
+	return true
 }
+
+// accessTokenType is the JWT "typ" of access tokens (RFC 9068). It is what keeps an ID token from being
+// accepted as an access token, and the other way round.
+const accessTokenType = "at+jwt"
 
 // buildClaims turns an account into OIDC claims, limited to the claim names the granted scopes allow.
 func buildClaims(a db.Account, allowed []string) map[string]any {
@@ -501,17 +541,48 @@ func buildClaims(a db.Account, allowed []string) map[string]any {
 			c["email_verified"] = a.EmailVerified
 		}
 	}
-	if want["phone_number"] && a.PhoneNumber != "" {
-		c["phone_number"] = a.PhoneNumber
-		if want["phone_number_verified"] {
-			c["phone_number_verified"] = a.PhoneVerified
-		}
-	}
 	return c
+}
+
+// ---- /revoke ----------------------------------------------------------------
+
+// revokeEndpoint implements RFC 7009 for refresh tokens: an app ends its own refresh token, for example
+// when the user signs out of the app only. Access tokens are not stored and cannot be revoked one by one;
+// they expire within the app's token lifetime. As the RFC asks, the answer is 200 whether or not the token
+// was known, so the endpoint cannot be used to test tokens.
+func revokeEndpoint(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	if err := r.ParseForm(); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
+		return
+	}
+	app, ok := authenticateClient(r)
+	if !ok || app.ClientType != "confidential" {
+		oauthError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		return
+	}
+	token := r.PostFormValue("token")
+	if token == "" {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		return
+	}
+	revoked, err := db.RevokeRefreshToken(auth.HashToken(token), app.ID)
+	if err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", "")
+		return
+	}
+	if revoked {
+		db.Audit("token.revoked", "", app.ID, clientIP(r), nil)
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // ---- /userinfo --------------------------------------------------------------
 
+// userinfo returns the user's claims for a valid access token. Unlike an app, which checks the token's
+// signature and expiry by itself, Guardian also checks live data here: the session must still be alive
+// and the account active. So this is also where an app can ask "is this user still signed in?".
 func userinfo(w http.ResponseWriter, r *http.Request) {
 	unauthorized := func() {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
@@ -522,18 +593,57 @@ func userinfo(w http.ResponseWriter, r *http.Request) {
 		unauthorized()
 		return
 	}
-	// Same validity rules as introspection: live token, active account, session not revoked.
-	info, err := db.IntrospectAccessToken(auth.HashToken(strings.TrimSpace(h[7:])), "")
-	if err != nil {
+	claims, ok := parseAccessToken(strings.TrimSpace(h[7:]))
+	if !ok {
 		unauthorized()
 		return
 	}
-	acct, err := db.GetAccount(info.AccountID)
-	if err != nil {
+	sub, _ := claims["sub"].(string)
+	sid, _ := claims["sid"].(string)
+	clientID, _ := claims["client_id"].(string)
+	scope, _ := claims["scope"].(string)
+
+	sess, err := db.GetLiveSession(sid, SessionIdleTimeout)
+	if err != nil || sess.AccountID != sub {
 		unauthorized()
 		return
 	}
-	names, _ := db.GetScopeClaims(info.Scopes)
+	acct, err := db.GetAccount(sub)
+	if err != nil || acct.Status != "active" {
+		unauthorized()
+		return
+	}
+	app, err := db.GetAppByClientID(clientID)
+	if err != nil || !app.Enabled {
+		unauthorized()
+		return
+	}
+	scopes := strings.Fields(scope)
+	names, _ := db.GetScopeClaims(scopes)
+	out := buildClaims(acct, names)
+	if contains(scopes, "groups") {
+		groups, err := db.AccountAppGroups(acct.ID, app.ID)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		out["groups"] = groups // as they are now, not as they were when the token was issued
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	RespondWithJSON(w, http.StatusOK, buildClaims(acct, names))
+	RespondWithJSON(w, http.StatusOK, out)
+}
+
+// parseAccessToken verifies an access token that Guardian issued: signature, expiry, issuer and the
+// at+jwt type. An ID token is refused, even though it is signed with the same key.
+func parseAccessToken(raw string) (jwt.MapClaims, bool) {
+	claims := jwt.MapClaims{}
+	tok, err := jwt.ParseWithClaims(raw, claims, signingKeys.Keyfunc,
+		jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer(Issuer), jwt.WithExpirationRequired())
+	if err != nil || !tok.Valid {
+		return nil, false
+	}
+	if typ, _ := tok.Header["typ"].(string); typ != accessTokenType {
+		return nil, false
+	}
+	return claims, true
 }

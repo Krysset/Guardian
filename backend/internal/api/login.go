@@ -211,6 +211,13 @@ func logoutSubmit(w http.ResponseWriter, r *http.Request) {
 	finishLogout(w, r, redirectURI, r.PostFormValue("state"))
 }
 
+// sendLogoutNotices sends each back-channel logout in the background.
+func sendLogoutNotices(notices []db.LogoutNotice) {
+	for _, n := range notices {
+		go sendBackchannelLogout(n.LogoutTarget, n.AccountID, n.SessionID)
+	}
+}
+
 // sendBackchannelLogout implements OpenID Connect Back-Channel Logout 1.0: a signed logout_token
 // is POSTed server-to-server to the app, which then ends its own session for that sid/sub.
 // Delivery is best-effort with retries; it does not survive a Guardian restart.

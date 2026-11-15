@@ -1,44 +1,49 @@
 # Guardian architecture and design decisions
 
-> **Partly outdated (2026-11-13).** The design moved to groups plus short-lived JWT access tokens, and `/introspect` is removed. See the decisions log at the top of `docs/ROADMAP.md`. Sections about opaque tokens, introspection, per-app permissions and immediate revocation describe the old design. They will be rewritten in milestone M2.
+How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design rule in detail;
+`docs/INTEGRATION.md` is the guide for app developers.
 
 ## Requirements that drive the design
 
 1. Sign-up is open to everyone (rate limited).
-2. Revoking or changing permissions, logging out and disabling accounts are effective **immediately**, for users and for apps.
-3. Other services (mostly in the same Kubernetes cluster) must integrate with as little code as possible.
-4. One Guardian deployment (frontend, backend, Postgres); metrics are scraped by Prometheus.
+2. Group changes, logout and disabled accounts reach apps within a known, per-app window
+   (`access_token_ttl_seconds`, at least 15 seconds), and at once for apps with back-channel logout.
+3. Apps must not depend on Guardian for every request, so Guardian is not overloaded and a short Guardian
+   outage does not take every app down.
+4. Apps integrate with any standard OIDC library.
+5. One Guardian deployment (frontend, backend, Postgres) that works with any number of replicas, in one or
+   several clusters, against one shared Postgres. Prometheus scrapes its metrics.
 
 ## Decisions
 
 | Decision | Why |
 |---|---|
-| Access tokens are **opaque**, checked by `POST /introspect`; ID tokens stay JWTs | A self-contained JWT cannot be revoked, so permissions in it would be stale until expiry (violates 2). Services need no crypto or JWKS code (3). |
-| Introspection answers from **live Postgres data** | One indexed query returns validity and the caller's permissions. Nothing between a commit and the next read (2). |
-| **No Redis / no cache layer** | Any cache sits outside the transaction, so it has a window (and failure modes) where it is stale. Postgres reads are exact, cheap here, and one component fewer to run. See below. |
-| Permissions resolved by the SQL view `account_effective_permission` | One definition of "who may do what" (roles, catchall roles, direct grants, expiry). Always current, usable by SQL tooling. |
-| **Two listeners**: public `:3001`, internal `:3002` | Introspection, metrics and probes are never reachable through the ingress, even if an ingress rule is wrong (3, topology). |
-| Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login/sign-up volumes (1). |
+| **Groups**, not per-app permissions | Guardian knows who is in which group; each app decides what a group means. Groups are flat, membership can expire, and an app only ever sees the groups linked to it. Keeps Guardian simple and apps in charge of their own rules. |
+| Access tokens are **short-lived signed JWTs** (`at+jwt`, RFC 9068) | Apps verify them locally (3, 4). They carry `sub`, `aud`, `scope`, `sid`, `amr` and `groups`, but no profile data, and are not stored. |
+| **Every refresh re-checks live data** | Session, account, the app's access rule and groups are read from Postgres at each refresh, in one place (`issueTokens`). That is what bounds staleness to the token lifetime (2). |
+| **Stable refresh tokens** for apps with a secret | One per sign-in, never replaced, valid while the session lives. Parallel refreshes and retries cannot trip a reuse detector; a stolen token is useless without the client secret. Apps without a secret get none until rotation is added for mobile apps. |
+| **Back-channel logout** on logout, account deletion and leaving a group | Makes those changes immediate for apps that support it (2). Delivery is best effort; the next refresh is the safety net. |
+| The **access rule** is enforced by Guardian | With `groups`, accounts outside the app's linked groups never get a code or a token, at sign-in or at refresh. Apps do not have to remember to refuse them. |
+| **No Redis, no cache** | Each refresh is a handful of indexed queries. Load scales with signed-in users times apps divided by the token lifetime, not with request rate. One component fewer to run and keep consistent. |
+| **Two listeners**: public `:3001`, internal `:3002` | Metrics and probes are never reachable through the ingress, even if an ingress rule is wrong. |
+| Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login and sign-up volumes (1). |
 | Client IP from `X-Forwarded-For` only with `TRUSTED_PROXY_HOPS` | Behind an ingress the TCP peer is the proxy; trusting the header blindly lets attackers dodge limits. |
-| Origin check on `/api` + SameSite=Lax cookies + CSRF tokens on HTML forms | Simple CSRF defence for the admin/self-service API. |
-| Max 4 concurrent argon2 hashes | Each hash needs 64 MiB; unbounded logins would OOM a memory-limited pod. |
-| Graceful shutdown, `/healthz`, `/readyz`, DB pool limit | Rolling deployments without dropped requests; Postgres connections stay bounded. |
+| Origin check on `/api`, SameSite=Lax cookies, CSRF tokens on HTML forms | CSRF defence for the browser API and hosted pages. |
+| The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |
+| At most 4 concurrent argon2 hashes | Each hash needs 64 MiB; unbounded logins would exhaust a memory-limited pod. |
+| Migrations with goose, embedded in the binary | One image, no SQL files beside it; a Postgres lock makes replicas take turns. |
+| Graceful shutdown, `/healthz`, `/readyz`, bounded DB pool | Rolling deployments without dropped requests; Postgres connections stay bounded. |
 
-## Redis vs Postgres
+## Load and when to worry
 
-| Option | Immediate? | Cost | Verdict |
-|---|---|---|---|
-| Redis cache with version stamps (previous design) | No: stale between commit and invalidation; stale up to the TTL if an invalidation is lost | New component to deploy, secure and monitor; ~350 lines | Rejected: conflicts with requirement 2 |
-| In-process cache + `LISTEN/NOTIFY` | No: notification latency, lost messages while reconnecting | Reconnect and flush logic | Rejected |
-| Materialized view | No: stale until refreshed; refresh recomputes everything | Refresh scheduling | Rejected |
-| Trigger-maintained summary table | Yes (same transaction) | Triggers for catchall roles, fan-out and expiry | Not needed yet; the option if the view ever becomes a bottleneck |
-| **Plain indexed queries + view** | **Yes** | None | **Chosen** |
+The steady load is refreshes: about `signed-in users × apps ÷ token lifetime` per second. 10,000 signed-in
+users with one app each on the default 300 seconds is about 33 refreshes per second. Each refresh is a few
+indexed reads and one RS256 signature.
 
-Expected cost: token introspection is two indexed lookups (client authentication, token + permissions).
-**Verify with the metrics**: `guardian_http_request_duration_seconds{route="/introspect"}`, `guardian_db_*`
-pool gauges, `guardian_introspections_total`. Revisit only if p99 introspection latency or pool wait time
-becomes a problem. Escalation order: PgBouncer, bigger Postgres, then a trigger-maintained table. Do **not**
-use read replicas for these reads (replication lag breaks immediacy). Cache only non-security data if ever needed.
+Watch `guardian_http_request_duration_seconds{route="/token"}`, `guardian_token_requests_total` and the
+`guardian_db_*` pool gauges. If they become a problem, in this order: longer token lifetimes for apps that do
+not need short ones, PgBouncer, a bigger Postgres. Do not read from replicas for refreshes: replication lag
+would let revoked access through.
 
 ## Diagrams
 
@@ -46,21 +51,25 @@ use read replicas for these reads (replication lag breaks immediacy). Cache only
 
 ```mermaid
 flowchart LR
-  B[Browser] -->|HTTPS| I[Ingress]
+  B[Browser] -->|HTTPS| I[Ingress / Gateway]
   subgraph K[Kubernetes cluster]
-    I -->|public| P
-    subgraph G[Guardian pod]
-      P["public :3001<br/>UI, OIDC, /api"]
-      N["internal :3002<br/>introspect, metrics, probes"]
+    I -->|/account, /admin, /_app| F["Frontend pods<br/>(planned, 0.4)"]
+    I -->|everything else| P
+    subgraph G[Guardian backend pods]
+      P["public :3001<br/>OIDC, hosted pages, /api"]
+      N["internal :3002<br/>metrics, probes"]
     end
-    S[Other services] -->|POST /introspect| N
+    A[Apps] -->|"/token (refresh), /userinfo,<br/>machine API"| I
+    G -->|back-channel logout| A
     M[Prometheus] -->|scrape /metrics| N
     P --> D[(Postgres)]
-    N --> D
   end
 ```
 
-### Login (single sign-on)
+Apps validate access tokens themselves against Guardian's public keys (`/jwks.json`), so they only call
+Guardian to sign users in, to refresh, and optionally for userinfo or the machine API.
+
+### Sign-in (single sign-on)
 
 ```mermaid
 sequenceDiagram
@@ -75,91 +84,53 @@ sequenceDiagram
     B->>G: POST /login (password)
     G-->>B: session cookie, redirect back
   end
+  Note over G: access rule: is the account in a group linked to the app?
   G-->>B: redirect to app with code
   B->>A: callback with code
   A->>G: POST /token (code, verifier, secret)
-  G-->>A: ID token (JWT) + opaque access token
+  G-->>A: ID token + access token (JWTs) + refresh token
   Note over B,G: 2nd app: session cookie exists, no password prompt
 ```
 
-### Authorizing a request and immediate revocation
+### A group change reaching an app
 
 ```mermaid
 sequenceDiagram
-  participant B as Browser
-  participant A as Service
-  participant G as Guardian :3002
+  participant Ad as Admin
+  participant G as Guardian
   participant D as Postgres
-  B->>A: request (session cookie)
-  A->>G: POST /introspect (client credentials + token)
-  G->>D: token + session + account + permissions (live)
-  D-->>G: rows
-  G-->>A: active, permissions
-  Note over B,D: later, an admin revokes a role
-  B->>G: POST /api/access/revoke-role
+  participant A as App
+  A->>A: verify access token locally on every request
+  Ad->>G: DELETE /api/groups/{group}/members/{account}
   G->>D: DELETE, COMMIT
-  A->>G: next /introspect
-  G-->>A: permission already gone
+  G-->>A: back-channel logout (if the app is linked to the group)
+  Note over A: an app without back-channel logout keeps the old token until it expires
+  A->>G: POST /token (refresh)
+  G->>D: session, account, access rule, groups (live)
+  G-->>A: new tokens without the group, or invalid_grant
 ```
 
-### Permission model
+### Data model (main tables)
 
 ```mermaid
 erDiagram
-  ACCOUNT ||--o{ ACCOUNT_ROLE : has
-  ROLE ||--o{ ACCOUNT_ROLE : "granted via"
-  ROLE ||--o{ ROLE_PERMISSION : contains
-  APP ||--o{ APP_PERMISSION : defines
-  APP_PERMISSION ||--o{ ROLE_PERMISSION : "member of"
-  ACCOUNT ||--o{ ACCOUNT_APP_PERMISSION : "direct grant"
-  APP_PERMISSION ||--o{ ACCOUNT_APP_PERMISSION : "granted as"
+  ACCOUNT ||--o{ GROUP_MEMBER : "is in"
+  USER_GROUP ||--o{ GROUP_MEMBER : has
+  USER_GROUP |o--o{ USER_GROUP : "owns (owner group)"
+  APP ||--o{ APP_GROUP : "is told about"
+  USER_GROUP ||--o{ APP_GROUP : "linked to"
+  ACCOUNT ||--o{ SESSION : "signs in"
+  SESSION ||--o{ REFRESH_TOKEN : "ends with"
+  APP ||--o{ REFRESH_TOKEN : holds
+  SESSION ||--o{ SESSION_APP : "used by"
+  APP ||--o{ APP_USER : "was used by"
 ```
-
-`account_effective_permission` unions: catchall roles (all permissions of all apps), role permissions, and
-direct grants, skipping expired ones. `/introspect` reads it filtered to the calling app.
 
 ## Kubernetes notes
 
-```yaml
-# Public: the ingress points here.            Internal: ClusterIP only, never in an Ingress.
-apiVersion: v1
-kind: Service
-metadata: { name: guardian, namespace: guardian }
-spec:
-  selector: { app: guardian }
-  ports: [{ name: http, port: 80, targetPort: 3001 }]
----
-apiVersion: v1
-kind: Service
-metadata: { name: guardian-internal, namespace: guardian }
-spec:
-  selector: { app: guardian }
-  ports: [{ name: internal, port: 3002, targetPort: 3002 }]
----
-# Only labelled service pods and Prometheus may reach :3002
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata: { name: guardian-ports, namespace: guardian }
-spec:
-  podSelector:
-    matchLabels: { app: guardian }
-  policyTypes: [Ingress]
-  ingress:
-    - ports: [{ port: 3001 }]
-      from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-    - ports: [{ port: 3002 }]
-      from:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels: { guardian-client: "true" }
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: monitoring
-```
+The Helm chart (release 0.2) creates these. The shape matters more than the details:
 
-Container settings: `readinessProbe` on `:3002/readyz`, `livenessProbe` on `:3002/healthz`, memory limit
-of at least 512Mi (4 concurrent argon2 hashes at 64 MiB each plus the runtime), `TRUSTED_PROXY_HOPS=1`
-behind a single ingress, and `DB_MAX_CONNS` x replicas below Postgres `max_connections`.
+- The ingress or Gateway points only at port 3001. Port 3002 is exposed by a separate ClusterIP Service.
+- A NetworkPolicy lets only the ingress controller reach 3001 (its namespace is a chart value) and only
+  Prometheus and the kubelet reach 3002.
+- Every replica is the same; nothing is stored per pod or per cluster.
