@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"guardian/internal/auth"
+	"guardian/internal/httpx"
 	db "guardian/internal/store"
 )
 
@@ -18,7 +19,7 @@ var appNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,62}$`)
 // redirect URIs and settings are not something other accounts should be able to read.
 func GetAppSubrouter() *chi.Mux {
 	r := chi.NewRouter()
-	r.Use(RequireAdmin)
+	r.Use(httpx.RequireAdmin)
 	r.Get("/list", listApps)
 	r.Get("/{uuid}", getApp)
 	r.Post("/add", addApp)
@@ -48,22 +49,22 @@ func validAccessRule(rule string) bool { return rule == "groups" || rule == "any
 
 func addApp(w http.ResponseWriter, r *http.Request) {
 	var req addAppRequest
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.ClientType == "" {
 		req.ClientType = "confidential"
 	}
 	if req.ClientType != "confidential" && req.ClientType != "public" {
-		RespondWithError(w, http.StatusBadRequest, "client_type must be 'confidential' or 'public'")
+		httpx.Error(w, http.StatusBadRequest, "client_type must be 'confidential' or 'public'")
 		return
 	}
 	if !appNameRe.MatchString(req.Name) || req.PrettyName == "" {
-		RespondWithError(w, http.StatusBadRequest, "name must be lowercase letters, digits, '-' or '_'; pretty_name is required")
+		httpx.Error(w, http.StatusBadRequest, "name must be lowercase letters, digits, '-' or '_'; pretty_name is required")
 		return
 	}
 	if len(req.RedirectURIs) == 0 {
-		RespondWithError(w, http.StatusBadRequest, "At least one redirect URI is required")
+		httpx.Error(w, http.StatusBadRequest, "At least one redirect URI is required")
 		return
 	}
 	uris := append(append([]string{}, req.RedirectURIs...), req.PostLogoutRedirectURIs...)
@@ -71,15 +72,15 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 		uris = append(uris, req.BackchannelLogoutURI)
 	}
 	for _, u := range uris {
-		if !validRedirectURI(u) {
-			RespondWithError(w, http.StatusBadRequest, "Invalid URI (must be https, or http on localhost): "+u)
+		if !httpx.ValidRedirectURI(u) {
+			httpx.Error(w, http.StatusBadRequest, "Invalid URI (must be https, or http on localhost): "+u)
 			return
 		}
 	}
 	// The token lifetime is how stale an app's view of a user can get. Below 15 seconds apps would do
 	// little else than refresh. 60 seconds or more is recommended, because clocks differ.
 	if req.AccessTokenTTLSeconds != 0 && (req.AccessTokenTTLSeconds < 15 || req.AccessTokenTTLSeconds > 86400) {
-		RespondWithError(w, http.StatusBadRequest, "access_token_ttl_seconds must be between 15 and 86400")
+		httpx.Error(w, http.StatusBadRequest, "access_token_ttl_seconds must be between 15 and 86400")
 		return
 	}
 	if len(req.Scopes) == 0 {
@@ -89,7 +90,7 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 		req.AccessRule = "groups"
 	}
 	if !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
-		RespondWithError(w, http.StatusBadRequest, "access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
+		httpx.Error(w, http.StatusBadRequest, "access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
 		return
 	}
 
@@ -97,7 +98,7 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 	if req.ClientType == "confidential" {
 		var err error
 		if secret, err = auth.RandomToken(32); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+			httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
 		secretHash = auth.HashToken(secret)
@@ -111,24 +112,24 @@ func addApp(w http.ResponseWriter, r *http.Request) {
 		AccessTokenTTL: req.AccessTokenTTLSeconds, AccessRule: req.AccessRule, GroupIDs: req.GroupIDs,
 	}, req.Scopes, secretHash)
 	if db.IsUniqueViolation(err) {
-		RespondWithError(w, http.StatusConflict, "An app with that name already exists")
+		httpx.Error(w, http.StatusConflict, "An app with that name already exists")
 		return
 	}
 	if errors.Is(err, db.ErrGroupNotFound) {
-		RespondWithError(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
+		httpx.Error(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
 		return
 	}
 	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to add App")
+		httpx.Error(w, http.StatusBadRequest, "Failed to add App")
 		return
 	}
-	db.Audit("app.created", accountID(r), app.ID, clientIP(r), map[string]any{"name": app.Name})
+	db.Audit("app.created", httpx.AccountID(r), app.ID, httpx.ClientIP(r), map[string]any{"name": app.Name})
 
 	resp := map[string]any{"app": app}
 	if secret != "" {
 		resp["client_secret"] = secret // shown exactly once; only the hash is stored
 	}
-	RespondWithJSON(w, http.StatusCreated, resp)
+	httpx.JSON(w, http.StatusCreated, resp)
 }
 
 // setAppAccess sets who may sign in to an app: the access rule and the complete list of linked groups.
@@ -141,54 +142,54 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 		GroupIDs   []string `json:"group_ids"`
 		MachineAPI *bool    `json:"machine_api"` // optional: the app's own read-only access to /api/v1/apps/self
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !db.IsUUID(req.ID) || !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
-		RespondWithError(w, http.StatusBadRequest, "id must be an app id; access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
+		httpx.Error(w, http.StatusBadRequest, "id must be an app id; access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
 		return
 	}
 	if req.MachineAPI != nil {
 		// Checked first, so a refused request changes nothing.
 		app, err := db.GetApp(req.ID)
 		if errors.Is(err, sql.ErrNoRows) {
-			RespondWithError(w, http.StatusNotFound, "App not found")
+			httpx.Error(w, http.StatusNotFound, "App not found")
 			return
 		}
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+			httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
 			return
 		}
 		if *req.MachineAPI && app.ClientType != "confidential" {
-			RespondWithError(w, http.StatusBadRequest, "Only apps with a secret can have machine API access")
+			httpx.Error(w, http.StatusBadRequest, "Only apps with a secret can have machine API access")
 			return
 		}
 	}
 	switch err := db.SetAppAccess(req.ID, req.AccessRule, req.GroupIDs); {
 	case errors.Is(err, sql.ErrNoRows):
-		RespondWithError(w, http.StatusNotFound, "App not found")
+		httpx.Error(w, http.StatusNotFound, "App not found")
 		return
 	case errors.Is(err, db.ErrGroupNotFound):
-		RespondWithError(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
+		httpx.Error(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
 		return
 	case err != nil:
-		RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+		httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
 		return
 	}
 	if req.MachineAPI != nil {
 		if err := db.SetMachineAccess(req.ID, *req.MachineAPI); err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Failed to update the app")
+			httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
 			return
 		}
 	}
-	db.Audit("app.access_changed", accountID(r), req.ID, clientIP(r),
+	db.Audit("app.access_changed", httpx.AccountID(r), req.ID, httpx.ClientIP(r),
 		map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs, "machine_api": req.MachineAPI})
 	app, err := db.GetApp(req.ID)
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Failed to load the app")
+		httpx.Error(w, http.StatusInternalServerError, "Failed to load the app")
 		return
 	}
-	RespondWithJSON(w, http.StatusOK, app)
+	httpx.JSON(w, http.StatusOK, app)
 }
 
 func allUUIDs(ids ...string) bool {
@@ -204,36 +205,36 @@ func removeApp(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	app, err := db.GetApp(req.ID)
 	if err != nil {
-		RespondWithError(w, http.StatusNotFound, "App not found")
+		httpx.Error(w, http.StatusNotFound, "App not found")
 		return
 	}
 	if err := db.RemoveApp(app.ID); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to remove App")
+		httpx.Error(w, http.StatusBadRequest, "Failed to remove App")
 		return
 	}
-	db.Audit("app.removed", accountID(r), "", clientIP(r), map[string]any{"name": app.Name})
-	RespondWithJSON(w, http.StatusOK, app)
+	db.Audit("app.removed", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"name": app.Name})
+	httpx.JSON(w, http.StatusOK, app)
 }
 
 func listApps(w http.ResponseWriter, r *http.Request) {
 	apps, err := db.GetApps()
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Failed to retrieve Apps")
+		httpx.Error(w, http.StatusInternalServerError, "Failed to retrieve Apps")
 		return
 	}
-	RespondWithJSON(w, http.StatusOK, apps)
+	httpx.JSON(w, http.StatusOK, apps)
 }
 
 func getApp(w http.ResponseWriter, r *http.Request) {
 	app, err := db.GetApp(chi.URLParam(r, "uuid"))
 	if err != nil {
-		RespondWithError(w, http.StatusNotFound, "App not found")
+		httpx.Error(w, http.StatusNotFound, "App not found")
 		return
 	}
-	RespondWithJSON(w, http.StatusOK, app)
+	httpx.JSON(w, http.StatusOK, app)
 }

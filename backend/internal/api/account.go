@@ -10,6 +10,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"guardian/internal/auth"
+	"guardian/internal/httpx"
+	"guardian/internal/oidc"
 	db "guardian/internal/store"
 )
 
@@ -19,12 +21,12 @@ func GetAccountSubrouter() *chi.Mux {
 	r := chi.NewRouter()
 	r.Post("/register", registerPublic) // open sign-up, rate limited per IP
 	r.Group(func(r chi.Router) {
-		r.Use(RequireAdmin)
+		r.Use(httpx.RequireAdmin)
 		r.Post("/delete", deleteAccount)
 		r.Post("/add", register)
 	})
 	r.Group(func(r chi.Router) {
-		r.Use(Authenticate)
+		r.Use(httpx.Authenticate)
 		r.Get("/me", me)
 		r.Post("/update/password", updatePassword)
 		r.Post("/update/username", updateUsername)
@@ -46,15 +48,15 @@ const (
 // registerPublic is open to everyone, so it is limited per client IP (counters live in Postgres and are
 // shared by all replicas). Admin-created accounts (/add) use register directly and are not limited.
 func registerPublic(w http.ResponseWriter, r *http.Request) {
-	n, err := db.RateLimitHit("register:ip:"+clientIP(r), registerWindow)
+	n, err := db.RateLimitHit("register:ip:"+httpx.ClientIP(r), registerWindow)
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 	if n > registerLimit {
-		rateLimited.WithLabelValues("register").Inc()
+		httpx.RateLimited.WithLabelValues("register").Inc()
 		w.Header().Set("Retry-After", strconv.Itoa(int(registerWindow.Seconds())))
-		RespondWithError(w, http.StatusTooManyRequests, "Too many sign-ups from this address. Try again later.")
+		httpx.Error(w, http.StatusTooManyRequests, "Too many sign-ups from this address. Try again later.")
 		return
 	}
 	register(w, r)
@@ -67,41 +69,41 @@ type registerRequest struct {
 
 func register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !usernameRe.MatchString(req.Username) {
-		RespondWithError(w, http.StatusBadRequest, "Username must be 3-64 characters: letters, digits, '.', '_' or '-'")
+		httpx.Error(w, http.StatusBadRequest, "Username must be 3-64 characters: letters, digits, '.', '_' or '-'")
 		return
 	}
 	if !validPassword(req.Password) {
-		RespondWithError(w, http.StatusBadRequest, "Password must be at least 10 characters")
+		httpx.Error(w, http.StatusBadRequest, "Password must be at least 10 characters")
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 	acct, err := db.CreateAccount(req.Username, hash)
 	if db.IsUniqueViolation(err) {
-		RespondWithError(w, http.StatusConflict, "Username is already taken")
+		httpx.Error(w, http.StatusConflict, "Username is already taken")
 		return
 	}
 	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to register user")
+		httpx.Error(w, http.StatusBadRequest, "Failed to register user")
 		return
 	}
-	RespondWithJSON(w, http.StatusCreated, acct)
+	httpx.JSON(w, http.StatusCreated, acct)
 }
 
 func me(w http.ResponseWriter, r *http.Request) {
-	acct, err := db.GetAccount(accountID(r))
+	acct, err := db.GetAccount(httpx.AccountID(r))
 	if err != nil {
-		RespondWithError(w, http.StatusNotFound, "Account not found")
+		httpx.Error(w, http.StatusNotFound, "Account not found")
 		return
 	}
-	RespondWithJSON(w, http.StatusOK, acct)
+	httpx.JSON(w, http.StatusOK, acct)
 }
 
 // deleteAccount (admin) disables an account and ends all of its sessions.
@@ -109,25 +111,25 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !db.IsUUID(req.ID) {
-		RespondWithError(w, http.StatusBadRequest, "Invalid account id")
+		httpx.Error(w, http.StatusBadRequest, "Invalid account id")
 		return
 	}
 	notices, err := db.SoftDeleteAccount(req.ID)
 	if err != nil {
 		if errors.Is(err, db.ErrLastAdmin) {
-			RespondWithError(w, http.StatusConflict, "Guardian must keep at least one active administrator whose membership does not expire")
+			httpx.Error(w, http.StatusConflict, "Guardian must keep at least one active administrator whose membership does not expire")
 			return
 		}
-		RespondWithError(w, http.StatusBadRequest, "Failed to delete user")
+		httpx.Error(w, http.StatusBadRequest, "Failed to delete user")
 		return
 	}
-	sendLogoutNotices(notices) // apps that support back-channel logout drop the user at once
-	db.Audit("account.deleted", accountID(r), "", clientIP(r), map[string]any{"target": req.ID})
-	RespondWithSuccess(w)
+	oidc.SendLogoutNotices(notices) // apps that support back-channel logout drop the user at once
+	db.Audit("account.deleted", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"target": req.ID})
+	httpx.Success(w)
 }
 
 func updatePassword(w http.ResponseWriter, r *http.Request) {
@@ -135,53 +137,53 @@ func updatePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"currentPassword"`
 		NewPassword     string `json:"newPassword"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	id := accountID(r)
+	id := httpx.AccountID(r)
 	hash, err := db.GetPasswordHash(id)
 	if err != nil || hash == "" || !auth.VerifyPassword(req.CurrentPassword, hash) {
-		RespondWithError(w, http.StatusForbidden, "Current password is incorrect")
+		httpx.Error(w, http.StatusForbidden, "Current password is incorrect")
 		return
 	}
 	if !validPassword(req.NewPassword) {
-		RespondWithError(w, http.StatusBadRequest, "Password must be at least 10 characters")
+		httpx.Error(w, http.StatusBadRequest, "Password must be at least 10 characters")
 		return
 	}
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 	if err := db.UpdatePasswordHash(id, newHash); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to update password")
+		httpx.Error(w, http.StatusBadRequest, "Failed to update password")
 		return
 	}
-	db.Audit("password.changed", id, "", clientIP(r), nil)
-	RespondWithSuccess(w)
+	db.Audit("password.changed", id, "", httpx.ClientIP(r), nil)
+	httpx.Success(w)
 }
 
 func updateUsername(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if !usernameRe.MatchString(req.Username) {
-		RespondWithError(w, http.StatusBadRequest, "Invalid username")
+		httpx.Error(w, http.StatusBadRequest, "Invalid username")
 		return
 	}
-	err := db.UpdateUsername(accountID(r), req.Username)
+	err := db.UpdateUsername(httpx.AccountID(r), req.Username)
 	if db.IsUniqueViolation(err) {
-		RespondWithError(w, http.StatusConflict, "Username is already taken")
+		httpx.Error(w, http.StatusConflict, "Username is already taken")
 		return
 	}
 	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to update username")
+		httpx.Error(w, http.StatusBadRequest, "Failed to update username")
 		return
 	}
-	RespondWithSuccess(w)
+	httpx.Success(w)
 }
 
 // update edits profile fields. Only fields present in the body are changed.
@@ -195,12 +197,12 @@ func update(w http.ResponseWriter, r *http.Request) {
 		Zoneinfo    *string `json:"zoneinfo"`
 		Email       *string `json:"email"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	acct, err := db.GetAccount(accountID(r))
+	acct, err := db.GetAccount(httpx.AccountID(r))
 	if err != nil {
-		RespondWithError(w, http.StatusNotFound, "Account not found")
+		httpx.Error(w, http.StatusNotFound, "Account not found")
 		return
 	}
 	set := func(dst *string, src *string) {
@@ -215,18 +217,18 @@ func update(w http.ResponseWriter, r *http.Request) {
 	set(&acct.Locale, req.Locale)
 	set(&acct.Zoneinfo, req.Zoneinfo)
 	set(&acct.Email, req.Email)
-	if acct.PictureURL != "" && !validRedirectURI(acct.PictureURL) {
-		RespondWithError(w, http.StatusBadRequest, "picture_url must be an https URL")
+	if acct.PictureURL != "" && !httpx.ValidRedirectURI(acct.PictureURL) {
+		httpx.Error(w, http.StatusBadRequest, "picture_url must be an https URL")
 		return
 	}
 	updated, err := db.UpdateProfile(acct)
 	if db.IsUniqueViolation(err) {
-		RespondWithError(w, http.StatusConflict, "Email is already in use")
+		httpx.Error(w, http.StatusConflict, "Email is already in use")
 		return
 	}
 	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Failed to update user")
+		httpx.Error(w, http.StatusBadRequest, "Failed to update user")
 		return
 	}
-	RespondWithJSON(w, http.StatusOK, updated)
+	httpx.JSON(w, http.StatusOK, updated)
 }

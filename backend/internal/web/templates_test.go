@@ -1,4 +1,4 @@
-package api
+package web
 
 import (
 	"net/http/httptest"
@@ -13,17 +13,17 @@ const evil = `<script>alert(1)</script>"'>`
 func TestTemplatesEscapeUntrustedData(t *testing.T) {
 	pages := []struct {
 		name string
-		data page
+		data Page
 	}{
-		{"login", page{Title: evil, Error: evil, CSRF: "tok", ReturnTo: evil}},
-		{"consent", page{Title: evil, CSRF: "tok", Username: evil, Req: evil,
+		{"login", Page{Title: evil, Error: evil, CSRF: "tok", ReturnTo: evil}},
+		{"consent", Page{Title: evil, CSRF: "tok", Username: evil, Req: evil,
 			App: db.App{PrettyName: evil, LogoURL: "https://x.test/l.png"}, Scopes: []db.Scope{{Name: "a", Description: evil}}}},
-		{"logout", page{Title: evil, Message: evil, CSRF: "tok", IDTokenHint: evil, ClientID: evil, PostLogoutRedirectURI: evil, State: evil}},
-		{"message", page{Title: evil, Message: evil}},
+		{"logout", Page{Title: evil, Message: evil, CSRF: "tok", IDTokenHint: evil, ClientID: evil, PostLogoutRedirectURI: evil, State: evil}},
+		{"message", Page{Title: evil, Message: evil}},
 	}
 	for _, p := range pages {
 		rec := httptest.NewRecorder()
-		renderPage(rec, 200, p.name, p.data)
+		Render(rec, 200, p.name, p.data)
 		body := rec.Body.String()
 		if strings.Contains(body, "<script") {
 			t.Errorf("%s: unescaped <script> in output", p.name)
@@ -36,7 +36,7 @@ func TestTemplatesEscapeUntrustedData(t *testing.T) {
 
 func TestPagesSendSecurityHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderMessage(rec, 418, "Title", "Message")
+	Message(rec, 418, "Title", "Message")
 	if rec.Code != 418 {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -68,7 +68,7 @@ func TestPagesSendSecurityHeaders(t *testing.T) {
 
 func TestLoginPageStructure(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderPage(rec, 200, "login", page{Title: "Sign in", CSRF: "csrf-token-value", ReturnTo: "/authorize?x=1"})
+	Render(rec, 200, "login", Page{Title: "Sign in", CSRF: "csrf-token-value", ReturnTo: "/authorize?x=1"})
 	body := rec.Body.String()
 	for _, want := range []string{
 		`action="/login"`, `method="post"`, `name="csrf" value="csrf-token-value"`, `name="return_to" value="/authorize?x=1"`,
@@ -82,7 +82,7 @@ func TestLoginPageStructure(t *testing.T) {
 
 func TestConsentPageListsScopesAndEscapesHiddenRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderPage(rec, 200, "consent", page{
+	Render(rec, 200, "consent", Page{
 		Title: "Authorize", CSRF: "tok", Username: "alice", Req: `a=1&b="2"`,
 		App:    db.App{PrettyName: "Billing"},
 		Scopes: []db.Scope{{Name: "email", Description: "Your email address"}, {Name: "openid", Description: "Verify your identity"}},
@@ -101,7 +101,7 @@ func TestConsentPageListsScopesAndEscapesHiddenRequest(t *testing.T) {
 
 func TestSignedInPageOffersLogoutForm(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderPage(rec, 200, "logout", page{Title: "Signed in", Message: "You are signed in as alice.", CSRF: "tok"})
+	Render(rec, 200, "logout", Page{Title: "Signed in", Message: "You are signed in as alice.", CSRF: "tok"})
 	body := rec.Body.String()
 	for _, want := range []string{`action="/logout"`, `name="csrf" value="tok"`, "You are signed in as alice."} {
 		if !strings.Contains(body, want) {

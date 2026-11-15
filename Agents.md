@@ -43,14 +43,13 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
     - Public `:3001`: OIDC, hosted pages, `/api`.
     - Internal `:3002`: `/metrics`, `/healthz`, `/readyz`.
-  - `internal/api/` — HTTP handlers, still one package:
-    - `oidc.go` — discovery, authorize, token, userinfo, jwks, consent.
-    - `login.go` — login/logout and back-channel logout.
-    - `account.go`, `app.go`, `groups.go` — `/api/account`, `/api/service`, `/api/groups` (REST style).
-    - `machine.go` — the machine API at `/api/v1/apps/self` (Bearer `client_credentials` tokens) and the client_credentials grant.
-    - `internal.go` — internal router (metrics and probes).
-    - `templates.go` — inline hosted-page HTML.
-    - `middleware.go` — session, CSRF, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `RequireSameOrigin`.
+  - HTTP packages (split in 0.1 part 4). Dependencies point one way: `httpx` <- `web` <- `oidc` <- `api`; `internalapi` uses only `httpx`.
+    - `internal/httpx/` — shared by the others: settings (`Configure`, `Issuer`, session timeouts, cookie names), `JSON`/`Error`/`Success`/`DecodeJSON`, `ClientIP`, `SafeReturnTo`, `ValidRedirectURI`, session cookie and CSRF helpers, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `AdminOnly`, `RequireSameOrigin`, request metrics and `RateLimited`.
+    - `internal/web/` — hosted pages: `templates.go` (inline HTML, `Render`, `Message`, `Page`) and `login.go` (`/login`, login throttling, `guardian_logins_total`).
+    - `internal/oidc/` — the provider: `oidc.go` (`Mount`, `SetKeys`, discovery, JWKS, token metric), `authorize.go` (authorize and consent), `token.go` (`/token`, `issueTokens`, `BuildClaims`, `/revoke`), `userinfo.go`, `client.go` (client_credentials tokens, `VerifyClientToken`), `logout.go` (RP-initiated logout, `SendLogoutNotices`, back-channel logout).
+    - `internal/api/` — the JSON API: `account.go`, `app.go`, `groups.go` (`/api/account`, `/api/service`, `/api/groups`) and `machine.go` (`/api/v1/apps/self`, Bearer client tokens checked by `oidc.VerifyClientToken`).
+    - `internal/internalapi/` — internal router: `/metrics`, `/healthz`, `/readyz`.
+    - `server.Configure(cfg, keys)` configures `httpx` and `oidc`; the e2e tests call it too.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
   - `internal/store/` — queries (imported as `db`); `connection.go` connects and applies migrations with goose at startup.
   - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
@@ -247,7 +246,7 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - The driver is `pgx/v5/stdlib` (pgx 5.13, goose 3.30). Arrays are scanned through `store.scanArray` and passed with `store.strArray`. Unique violations are detected with `pgconn.PgError`.
   - **Verified with Go 1.26.11 and PostgreSQL 16:** build, vet, gofmt, and all 110 tests with `-race`. The binary was also run against a fresh database, against a database created before goose (it adopts it and keeps edited rows), and with `guardian migrate`.
   - **Not verified:** the Docker image build and CI.
-  - **Deliberately not in M1:** splitting `internal/api` into `oidc`, `web`, `httpx` and `internalapi`. Those handlers are rewritten in the groups and JWT step, so the split happens there.
+  - **Deliberately not in M1:** splitting `internal/api`; it was done as part 4 of the groups and JWT work.
 - **Groups and JWT work of 0.1, in parts** (on branch `dev`; leave changes staged for the owner's review):
   - **Part 1, groups: done and tested, staged for review (2026-11-14).**
     - Schema: `user_group`, `group_member`, `app_group`, `app.access_rule`. Roles, permissions and the seeded `guardian` app are removed.
@@ -257,7 +256,7 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - **Schema revision check:** `00001_init.sql` records a fingerprint of itself (table `schema_revision`; comments and blank lines do not count) when it creates a database. `store.VerifySchemaRevision` compares it at every start and refuses a database made by another revision, with a message that says to recreate it. So after any edit to `00001_init.sql`, existing development databases must be recreated (`docker compose down -v`); tell the owner when a change needs that.
   - **Part 2, tokens: done and tested, staged for review (2026-11-15).**
     - Access tokens are signed JWTs (`typ: at+jwt`) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr`, `jti` and, with the `groups` scope, `groups`. No profile data. Not stored. The ID token carries profile claims and `groups`, and is issued again at every refresh.
-    - `api.issueTokens` is the single place that decides whether a user may (still) have tokens for an app. Every code exchange and every refresh goes through it and re-checks live data: session (idle and absolute), account, the app's access rule, groups.
+    - `issueTokens` (now `oidc/token.go`) is the single place that decides whether a user may (still) have tokens for an app. Every code exchange and every refresh goes through it and re-checks live data: session (idle and absolute), account, the app's access rule, groups.
     - Refresh tokens: `refresh_mode` per app, `stable` (confidential apps; one token per sign-in, never replaced, valid while the session lives) or `none` (public apps). A refresh returns no new refresh token. `offline_access` is accepted but changes nothing.
     - `POST /revoke` (RFC 7009) for refresh tokens, confidential apps only, always 200.
     - `/userinfo` verifies the access token (rejects ID tokens by `typ`) and checks session, account and app live; returns current groups.
@@ -272,7 +271,9 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - Every request re-checks that the app is enabled and still has the grant, so turning access off stops existing tokens at once. User access tokens are refused (audience and `sid`).
     - Visibility: linked groups only; accounts that are active members of a linked group, or that have signed in to the app (new table `app_user`, written when an authorization code is exchanged). Anything else is the same 404 as an unknown account. Claims follow the app's allowed scopes.
     - The owner was away and asked for work to continue and be reviewed together: part 2 and part 3 are staged together on `dev`. Separate diffs are in `.tools/review/` (git-ignored).
-  - **Part 4:** split `internal/api` into `oidc`, `web`, `httpx` and `internalapi`.
+  - **Part 4, split of `internal/api`: done and tested, left unstaged for review (2026-11-15).**
+    - New packages `httpx`, `web`, `oidc`, `internalapi`; `api` keeps the JSON API. No change to behaviour, routes or tests (still 124, moved to the package of the code they test).
+    - The owner asked for part 4 before the review, as a separate step: parts 2 and 3 (plus review feedback) are staged; part 4 is only in the working tree. Diff: `.tools/review/part4-split.diff`.
   - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
 - **How to build and test in the cloud workspace:**
   - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.

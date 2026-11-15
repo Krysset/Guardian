@@ -238,13 +238,13 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - **M1: restructure. Done 2026-11-14.** No change to features.
   - Part 1: move to `cmd/` and `internal/`, add the config package with validation, structured logging with slog, and the schema embedded in the binary.
   - Part 2: goose migrations and the pgx driver, plus a `guardian migrate` command.
-  - The split of `internal/api` into `oidc`, `web`, `httpx` and `internalapi` happens in the groups and JWT step below, where those handlers are rewritten.
+  - The split of `internal/api` into `oidc`, `web`, `httpx` and `internalapi` was moved to the groups and JWT step below.
 - **Groups and JWT:**
   - **Done 2026-11-14:** groups with keys (`user_group`, `group_member`, `app_group`), group owners, the per-app access rule enforced at sign-in, the last-administrator rule, and `/api/groups`.
   - **Done 2026-11-15:** lean JWT access tokens, the `groups` scope, stable refresh tokens for confidential apps with re-checks at every refresh, session idle and absolute timeouts, back-channel logout on leaving a group, `/revoke`, removal of `/introspect`, phone and birthdate.
   - Still to come in `00001_init.sql`, each with its feature: the require-MFA flag, key stages, keyring tags and the deletion log.
   - **Done 2026-11-15:** `client_credentials` and the read-only machine API at `/api/v1/apps/self`.
-  - Next: the split of `internal/api`.
+  - **Done 2026-11-15:** the split of `internal/api` into `httpx`, `web`, `oidc`, `internalapi` and `api`. No change to behaviour.
 - **API and pages:**
   - `/api/v1` with REST routes and `openapi.yaml`; admin checks through `guardian-admins`.
   - The hosted login, sign-up (with its notices), consent, logout and error pages in the approved design.
@@ -319,4 +319,4 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 ## Change log
 - 2026-11-13: first plan, then a full review settled 15 topics: groups and JWT, signing keys, the encryption keyring, migrations and backups, bundled Postgres, console hosting, delegation, email, recovery and MFA, access for new accounts, the scope boundary, GDPR, abuse protection, routing, and the release plan. This document was then consolidated.
 - 2026-11-14: second review. Replaced refresh rotation with stable refresh tokens for confidential apps (public clients get none until 1.x). Added groups in the ID token and userinfo, logout on membership removal, lean access tokens, group keys, session timeouts, the last-admin rule, sign-up notices, the honest limit of emergency key revocation, the post-restore checklist and the backup manifest. Split the first release in two (0.1 local, 0.2 cluster), giving 0.1 to 0.5 before 1.0. Access-rule enforcement moved to 0.1.
-- 2026-11-15: no legacy-option warnings before 1.0 (the `SESSION_TTL` refusal was removed). The old yUML diagrams were deleted, with a reminder to recreate that documentation before 1.0.
+- 2026-11-15: no legacy-option warnings before 1.0 (the `SESSION_TTL` refusal was removed). The old yUML diagrams were deleted, with a reminder to recreate that documentation before 1.0. The split of `internal/api` was done before the review of parts 2 and 3.

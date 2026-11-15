@@ -1,4 +1,4 @@
-package api
+package web
 
 import (
 	"bytes"
@@ -8,7 +8,8 @@ import (
 	db "guardian/internal/store"
 )
 
-type page struct {
+// Page is the data for the hosted HTML pages. Every field is escaped by html/template.
+type Page struct {
 	Title, Message, Error, CSRF, ReturnTo, Username, Req string
 	App                                                  db.App
 	Scopes                                               []db.Scope
@@ -57,7 +58,8 @@ button.secondary{background:#e3e5e8;color:#1a1a1a}.error{color:#b00020}.app{disp
 
 var tmpl = template.Must(template.New("").Parse(pageTemplates))
 
-func renderPage(w http.ResponseWriter, status int, name string, data page) {
+// Render writes the named page with the headers every hosted page needs.
+func Render(w http.ResponseWriter, status int, name string, data Page) {
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -76,6 +78,7 @@ func renderPage(w http.ResponseWriter, status int, name string, data page) {
 	w.Write(buf.Bytes())
 }
 
-func renderMessage(w http.ResponseWriter, status int, title, message string) {
-	renderPage(w, status, "message", page{Title: title, Message: message})
+// Message renders a page with only a title and a message.
+func Message(w http.ResponseWriter, status int, title, message string) {
+	Render(w, status, "message", Page{Title: title, Message: message})
 }

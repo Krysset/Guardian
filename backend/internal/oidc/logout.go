@@ -1,105 +1,21 @@
-package api
+package oidc
 
 import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"guardian/internal/auth"
+	"guardian/internal/httpx"
 	db "guardian/internal/store"
+	"guardian/internal/web"
 )
 
-// Login throttling uses Postgres counters (shared by all replicas): failed attempts per username and per IP.
-const (
-	loginWindow     = 15 * time.Minute
-	maxLoginPerUser = 10
-	maxLoginPerIP   = 50
-)
-
-// ---- Login ------------------------------------------------------------------
-
-func loginPage(w http.ResponseWriter, r *http.Request) {
-	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
-	if sess, ok := sessionFromRequest(r); ok {
-		if returnTo != "" {
-			http.Redirect(w, r, returnTo, http.StatusFound)
-			return
-		}
-		acct, _ := db.GetAccount(sess.AccountID)
-		renderPage(w, http.StatusOK, "logout", page{
-			Title: "Signed in", Message: "You are signed in as " + acct.Username + ".", CSRF: csrfToken(w, r),
-		})
-		return
-	}
-	renderPage(w, http.StatusOK, "login", page{Title: "Sign in", CSRF: csrfToken(w, r), ReturnTo: returnTo})
-}
-
-func loginSubmit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<14)
-	if !csrfValid(r) {
-		renderMessage(w, http.StatusForbidden, "Request rejected", "Your form expired. Reload the page and try again.")
-		return
-	}
-	username := strings.TrimSpace(r.PostFormValue("username"))
-	password := r.PostFormValue("password")
-	returnTo := safeReturnTo(r.PostFormValue("return_to"))
-	ip := clientIP(r)
-	userKey := "login:user:" + strings.ToLower(username)
-	ipKey := "login:ip:" + ip
-
-	showError := func(status int, msg string) {
-		renderPage(w, status, "login", page{Title: "Sign in", Error: msg, CSRF: csrfToken(w, r), ReturnTo: returnTo})
-	}
-	if len(username) == 0 || len(username) > 256 || len(password) == 0 || len(password) > 1024 {
-		showError(http.StatusUnauthorized, "Invalid username or password.")
-		return
-	}
-	userFails, _ := db.RateLimitCount(userKey, loginWindow)
-	ipFails, _ := db.RateLimitCount(ipKey, loginWindow)
-	if userFails >= maxLoginPerUser || ipFails >= maxLoginPerIP {
-		rateLimited.WithLabelValues("login").Inc()
-		showError(http.StatusTooManyRequests, "Too many failed attempts. Try again in a few minutes.")
-		return
-	}
-
-	acct, hash, err := db.GetAccountByUsername(username)
-	valid := false
-	if err == nil && hash != "" && acct.Status == "active" {
-		valid = auth.VerifyPassword(password, hash)
-	} else {
-		auth.DummyVerify(password) // same cost whether or not the user exists
-	}
-	if !valid {
-		db.RateLimitHit(userKey, loginWindow)
-		db.RateLimitHit(ipKey, loginWindow)
-		loginsTotal.WithLabelValues("failure").Inc()
-		db.Audit("login.failure", acct.ID, "", ip, map[string]any{"username": username})
-		showError(http.StatusUnauthorized, "Invalid username or password.")
-		return
-	}
-
-	db.RateLimitReset(userKey, loginWindow)
-	loginsTotal.WithLabelValues("success").Inc()
-	if _, err := startSession(w, r, acct.ID); err != nil {
-		slog.Error("failed to start a session", "error", err)
-		renderMessage(w, http.StatusInternalServerError, "Something went wrong", "Please try again.")
-		return
-	}
-	db.TouchLogin(acct.ID)
-	db.Audit("login.success", acct.ID, "", ip, nil)
-
-	dest := returnTo
-	if dest == "" {
-		dest = "/login"
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
-}
-
-// ---- Logout (OIDC RP-initiated logout + back-channel fan-out) ----------------
+// OIDC RP-initiated logout (/logout) and the back-channel logout fan-out.
 
 // parseIDTokenHint accepts an ID token we issued, even if it has expired (that is what the spec wants).
 func parseIDTokenHint(hint string) (jwt.MapClaims, bool) {
@@ -114,7 +30,7 @@ func parseIDTokenHint(hint string) (jwt.MapClaims, bool) {
 		return nil, false // reject access tokens / logout tokens used as hints
 	}
 	claims, ok := tok.Claims.(jwt.MapClaims)
-	if !ok || claims["iss"] != Issuer {
+	if !ok || claims["iss"] != httpx.Issuer {
 		return nil, false
 	}
 	return claims, true
@@ -138,7 +54,7 @@ func resolvePostLogoutRedirect(hint, clientID, uri string) string {
 		return ""
 	}
 	app, err := db.GetAppByClientID(cid)
-	if err != nil || !contains(app.PostLogoutRedirectURIs, uri) {
+	if err != nil || !slices.Contains(app.PostLogoutRedirectURIs, uri) {
 		return ""
 	}
 	return uri
@@ -146,12 +62,12 @@ func resolvePostLogoutRedirect(hint, clientID, uri string) string {
 
 func finishLogout(w http.ResponseWriter, r *http.Request, redirectURI, state string) {
 	if redirectURI == "" {
-		renderMessage(w, http.StatusOK, "Signed out", "You have been signed out of Guardian and all connected apps.")
+		web.Message(w, http.StatusOK, "Signed out", "You have been signed out of Guardian and all connected apps.")
 		return
 	}
 	u, err := url.Parse(redirectURI)
 	if err != nil {
-		renderMessage(w, http.StatusOK, "Signed out", "You have been signed out.")
+		web.Message(w, http.StatusOK, "Signed out", "You have been signed out.")
 		return
 	}
 	if state != "" {
@@ -167,11 +83,11 @@ func performLogout(w http.ResponseWriter, r *http.Request, sess db.Session) {
 	if err != nil {
 		slog.Error("failed to revoke a session", "error", err)
 	}
-	clearSessionCookie(w)
+	httpx.ClearSessionCookie(w)
 	for _, t := range targets {
 		go sendBackchannelLogout(t, sess.AccountID, sess.ID)
 	}
-	db.Audit("logout", sess.AccountID, "", clientIP(r), map[string]any{"apps_notified": len(targets)})
+	db.Audit("logout", sess.AccountID, "", httpx.ClientIP(r), map[string]any{"apps_notified": len(targets)})
 }
 
 func logoutPage(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +95,7 @@ func logoutPage(w http.ResponseWriter, r *http.Request) {
 	hint, clientID, uri, state := q.Get("id_token_hint"), q.Get("client_id"), q.Get("post_logout_redirect_uri"), q.Get("state")
 	redirectURI := resolvePostLogoutRedirect(hint, clientID, uri)
 
-	sess, loggedIn := sessionFromRequest(r)
+	sess, loggedIn := httpx.SessionFromRequest(r)
 	if !loggedIn {
 		finishLogout(w, r, redirectURI, state)
 		return
@@ -192,18 +108,18 @@ func logoutPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	renderPage(w, http.StatusOK, "logout", page{
+	web.Render(w, http.StatusOK, "logout", web.Page{
 		Title: "Sign out", Message: "Sign out of Guardian? You will be signed out of all connected apps.",
-		CSRF: csrfToken(w, r), IDTokenHint: hint, ClientID: clientID, PostLogoutRedirectURI: uri, State: state,
+		CSRF: httpx.CSRFToken(w, r), IDTokenHint: hint, ClientID: clientID, PostLogoutRedirectURI: uri, State: state,
 	})
 }
 
 func logoutSubmit(w http.ResponseWriter, r *http.Request) {
-	if !csrfValid(r) {
-		renderMessage(w, http.StatusForbidden, "Request rejected", "Your form expired. Reload the page and try again.")
+	if !httpx.CSRFValid(r) {
+		web.Message(w, http.StatusForbidden, "Request rejected", "Your form expired. Reload the page and try again.")
 		return
 	}
-	if sess, ok := sessionFromRequest(r); ok {
+	if sess, ok := httpx.SessionFromRequest(r); ok {
 		performLogout(w, r, sess)
 	}
 	redirectURI := resolvePostLogoutRedirect(r.PostFormValue("id_token_hint"), r.PostFormValue("client_id"),
@@ -211,8 +127,8 @@ func logoutSubmit(w http.ResponseWriter, r *http.Request) {
 	finishLogout(w, r, redirectURI, r.PostFormValue("state"))
 }
 
-// sendLogoutNotices sends each back-channel logout in the background.
-func sendLogoutNotices(notices []db.LogoutNotice) {
+// SendLogoutNotices sends each back-channel logout in the background.
+func SendLogoutNotices(notices []db.LogoutNotice) {
 	for _, n := range notices {
 		go sendBackchannelLogout(n.LogoutTarget, n.AccountID, n.SessionID)
 	}
@@ -225,7 +141,7 @@ func sendBackchannelLogout(t db.LogoutTarget, accountID, sessionID string) {
 	jti, _ := auth.RandomToken(16)
 	now := time.Now()
 	token, err := signingKeys.Sign(jwt.MapClaims{
-		"iss": Issuer, "aud": t.ClientID, "iat": now.Unix(), "exp": now.Add(2 * time.Minute).Unix(), "jti": jti,
+		"iss": httpx.Issuer, "aud": t.ClientID, "iat": now.Unix(), "exp": now.Add(2 * time.Minute).Unix(), "jti": jti,
 		"sub": accountID, "sid": sessionID,
 		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},
 	}, "logout+jwt")

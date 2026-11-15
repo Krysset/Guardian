@@ -1,14 +1,11 @@
-package api
+package httpx
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strings"
 	"testing"
-
-	db "guardian/internal/store"
 )
 
 func withHops(t *testing.T, n int) {
@@ -51,8 +48,8 @@ func TestClientIP(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			withHops(t, c.hops)
-			if got := clientIP(reqFrom(c.remote, c.xff...)); got != c.want {
-				t.Errorf("clientIP = %q, want %q", got, c.want)
+			if got := ClientIP(reqFrom(c.remote, c.xff...)); got != c.want {
+				t.Errorf("ClientIP = %q, want %q", got, c.want)
 			}
 		})
 	}
@@ -65,12 +62,12 @@ func TestSafeReturnToOnlyAllowsOwnAuthorizeEndpoint(t *testing.T) {
 		"\\\\evil.example", "/\\evil.example", "javascript:alert(1)", " /authorize?x=1",
 	}
 	for _, p := range ok {
-		if safeReturnTo(p) != p {
+		if SafeReturnTo(p) != p {
 			t.Errorf("%q should be allowed", p)
 		}
 	}
 	for _, p := range bad {
-		if safeReturnTo(p) != "" {
+		if SafeReturnTo(p) != "" {
 			t.Errorf("%q must be rejected", p)
 		}
 	}
@@ -86,116 +83,14 @@ func TestValidRedirectURI(t *testing.T) {
 		"https://user:pw@app.example.com/cb", "javascript:alert(1)", "/relative", "//evil.example/cb", "app.example.com/cb",
 	}
 	for _, u := range ok {
-		if !validRedirectURI(u) {
+		if !ValidRedirectURI(u) {
 			t.Errorf("%q should be valid", u)
 		}
 	}
 	for _, u := range bad {
-		if validRedirectURI(u) {
+		if ValidRedirectURI(u) {
 			t.Errorf("%q must be rejected", u)
 		}
-	}
-}
-
-func TestSliceHelpers(t *testing.T) {
-	if !contains([]string{"a", "b"}, "b") || contains([]string{"a"}, "z") || contains(nil, "a") {
-		t.Error("contains")
-	}
-	if !subset([]string{"a"}, []string{"a", "b"}) || subset([]string{"a", "c"}, []string{"a", "b"}) || !subset(nil, nil) {
-		t.Error("subset")
-	}
-	in := []string{"a", "b", "a"}
-	if got := without(in, "a"); !reflect.DeepEqual(got, []string{"b"}) {
-		t.Errorf("without = %v", got)
-	}
-	if !reflect.DeepEqual(in, []string{"a", "b", "a"}) {
-		t.Error("without mutated its input")
-	}
-	base := []string{"a", "b"}
-	if got := union(base, []string{"b", "c", "c"}); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
-		t.Errorf("union = %v", got)
-	}
-	if !reflect.DeepEqual(base, []string{"a", "b"}) {
-		t.Error("union mutated its input")
-	}
-}
-
-// RFC 7636 appendix B test vector.
-func TestVerifyPKCE(t *testing.T) {
-	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-	if !verifyPKCE(verifier, challenge) {
-		t.Fatal("RFC 7636 vector rejected")
-	}
-	if verifyPKCE(verifier+"x", challenge) || verifyPKCE(challenge, challenge) {
-		t.Error("wrong verifier accepted")
-	}
-	if verifyPKCE("short", challenge) {
-		t.Error("verifier shorter than 43 characters must be rejected")
-	}
-	if verifyPKCE(strings.Repeat("a", 129), challenge) {
-		t.Error("verifier longer than 128 characters must be rejected")
-	}
-	if verifyPKCE(verifier, "") {
-		t.Error("empty challenge accepted")
-	}
-}
-
-func TestBuildClaimsReleasesOnlyWhatScopesAllow(t *testing.T) {
-	acct := db.Account{
-		ID: "11111111-1111-1111-1111-111111111111", Username: "alice", DisplayName: "Alice A", GivenName: "Alice",
-		Email: "alice@example.com", EmailVerified: true,
-		PictureURL: "https://x.test/a.png", Locale: "sv-SE",
-	}
-	keys := func(m map[string]any) []string {
-		var out []string
-		for k := range m {
-			out = append(out, k)
-		}
-		return out
-	}
-
-	only := buildClaims(acct, nil)
-	if len(only) != 1 || only["sub"] != acct.ID {
-		t.Fatalf("with no scopes only sub may be released, got %v", keys(only))
-	}
-
-	email := buildClaims(acct, []string{"email", "email_verified"})
-	if email["email"] != "alice@example.com" || email["email_verified"] != true {
-		t.Errorf("email claims = %v", email)
-	}
-	for _, leaked := range []string{"name", "preferred_username", "phone_number", "picture", "locale"} {
-		if _, ok := email[leaked]; ok {
-			t.Errorf("email scope leaked %q", leaked)
-		}
-	}
-
-	profile := buildClaims(acct, []string{"name", "given_name", "preferred_username", "picture", "locale", "updated_at"})
-	if profile["name"] != "Alice A" || profile["preferred_username"] != "alice" || profile["given_name"] != "Alice" {
-		t.Errorf("profile claims = %v", profile)
-	}
-	if _, ok := profile["updated_at"]; !ok {
-		t.Error("updated_at missing")
-	}
-	if _, ok := profile["email"]; ok {
-		t.Error("profile scope leaked email")
-	}
-	if _, ok := profile["family_name"]; ok {
-		t.Error("empty values must be omitted")
-	}
-
-	// phone claims were removed; even if a scope listed them, nothing is released
-	if got := buildClaims(acct, []string{"phone_number", "phone_number_verified", "birthdate"}); len(got) != 1 {
-		t.Errorf("removed claims were released: %v", keys(got))
-	}
-
-	// email_verified alone must not reveal the address, and an account without email releases no email claims
-	if got := buildClaims(acct, []string{"email_verified"}); len(got) != 1 {
-		t.Errorf("email_verified without email leaked %v", keys(got))
-	}
-	acct.Email = ""
-	if got := buildClaims(acct, []string{"email", "email_verified"}); len(got) != 1 {
-		t.Errorf("account without email released %v", keys(got))
 	}
 }
 
@@ -222,15 +117,15 @@ func TestCSRFValidation(t *testing.T) {
 		{"short but equal", "abc", "abc", false},
 	}
 	for _, c := range cases {
-		if got := csrfValid(csrfRequest(c.cookie, c.field)); got != c.want {
-			t.Errorf("%s: csrfValid = %v, want %v", c.name, got, c.want)
+		if got := CSRFValid(csrfRequest(c.cookie, c.field)); got != c.want {
+			t.Errorf("%s: CSRFValid = %v, want %v", c.name, got, c.want)
 		}
 	}
 }
 
 func TestCSRFTokenIssuedOnceAndHardened(t *testing.T) {
 	rec := httptest.NewRecorder()
-	token := csrfToken(rec, httptest.NewRequest("GET", "/", nil))
+	token := CSRFToken(rec, httptest.NewRequest("GET", "/", nil))
 	if len(token) != 43 {
 		t.Fatalf("token length = %d", len(token))
 	}
@@ -242,7 +137,7 @@ func TestCSRFTokenIssuedOnceAndHardened(t *testing.T) {
 	again := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
 	r.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token})
-	if csrfToken(again, r) != token || len(again.Result().Cookies()) != 0 {
+	if CSRFToken(again, r) != token || len(again.Result().Cookies()) != 0 {
 		t.Error("an existing token must be reused without setting a new cookie")
 	}
 }

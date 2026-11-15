@@ -20,7 +20,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	api "guardian/internal/api"
 	"guardian/internal/auth"
 	"guardian/internal/config"
 	"guardian/internal/server"
@@ -62,7 +61,7 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		testKeys = k
-		api.Configure(cfg, k)
+		server.Configure(cfg, k)
 		pubSrv = httptest.NewServer(server.PublicRouter())
 		intSrv = httptest.NewServer(server.InternalRouter())
 	}

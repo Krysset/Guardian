@@ -1,4 +1,4 @@
-package api
+package httpx
 
 import (
 	"context"
@@ -16,14 +16,16 @@ const (
 	ctxSessionID contextKey = "session_id"
 )
 
-func accountID(r *http.Request) string {
+// AccountID is the signed-in account of a request that passed Authenticate.
+func AccountID(r *http.Request) string {
 	v, _ := r.Context().Value(ctxAccountID).(string)
 	return v
 }
 
 // ---- Session cookie helpers -------------------------------------------------
 
-func sessionFromRequest(r *http.Request) (db.Session, bool) {
+// SessionFromRequest returns the live session of the request's session cookie, if any.
+func SessionFromRequest(r *http.Request) (db.Session, bool) {
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil || c.Value == "" {
 		return db.Session{}, false
@@ -35,13 +37,13 @@ func sessionFromRequest(r *http.Request) (db.Session, bool) {
 	return s, true
 }
 
-// startSession always creates a fresh session (never reuses an id, so no session fixation).
-func startSession(w http.ResponseWriter, r *http.Request, accountID string) (db.Session, error) {
+// StartSession always creates a fresh session (never reuses an id, so no session fixation).
+func StartSession(w http.ResponseWriter, r *http.Request, accountID string) (db.Session, error) {
 	token, err := auth.RandomToken(32)
 	if err != nil {
 		return db.Session{}, err
 	}
-	sess, err := db.CreateSession(accountID, auth.HashToken(token), clientIP(r), r.UserAgent(), SessionMaxLifetime)
+	sess, err := db.CreateSession(accountID, auth.HashToken(token), ClientIP(r), r.UserAgent(), SessionMaxLifetime)
 	if err != nil {
 		return db.Session{}, err
 	}
@@ -55,7 +57,8 @@ func startSession(w http.ResponseWriter, r *http.Request, accountID string) (db.
 	return sess, nil
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
+// ClearSessionCookie removes the session cookie from the browser.
+func ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: secureCookies, SameSite: http.SameSiteLaxMode,
@@ -64,7 +67,8 @@ func clearSessionCookie(w http.ResponseWriter) {
 
 // ---- CSRF (double-submit cookie) for the HTML forms --------------------------
 
-func csrfToken(w http.ResponseWriter, r *http.Request) string {
+// CSRFToken returns the form token, setting the CSRF cookie the first time.
+func CSRFToken(w http.ResponseWriter, r *http.Request) string {
 	if c, err := r.Cookie(csrfCookieName); err == nil && len(c.Value) >= 32 {
 		return c.Value
 	}
@@ -76,7 +80,8 @@ func csrfToken(w http.ResponseWriter, r *http.Request) string {
 	return t
 }
 
-func csrfValid(r *http.Request) bool {
+// CSRFValid reports whether a posted form carries the token of its CSRF cookie.
+func CSRFValid(r *http.Request) bool {
 	c, err := r.Cookie(csrfCookieName)
 	if err != nil || len(c.Value) < 32 {
 		return false
@@ -89,9 +94,9 @@ func csrfValid(r *http.Request) bool {
 // Authenticate requires a valid SSO session cookie and puts the account id in the request context.
 func Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := sessionFromRequest(r)
+		sess, ok := SessionFromRequest(r)
 		if !ok {
-			RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
+			Error(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxAccountID, sess.AccountID)
@@ -102,19 +107,19 @@ func Authenticate(next http.Handler) http.Handler {
 
 // RequireAdmin requires a signed-in member of the built-in guardian-admins group.
 func RequireAdmin(next http.Handler) http.Handler {
-	return Authenticate(requireAdmin(next))
+	return Authenticate(AdminOnly(next))
 }
 
-// requireAdmin is RequireAdmin for routes that Authenticate already protects.
-func requireAdmin(next http.Handler) http.Handler {
+// AdminOnly is RequireAdmin for routes that Authenticate already protects.
+func AdminOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, err := db.IsAdmin(accountID(r))
+		ok, err := db.IsAdmin(AccountID(r))
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+			Error(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
 		if !ok {
-			RespondWithError(w, http.StatusForbidden, "Forbidden")
+			Error(w, http.StatusForbidden, "Forbidden")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -131,7 +136,7 @@ func RequireSameOrigin(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			if origin := r.Header.Get("Origin"); origin != "" && !allowedOrigins[origin] {
-				RespondWithError(w, http.StatusForbidden, "Cross-origin request blocked")
+				Error(w, http.StatusForbidden, "Cross-origin request blocked")
 				return
 			}
 		}

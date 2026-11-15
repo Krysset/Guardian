@@ -1,4 +1,4 @@
-package api
+package httpx
 
 import (
 	"net/http"
@@ -26,17 +26,8 @@ var (
 		Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5},
 	}, []string{"listener", "route", "method"})
 
-	// tokenRequests counts answers of the token endpoint. Refreshes are the steady load: one per signed-in
-	// user per app per token lifetime.
-	tokenRequests = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "guardian", Name: "token_requests_total", Help: "Token endpoint requests by grant and result.",
-	}, []string{"grant", "result"}) // authorization_code | refresh_token | other  x  issued | refused | error
-
-	loginsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "guardian", Name: "logins_total", Help: "Interactive login attempts by result.",
-	}, []string{"result"}) // success | failure
-
-	rateLimited = promauto.NewCounterVec(prometheus.CounterOpts{
+	// RateLimited counts requests rejected by a rate limiter, by endpoint.
+	RateLimited = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "guardian", Name: "rate_limited_total", Help: "Requests rejected by the rate limiter.",
 	}, []string{"endpoint"}) // login | register
 )

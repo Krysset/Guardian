@@ -16,7 +16,11 @@ import (
 	"guardian/internal/api"
 	"guardian/internal/auth"
 	"guardian/internal/config"
+	"guardian/internal/httpx"
+	"guardian/internal/internalapi"
+	"guardian/internal/oidc"
 	db "guardian/internal/store"
+	"guardian/internal/web"
 )
 
 // Migrate connects to the database, applies pending migrations and returns. It backs "guardian migrate",
@@ -40,11 +44,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("load signing keys: %w", err)
 	}
-	api.Configure(cfg, keys)
+	Configure(cfg, keys)
 	if err := BootstrapAdmin(cfg.AdminInitialPassword); err != nil {
 		return err
 	}
-	api.RegisterDBMetrics()
+	httpx.RegisterDBMetrics()
 	db.StartMaintenance(ctx)
 
 	// Two listeners: the public one goes through the ingress; the internal one (metrics and probes) is only exposed as a ClusterIP Service and protected by a NetworkPolicy.
@@ -54,7 +58,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	errs := make(chan error, 2)
 	go func() { errs <- public.ListenAndServe() }()
 	go func() { errs <- internal.ListenAndServe() }()
-	slog.Info("Guardian ready", "public", public.Addr, "internal", internal.Addr, "issuer", api.Issuer)
+	slog.Info("Guardian ready", "public", public.Addr, "internal", internal.Addr, "issuer", httpx.Issuer)
 
 	var runErr error
 	select {
@@ -73,6 +77,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 	return runErr
 }
 
+// Configure hands the validated configuration and the signing keys to the HTTP packages. It must be
+// called once before serving; tests that build the routers call it too.
+func Configure(cfg config.Config, keys *auth.Keys) {
+	httpx.Configure(cfg)
+	oidc.SetKeys(keys)
+}
+
 func newServer(addr string, h http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
@@ -88,8 +99,9 @@ func newServer(addr string, h http.Handler) *http.Server {
 func PublicRouter() http.Handler {
 	r := chi.NewRouter()
 	// No request logger on purpose: it would log authorization codes found in query strings.
-	r.Use(middleware.Recoverer, api.Metrics("public"))
-	api.MountOIDC(r) // /authorize /token /revoke /userinfo /login /logout /jwks.json /.well-known/...
+	r.Use(middleware.Recoverer, httpx.Metrics("public"))
+	oidc.Mount(r) // /authorize /consent /token /revoke /userinfo /logout /jwks.json /.well-known/...
+	web.Mount(r)  // /login
 	r.Mount("/api", apiRouter())
 	// The machine API authenticates with Bearer tokens, not cookies, so it is not behind the
 	// same-origin check of the browser API.
@@ -99,12 +111,12 @@ func PublicRouter() http.Handler {
 
 // InternalRouter serves /metrics, /healthz and /readyz. It must only be reachable in the cluster.
 func InternalRouter() http.Handler {
-	return api.GetInternalRouter()
+	return internalapi.Router()
 }
 
 func apiRouter() http.Handler {
 	r := chi.NewRouter()
-	r.Use(api.RequireSameOrigin)
+	r.Use(httpx.RequireSameOrigin)
 	r.Mount("/account", api.GetAccountSubrouter())
 	r.Mount("/service", api.GetAppSubrouter())
 	r.Mount("/groups", api.GetGroupSubrouter())

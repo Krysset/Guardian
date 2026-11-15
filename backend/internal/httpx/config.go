@@ -1,10 +1,11 @@
-package api
+// Package httpx holds what the HTTP packages (oidc, web, api, internalapi) share: the settings they read,
+// JSON responses, request helpers, the session cookie and CSRF protection, and request metrics.
+package httpx
 
 import (
 	"strings"
 	"time"
 
-	"guardian/internal/auth"
 	"guardian/internal/config"
 )
 
@@ -17,7 +18,6 @@ var (
 	SessionIdleTimeout = 7 * 24 * time.Hour
 	SessionMaxLifetime = 30 * 24 * time.Hour
 
-	signingKeys       *auth.Keys
 	secureCookies     bool
 	sessionCookieName = "guardian_session"
 	csrfCookieName    = "guardian_csrf"
@@ -31,7 +31,7 @@ var (
 )
 
 // Configure must be called once at startup, before serving. The configuration is already validated.
-func Configure(cfg config.Config, keys *auth.Keys) {
+func Configure(cfg config.Config) {
 	Issuer = cfg.IssuerURL
 	SessionIdleTimeout = cfg.SessionIdleTimeout
 	SessionMaxLifetime = cfg.SessionMaxLifetime
@@ -49,5 +49,4 @@ func Configure(cfg config.Config, keys *auth.Keys) {
 		sessionCookieName = "__Host-guardian_session"
 		csrfCookieName = "__Host-guardian_csrf"
 	}
-	signingKeys = keys
 }
