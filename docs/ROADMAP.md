@@ -81,6 +81,8 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
 
 ### Accounts and sign-in
 - **Sign-up** is open and auto-approved. It needs a username and password; email is optional.
+  - The new user is signed in and continues to the app they came from. When they gave an email, sign-up completes only once it is confirmed.
+  - Every new or changed password is typed twice.
   - Sign-up reports a taken username or email plainly.
   - Its defences are a honeypot field and per-IP limits.
   - **Notices on the sign-up page:**
@@ -331,3 +333,4 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-15: the "console" is now called the management UI (account area and admin area), and the hosted pages the sign-in pages. `docs/USERS.md` lists the users and their requirements, `docs/PAGES.md` the pages. Decided: users see their groups, owners see linked apps and add members by exact username or email, admins can sign an account out everywhere. App admins stay in 1.x but their part is documented. Proposed, not yet decided: hidden groups and single-app groups.
 - 2026-11-15: hidden groups moved to the 1.x candidates. The admin area opens on an overview with aggregated figures only; pages with personal data are opened deliberately.
 - 2026-11-15: single-app groups decided (backend in 0.1, clean-up with audit retention in 0.5). Copying groups added to the 1.x candidates. Personal data appears only where someone went to see it: the account area also opens on a start page without personal details, and the profile masks the email until shown.
+- 2026-11-15: page contents reviewed: passwords typed twice, sign-up signs the user in, session IPs masked like emails, admin-created accounts change their password at first sign-in, temporary passwords typed by the admin (a generate button in 0.5).

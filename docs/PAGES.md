@@ -1,9 +1,10 @@
 # Guardian's pages
 
 Every page of the sign-in pages and the management UI, and which requirements from `docs/USERS.md` each one
-serves. The next step adds what each page contains; after that come the design drafts.
+serves, and what each page contains. The design drafts are made from this.
 
-Page ids: **S** sign-in pages, **AC** account area (`/account`), **AD** admin area (`/admin`), **E** emails.
+Page ids: **S** sign-in pages, **H** home (`/`), **AC** account area (`/account`), **AD** admin area (`/admin`),
+**E** emails.
 "Who" is the least role that sees the page; roles that inherit from it see it too (`docs/USERS.md`).
 
 ## Sign-in pages (served by the backend)
@@ -27,11 +28,18 @@ Page ids: **S** sign-in pages, **AC** account area (`/account`), **AD** admin ar
 | S15 Set up two-factor | Required setup: choose a method, scan the QR code or enter the secret, confirm a code. | U4, O4, A24 | User | 0.3 |
 | S16 Recovery codes | Show the 10 codes once and ask for one back. Also reached from AC2. | U4, U11 | User | 0.3 |
 
-## Account area (`/account`)
+## Home (`/`)
 
 | Page | Purpose | Requirements | Who | Release |
 |---|---|---|---|---|
-| AC0 Start | The account area's start page: the way to each part, and actions needed, with no personal details. | U19 | User | 0.4 |
+| H0 Home | Where a signed-in user lands: their connected apps, the apps available to them, actions needed, and the way to the account and admin areas. No personal details. | U19, U20 | User | 0.4 |
+
+## Account area (`/account`)
+
+The account area opens on AC1 Profile.
+
+| Page | Purpose | Requirements | Who | Release |
+|---|---|---|---|---|
 | AC1 Profile | Name, picture, locale, time zone, username, email (masked until shown, with its confirmation state). | U7, U8, U9 | User | 0.4 |
 | AC2 Security | Password, two-factor methods, security keys and passkeys (0.5), recovery codes. | U10, U11 | User | 0.4 |
 | AC3 Sessions | Where they are signed in; sign out one or all. | U12 | User | 0.4 |
@@ -74,6 +82,350 @@ Sent only to accounts with a confirmed address (except E1, which confirms it).
 | E5 Your email address is being changed (to the old address) | U9, U17 | 0.3 |
 | E6 An administrator reset your two-factor (with the reason) | A9, U17 | 0.3 |
 
+## What each page contains
+
+A first version, for the design drafts. **Shows** is what the page displays, **Fields** what can be entered,
+**Actions** the buttons and links, **States** the variants a design must cover. Items marked with a release
+appear from that release; until then the page is drawn without them.
+
+### Shared parts
+
+- **F1 Sign-in frame** (every S page): the Guardian logo, a heading, the page's content, and the footer (Help,
+  Privacy, "Powered by Guardian"). Works without JavaScript; only S14 needs it.
+- **F2 Management UI frame** (every AC and AD page):
+  - A top bar with the logo (a link to H0), the signed-in username, and Sign out. A switch between the account area and the
+    admin area, shown to admins only.
+  - The area's navigation.
+  - In the admin area, the one-administrator warning (A23) while it applies.
+- **Common elements:**
+  - Every password field has a show button. Wherever a password is chosen or set (sign-up, any change or
+    reset, an admin setting one), it is typed twice, in two fields, and must match; the rule ("at least 10
+    characters") is shown with them.
+  - Masked IP addresses, like masked emails, on AC3.
+  - Masked values with a show button (an eye), used for email addresses on AC1 and AD2.
+  - Confirmation dialogs for destructive actions. The most serious (deleting an account, app or group) make
+    the admin type the name.
+  - Field-level error messages and a page-level error banner.
+  - Short success messages ("Saved").
+  - Empty states ("No members yet").
+  - Status badges: active, disabled, deleted, built-in, bound to an app.
+  - Page controls for paged lists: Next and Previous.
+  - A date picker for membership expiry.
+  - Copy buttons for ids, URLs and secrets.
+
+### Sign-in pages
+
+**S1 Sign in** (approved design)
+- Fields: username or email; password.
+- Actions: Sign in. "Forgot password?" (0.3). "Use a security key" (0.5). **"Create an account"** (new, leads to
+  S2).
+- States: wrong username or password (the same message whether or not the account exists); too many
+  attempts, try again later; form expired, reload. The username is kept after an error.
+
+**S2 Sign up**
+- Fields: username (with its rule: 3–64 letters, digits, `.`, `_`, `-`); password, twice; email (0.3:
+  optional, or required when `REQUIRE_EMAIL` is set); a honeypot field that people never see.
+- Shows the three notices:
+  - without an email, only an administrator can reset a forgotten password;
+  - Guardian is a hobby project under active development;
+  - use a password you use nowhere else.
+- Actions: Create account. "Already have an account? Sign in".
+- States: username taken; email already in use (0.3); password too short; passwords do not match; too many
+  sign-ups from this address.
+- After sign-up the user is signed in and continues to the app they came from (or their account). With an
+  email (0.3), sign-up is only complete once the address is confirmed: the page says "Check your inbox" (with
+  Resend and Change address), and the confirmation link (S12) signs them in and continues.
+
+**S3 Choose a new password**
+- Shows: why ("An administrator set a temporary password for your account. Choose your own to continue.").
+- Fields: new password, twice.
+- Actions: Save and continue. Sign out. There is no way to skip it.
+- States: too short; passwords do not match; same as the temporary password.
+
+**S4 Consent**
+- Shows:
+  - the app's logo and name, with "wants to use your Guardian account";
+  - "Signed in as `<username>`", with "Not you? Sign out";
+  - what the app will get, one line per scope, for example "Your name and username", "Your email address",
+    "Your groups that are linked to this app".
+- Actions: Allow, Deny.
+
+**S5 No access**
+- Shows:
+  - "You don't have access to `<app>`";
+  - what to do: ask an administrator to add you to a group with access;
+  - "Signed in as `<username>`".
+- Actions: Sign out to switch account; go to your account.
+
+**S6 Sign out?**
+- Shows: "Sign out of Guardian? You will also be signed out of the apps you use through Guardian."
+- Actions: Sign out, Cancel.
+
+**S7 Signed out**
+- Shows: "You're signed out." When the app gave a page to return to, there is no page: the browser goes there.
+- Actions: Sign in again.
+
+**S8 Already signed in**
+- Shows: "You're signed in as `<username>`."
+- Actions: Go to your account; Sign out.
+
+**S9 Error**
+- Shows: a plain title, what happened, and what to do. Never technical details.
+- Variants:
+  - the app's sign-in link is broken (unknown app or redirect address): contact whoever runs the app;
+  - session expired: start again from the app;
+  - form expired: reload the page;
+  - link expired or already used (0.3): request a new one;
+  - page not found;
+  - something went wrong on Guardian's side: try again later.
+
+**S10 Forgot password** (0.3)
+- Fields: username or email.
+- Actions: Send reset link; back to sign in.
+- States: afterwards always the same message: "If the account has a confirmed email address, we have sent
+  a link." Accounts without one are told, on this page, to contact an administrator.
+
+**S11 Reset password** (0.3)
+- Fields: new password, twice.
+- Shows: "Two-factor still applies when you sign in."
+- Actions: Save.
+- States: link expired or used (S9 variant).
+
+**S12 Email confirmation** (0.3)
+- States: confirmed (signs the user in if sign-up was waiting for it, and continues; otherwise continue to
+  your account); link expired (request a new one from your profile); the address is now used by another
+  account.
+
+**S13 Second factor** (0.3)
+- Fields: a 6-digit code from the authenticator app; or, after "Use a recovery code", a recovery code.
+- Actions: Verify. Switch between code and recovery code. "Use a security key" (0.5). Sign out.
+- States: wrong code; too many attempts.
+
+**S14 Security key** (0.5)
+- Shows: "Use your security key or passkey", with what to do and a waiting state.
+- Actions: Try again; use another method.
+- States: cancelled; not recognised; this browser doesn't support security keys; JavaScript is off.
+
+**S15 Set up two-factor** (0.3)
+- Shows: why it is required ("Administrators must use two-factor", or "`<app>` requires two-factor").
+- Fields: the method (authenticator app; security key from 0.5). For the authenticator: a QR code, the secret
+  as text (with copy) for typing in by hand, and a code to confirm.
+- Actions: Continue (to S16). Sign out. There is no way to skip it.
+- States: wrong code.
+
+**S16 Recovery codes** (0.3)
+- Shows:
+  - 10 codes, each usable once;
+  - that this is the only time they are shown;
+  - Copy, Download as a text file, Print.
+- Fields: one of the codes, typed back, to prove they were saved.
+- Actions: Finish.
+
+### Home
+
+**H0 Home**
+- Uses the management UI frame (F2) without an area navigation.
+- Shows actions that need the user, without personal details: "Set up two-factor" (0.3), "Confirm your new
+  email address" (0.3; the address is not shown).
+- **Your connected apps:** the apps the user has signed in to: logo, display name, description; each opens the
+  app's homepage. A link to AC4 to see what each app can see and remove access.
+- **Available apps:** the apps the user may sign in to but has not used yet, the same way.
+- Apps without a homepage, and apps the user may not sign in to, are not listed.
+- **Manage:** Your account (AC1); Admin area (AD13, admins only).
+- States: no apps at all ("No apps yet. Ask an administrator for access."); either card empty is left out.
+- Visitors who are not signed in go to S1, and come back here afterwards.
+
+### Account area
+
+**AC1 Profile**
+- Fields: picture (an https address, with a preview); display name; given name; family name; username;
+  locale; time zone.
+- Shows the email (0.3), masked until shown, in one of these states: none (add one); confirmed (change,
+  remove); a new address waiting for confirmation (resend the link, cancel).
+- Actions: Save. Changing the username or email asks to confirm it's you (AC8, 0.3).
+- States: username taken; picture address not https.
+
+**AC2 Security**
+- **Password:** current password, and the new one twice; Change. Shows that other sessions are signed out.
+- **Two-factor** (0.3):
+  - whether it is on, and whether it is required for you and why;
+  - authenticator app: set up or remove;
+  - recovery codes: how many are left, make new ones (shown as on S16);
+  - security keys and passkeys (0.5): name, added, last used; add, rename, remove.
+- Removing the last way to recover the account asks for an extra confirmation. Removing two-factor while it
+  is required is refused.
+
+**AC3 Sessions**
+- Shows one row per session: browser and system (from the user agent), IP address (partly masked, for
+  example `203.0.113.•••`, until shown), signed in, last active, and "This device" on the current one.
+- Actions: Sign out (per row); Sign out everywhere else.
+
+**AC4 Connected apps**
+- Shows one row per app the user has used: logo, name, what it can see (the scope lines from S4), first and
+  last use.
+- Actions: Remove access. This forgets the consent, ends the app's refresh tokens and tells the app with
+  back-channel logout.
+
+**AC5 Groups**
+- **Groups you're in:** display name, description, when the membership expires. Display names only: users
+  never need group keys.
+- **Groups you manage** (group owners): display name, number of members, linked apps; open (AC6).
+- States: no groups.
+
+**AC6 Owned group**
+- Shows: name, description, the apps it is linked to (names only).
+- Shows the members: username, display name, added, expires.
+- Fields: username or email (exact); expiry date (optional). There are no suggestions.
+- Actions: Add (the only answers are "No user found" and "User added"); Remove (with confirmation); change a
+  member's expiry.
+
+**AC7 Your data**
+- **Download your data:** Download (a JSON file).
+- **Delete your account** (0.3):
+  - what happens: you are signed out everywhere at once; the account is erased after 30 days; an
+    administrator can restore it until then; apps may keep data of their own;
+  - type your username to confirm, then confirm it's you (AC8).
+  - States: refused for the last administrator, with the reason.
+
+**AC8 Confirm it's you** (dialog, 0.3)
+- Shows: what is about to change ("Confirm it's you to change your email address").
+- Fields: password, or a second-factor code, or a security key (0.5).
+- Actions: Confirm (then the change is saved); Cancel. It is not asked again for 5 minutes.
+
+### Admin area
+
+**AD13 Overview**
+- Shows figures only:
+  - accounts: active, disabled, waiting for erasure (0.3);
+  - groups;
+  - apps: enabled and disabled;
+  - over the last 24 hours: sign-ins, failed sign-ins, rate-limited requests;
+  - administrators, and from 0.3 how many have two-factor.
+- Actions: links to Accounts, Groups, Apps, Audit log.
+
+**AD1 Accounts**
+- Fields: search (username, name or email); status filter.
+- Shows a table: username, display name, email, status, last sign-in; Next and Previous.
+- Actions: open an account (AD2); New account (AD3).
+
+**AD2 Account**
+- Shows: username, status badge, created, last sign-in, "must choose a new password" when set.
+- **Profile:** the same fields as AC1, with the email masked until shown. An email set here counts as
+  confirmed.
+- **Access:**
+  - Disable or enable: confirmation explains that disabling signs the account out everywhere; refused for
+    the last administrator.
+  - Sign out everywhere.
+  - Set a temporary password: typed twice by the admin. From 0.5, a Generate button fills in a random one and
+    copies it to the clipboard. The user must change it at the next sign-in.
+  - Reset two-factor (0.3): a reason is required; the user is emailed.
+- **Groups:** groups with expiry; add to a group (with expiry); remove.
+- **Activity:** recent audit entries about this account, with a link to the full audit log.
+- **Delete:** type the username. Erase now (0.3). A deleted account (0.3) shows when it will be erased and a
+  Restore button.
+
+**AD3 New account**
+- Fields: username; password, twice (Generate from 0.5, as on AD2); email (optional, counts as confirmed).
+- The new account must choose its own password at the first sign-in (S3).
+- Actions: Create (opens AD2).
+
+**AD4 Groups**
+- Shows a table: display name, key, members, owner group, linked apps, badges (built-in, bound to `<app>`).
+- Fields: filter by name or key.
+- Actions: open a group (AD5); New group (AD6).
+
+**AD5 Group**
+- Shows: key (read-only, "never changes"), bound app (read-only), linked apps (linking is done on the app's
+  page).
+- Fields: display name, description, owner group.
+- **Members:** the same as AC6, except that admins may also search accounts.
+- Actions: Save; Bind to an app (only while it is linked to at most that one app; with a warning that it is
+  permanent); Copy (1.x); Delete (type the key; shows the members and linked apps it affects).
+- States: built-in groups are read-only, with a note why.
+
+**AD6 New group**
+- Fields: key (live check of the rule, warning that it never changes); display name; description; owner
+  group (optional).
+- Fields: "Is this group for one app only?" Yes or No, with neither preselected; Yes asks for the app.
+- Actions: Create (opens AD5).
+
+**AD7 Apps**
+- Shows a table: logo, name, type (with or without a secret), access rule, linked groups, enabled.
+- Actions: open an app (AD8); New app (AD9).
+
+**AD8 App**
+- **Setup:** client id, discovery URL and issuer, each with copy; the redirect URIs.
+- **Settings:**
+  - name (read-only), display name, description, logo, homepage;
+  - redirect URIs and sign-out redirect URIs (list editors);
+  - back-channel logout URI;
+  - skip consent;
+  - token lifetime, with guidance (60 seconds or more; how stale the app's view may get);
+  - scopes.
+- **Access:**
+  - rule: members of linked groups only, or anyone with an account;
+  - linked groups (groups bound to another app cannot be picked);
+  - machine API on or off (Guardian admins, apps with a secret only).
+- **Credentials:** rotate the secret, with a grace period for the old one (none, 1 hour, 1 day, 7 days),
+  leading to AD10.
+- **Activity:** recent audit entries about the app.
+- **Danger zone:** disable or enable; delete (Guardian admins; type the name).
+
+**AD9 New app**
+- Fields:
+  - name (machine name, never changes) and display name;
+  - type: "with a secret" (a server-side app) or "without a secret" (a browser or mobile app), with what
+    each means;
+  - redirect URIs;
+  - the access rule (default: linked groups only, with a note that nobody can sign in until a group is
+    linked) and the linked groups;
+  - the other settings of AD8, folded away.
+- Actions: Register (then AD10 for apps with a secret, then AD8).
+
+**AD10 Secret, shown once** (dialog)
+- Shows: the secret with copy; "This is the only time it is shown. Store it now." After a rotation, also when
+  the old secret stops working.
+- Actions: Done, enabled once Copy was pressed or "I have stored it" is ticked.
+
+**AD11 Audit log**
+- Fields: event type (a list of known types); account (exact username).
+- Shows a table: time, event, who (username or app), IP address, summary. A row opens to show all its
+  details. Next and Previous.
+
+**AD12 Deleted accounts** (0.3)
+- Shows a table: username, deleted, erased on, deleted by.
+- Actions: Restore; Erase now (type the username).
+
+### Emails (0.3)
+
+Every email names the Guardian deployment, says what happened and when, and what to do if it wasn't the
+user. It holds no other personal data.
+
+- **E1 Confirm your email address:** the link, and when it expires.
+- **E2 Reset your password:** the link, when it expires, and that two-factor still applies.
+- **E3 Your password was changed:** when.
+- **E4 Two-factor was added or removed:** which method, when.
+- **E5 Your email address is being changed:** sent to the old address; the new address masked.
+- **E6 An administrator reset your two-factor:** when, and the reason given.
+
+### What the API still lacks for these pages
+
+- The sign-up page signing the new user in and continuing to the app they came from; with an email (0.3),
+  only once it is confirmed (S2, S12).
+- Accounts created by an admin must change their password at the first sign-in (AD3).
+- The apps a user may sign in to, split into connected and available, with homepages (H0).
+- The account area:
+  - the user's own groups (AC5);
+  - sessions (AC3);
+  - connected apps (AC4);
+  - the data export (AC7).
+- Adding a member by exact username or email (AC6, AD5).
+- Linked app names for owners (AC6).
+- Signing an account out everywhere (AD2).
+- The overview figures (AD13).
+- Audit entries about an account or app, as the target and not only the actor (AD2, AD8).
+- Binding a group to an app (AD5, AD6).
+
 ## Requirements without pages
 
 | Requirements | Where they are met |
@@ -112,7 +464,8 @@ Sent only to accounts with a confirmed address (except E1, which confirms it).
 | U16 | AC8 |
 | U17 | E3, E4, E5, E6 |
 | U18 | AC5 |
-| U19 | AC0 |
+| U19 | H0 |
+| U20 | H0 |
 | O1 | AC5 |
 | O2 | AC6 |
 | O3 | AC6 |

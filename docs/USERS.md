@@ -54,8 +54,10 @@ personal details by accident.
 
 - The admin area opens on an overview of counts only (A28). Lists of accounts, members or audit entries
   appear only on pages an admin opens on purpose; those may show their data straight away.
-- The account area opens on a start page without the user's personal details (U19). They appear on the
-  profile page, and even there the email address is masked until the user chooses to show it (U7).
+- Home (`/`), where a signed-in user lands, shows no personal details (U19): only their apps (U20), actions
+  needed and the way to the account and admin areas. The account area opens on the profile page, where
+  the email address is masked until the user chooses to show it (U7). The
+  sessions page masks IP addresses the same way (U12).
 - An admin's page about one account (AD2) also masks the email until shown, because admins often open it to
   do something else, such as disabling the account.
 
@@ -65,7 +67,7 @@ personal details by accident.
 |---|---|---|---|
 | V1 | Sign in with username or email and password. | 0.1 | done (new design in 0.1) |
 | V2 | Clear messages for wrong credentials and too many attempts, never revealing whether an account exists. | 0.1 | done |
-| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | API done |
+| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The password is typed twice. After sign-up the user is signed in and continues to the app they came from; when they gave an email, only once it is confirmed. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | API done |
 | V4 | Understand what went wrong when an app sends a broken sign-in request, an expired form, or a page that does not exist. | 0.1 | done (new design in 0.1) |
 | V5 | Forgot password: ask for a reset link (the answer is the same whether or not the account exists), then set a new password from the link. Two-factor still applies afterwards. | 0.3 | planned |
 | V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | planned |
@@ -96,14 +98,15 @@ Everything a visitor has, plus:
 | U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | planned |
 | U10 | Change their password with the current one; their other sessions end. | 0.1 / 0.4 | API done |
 | U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | planned |
-| U12 | See their sessions (device or browser, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | planned |
+| U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | planned |
 | U13 | See the apps they use and what each can see; remove an app's access. | 0.4 / 0.4 | planned |
 | U14 | Download their data as JSON. | 0.3 / 0.4 | planned |
 | U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | planned |
 | U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | planned |
 | U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | planned |
-| U18 | See the groups they are in, with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
-| U19 | A start page for the account area without personal details: no email, sessions or other data, only the way to each part of the account and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.4 | planned |
+| U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
+| U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.4 | planned |
+| U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.4 / 0.4 | planned |
 
 ## Group owner
 
@@ -142,10 +145,10 @@ Everything an app admin has for every app, and everything a group owner has for 
 |---|---|---|---|
 | A1 | List and search accounts, filter by status. | 0.1 / 0.4 | API done |
 | A2 | View an account: profile, status, groups, last sign-in. | 0.1 / 0.4 | API done |
-| A3 | Create an account; an email set by an admin counts as confirmed. | 0.1 / 0.4 | API done |
+| A3 | Create an account; an email set by an admin counts as confirmed. The user must choose their own password at the first sign-in (U3). | 0.1 / 0.4 | API done |
 | A4 | Change an account's profile, username and email. | 0.1 / 0.4 | API done |
 | A5 | Disable and re-enable an account; disabling signs it out everywhere. Refused for the last administrator. | 0.1 / 0.4 | API done |
-| A6 | Set a temporary password, which signs the account out everywhere and must be changed at the next sign-in (U3). | 0.1 / 0.4 | API done |
+| A6 | Set a temporary password, typed twice, which signs the account out everywhere and must be changed at the next sign-in (U3). From 0.5 Guardian can also generate one and copy it to the clipboard. | 0.1 / 0.4 | API done |
 | A7 | Delete an account: disabled at once, erased after the grace period (0.3), or erased at once ("erase now", 0.3). | 0.1, grace and erase 0.3 / 0.4 | API done (soft delete) |
 | A8 | Restore a deleted account during its grace period. | 0.3 / 0.4 | planned |
 | A9 | Reset an account's two-factor, giving a reason; the user is emailed. | 0.3 / 0.4 | planned |
@@ -211,3 +214,8 @@ Works in the CLI and with Kubernetes, never in the management UI. Has no require
   form with no preselected answer, kept unbound after their app is deleted and cleaned up after audit
   retention; backend in 0.1. Added copying groups (A29, 1.x), the account area start page (U19) and the
   masked email on the profile.
+- 2026-11-15: passwords are typed twice wherever one is chosen or set; sign-up signs the user in (after
+  email confirmation when an email is given); session IPs shown masked; admin-created accounts must change
+  their password; temporary passwords typed by the admin, generated from 0.5; users see group display names only.
+- 2026-11-19: the account area start page became Home (`/`, U19), with the apps a user can use (U20):
+  connected apps and available apps. The account area now opens on the profile.
