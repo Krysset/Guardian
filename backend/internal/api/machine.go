@@ -29,8 +29,8 @@ func machineApp(r *http.Request) db.App {
 	return app
 }
 
-// GetMachineSubrouter serves /api/v1/apps/self.
-func GetMachineSubrouter() *chi.Mux {
+// machineRouter serves /api/v1/apps/self.
+func machineRouter() *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(requireMachineToken)
 	r.Get("/", machineSelf)
@@ -47,7 +47,7 @@ func requireMachineToken(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		unauthorized := func() {
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-			httpx.Error(w, http.StatusUnauthorized, "invalid_token")
+			httpx.ErrorCode(w, http.StatusUnauthorized, "invalid_token", "The access token is missing, invalid or expired")
 		}
 		clientID, ok := oidc.VerifyClientToken(r.Header.Get("Authorization"))
 		if !ok {
@@ -95,7 +95,7 @@ func machineGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "Failed to list groups")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, groups)
+	httpx.JSON(w, http.StatusOK, list(groups))
 }
 
 func machineGroupMembers(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +118,7 @@ func machineGroupMembers(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, u)
 	}
-	httpx.JSON(w, http.StatusOK, out)
+	httpx.JSON(w, http.StatusOK, list(out))
 }
 
 // machineUser looks up one account by its sub. Accounts the app may not know about get the same 404 as

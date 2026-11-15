@@ -101,7 +101,7 @@ sequenceDiagram
   participant D as Postgres
   participant A as App
   A->>A: verify access token locally on every request
-  Ad->>G: DELETE /api/groups/{group}/members/{account}
+  Ad->>G: DELETE /api/v1/groups/{group}/members/{account}
   G->>D: DELETE, COMMIT
   G-->>A: back-channel logout (if the app is linked to the group)
   Note over A: an app without back-channel logout keeps the old token until it expires

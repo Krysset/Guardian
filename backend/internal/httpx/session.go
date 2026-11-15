@@ -22,6 +22,12 @@ func AccountID(r *http.Request) string {
 	return v
 }
 
+// SessionID is the session of a request that passed Authenticate.
+func SessionID(r *http.Request) string {
+	v, _ := r.Context().Value(ctxSessionID).(string)
+	return v
+}
+
 // ---- Session cookie helpers -------------------------------------------------
 
 // SessionFromRequest returns the live session of the request's session cookie, if any.
@@ -96,7 +102,7 @@ func Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := SessionFromRequest(r)
 		if !ok {
-			Error(w, http.StatusUnauthorized, "Unauthorized")
+			Error(w, http.StatusUnauthorized, "Sign in first")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxAccountID, sess.AccountID)
@@ -119,7 +125,7 @@ func AdminOnly(next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
-			Error(w, http.StatusForbidden, "Forbidden")
+			Error(w, http.StatusForbidden, "Your account may not do this")
 			return
 		}
 		next.ServeHTTP(w, r)

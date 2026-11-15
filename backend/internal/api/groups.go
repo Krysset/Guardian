@@ -14,27 +14,9 @@ import (
 	db "guardian/internal/store"
 )
 
-// GetGroupSubrouter manages groups and their members.
-//
-// Administrators (members of guardian-admins) may do everything. A group's owners, the members of its
-// owner group, may only list, add and remove that group's members. Nothing is cached, so a change is
-// seen by the next check on every replica.
-func GetGroupSubrouter() *chi.Mux {
-	r := chi.NewRouter()
-	r.Use(httpx.Authenticate)
-	r.Get("/", listGroups)
-	r.Get("/{group}", getGroup)
-	r.Get("/{group}/members", listGroupMembers)
-	r.Put("/{group}/members/{account}", addGroupMember)
-	r.Delete("/{group}/members/{account}", removeGroupMember)
-	r.Group(func(r chi.Router) {
-		r.Use(httpx.AdminOnly)
-		r.Post("/", createGroup)
-		r.Patch("/{group}", updateGroup)
-		r.Delete("/{group}", deleteGroup)
-	})
-	return r
-}
+// Groups: administrators (members of guardian-admins) may do everything. A group's owners, the members
+// of its owner group, may only see it and list, add and remove its members. Nothing is cached, so a
+// change is seen by the next check on every replica.
 
 // groupKeyRe: lower case, so a key reads the same everywhere it is typed into an app's configuration.
 var groupKeyRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,62}$`)
@@ -46,7 +28,7 @@ func groupFail(w http.ResponseWriter, err error) {
 	case errors.Is(err, db.ErrSystemGroup):
 		httpx.Error(w, http.StatusForbidden, "Built-in groups cannot be changed or deleted")
 	case errors.Is(err, db.ErrLastAdmin):
-		httpx.Error(w, http.StatusConflict, "Guardian must keep at least one active administrator whose membership does not expire")
+		httpx.ErrorCode(w, http.StatusConflict, "last_admin", "Guardian must keep at least one active administrator whose membership does not expire")
 	case errors.Is(err, db.ErrInvalidOwner):
 		httpx.Error(w, http.StatusBadRequest, "owner_group_id must be another existing group")
 	case db.IsUniqueViolation(err):
@@ -80,7 +62,7 @@ func groupAccess(w http.ResponseWriter, r *http.Request) (group db.Group, via st
 		return db.Group{}, "", false
 	}
 	if !owns {
-		httpx.Error(w, http.StatusForbidden, "Forbidden")
+		httpx.Error(w, http.StatusForbidden, "Only administrators and the group's owners may do this")
 		return db.Group{}, "", false
 	}
 	return group, "owner:" + ownerKey, true
@@ -103,7 +85,7 @@ func listGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "Failed to list groups")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, groups)
+	httpx.JSON(w, http.StatusOK, list(groups))
 }
 
 func getGroup(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +184,7 @@ func deleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.Audit("group.deleted", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"group": id, "key": group.Key})
-	httpx.Success(w)
+	httpx.NoContent(w)
 }
 
 func listGroupMembers(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +197,7 @@ func listGroupMembers(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "Failed to list members")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, members)
+	httpx.JSON(w, http.StatusOK, list(members))
 }
 
 // addGroupMember adds an account to the group, or changes when its membership expires. The body is
@@ -246,7 +228,7 @@ func addGroupMember(w http.ResponseWriter, r *http.Request) {
 	}
 	db.Audit("group.member_added", httpx.AccountID(r), "", httpx.ClientIP(r),
 		map[string]any{"group": group.ID, "key": group.Key, "account": member.ID, "via": via, "expires_at": req.ExpiresAt})
-	httpx.Success(w)
+	httpx.NoContent(w)
 }
 
 func removeGroupMember(w http.ResponseWriter, r *http.Request) {
@@ -272,5 +254,5 @@ func removeGroupMember(w http.ResponseWriter, r *http.Request) {
 	oidc.SendLogoutNotices(notices)
 	db.Audit("group.member_removed", httpx.AccountID(r), "", httpx.ClientIP(r),
 		map[string]any{"group": group.ID, "key": group.Key, "account": member, "via": via, "apps_notified": len(notices)})
-	httpx.Success(w)
+	httpx.NoContent(w)
 }

@@ -201,7 +201,12 @@ func (b *browser) login(username, password, returnTo string) *http.Response {
 
 func (b *browser) mustLogin(username string) {
 	b.t.Helper()
-	resp := b.login(username, testutil.DefaultPassword, "")
+	b.mustLoginWith(username, testutil.DefaultPassword)
+}
+
+func (b *browser) mustLoginWith(username, password string) {
+	b.t.Helper()
+	resp := b.login(username, password, "")
 	wantStatus(b.t, resp, http.StatusSeeOther)
 	drain(resp)
 }

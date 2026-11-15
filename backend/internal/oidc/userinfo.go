@@ -17,7 +17,7 @@ import (
 func userinfo(w http.ResponseWriter, r *http.Request) {
 	unauthorized := func() {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-		httpx.Error(w, http.StatusUnauthorized, "invalid_token")
+		httpx.ErrorCode(w, http.StatusUnauthorized, "invalid_token", "The access token is missing, invalid or expired")
 	}
 	h := r.Header.Get("Authorization")
 	if len(h) < 8 || !strings.EqualFold(h[:7], "bearer ") {

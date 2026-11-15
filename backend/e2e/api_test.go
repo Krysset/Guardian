@@ -28,7 +28,7 @@ func (b *browser) call(method, path string, body any, want int) map[string]any {
 	return m
 }
 
-func members(group, account string) string { return "/api/groups/" + group + "/members/" + account }
+func members(group, account string) string { return "/api/v1/groups/" + group + "/members/" + account }
 
 // Group changes made through the API reach the app at its next refresh. The app's refresh token stays
 // the same; what it returns is decided at refresh time.
@@ -56,14 +56,14 @@ func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	}
 
 	// create two groups and link only one of them to the app
-	approvers := str(admin.call("POST", "/api/groups", map[string]any{"key": "approvers", "display_name": "Approvers"}, 201)["id"])
-	hr := str(admin.call("POST", "/api/groups", map[string]any{"key": "hr-sensitive", "display_name": "HR"}, 201)["id"])
-	admin.call("PUT", members(approvers, user.ID), nil, 200)
-	admin.call("PUT", members(hr, user.ID), nil, 200)
+	approvers := str(admin.call("POST", "/api/v1/groups", map[string]any{"key": "approvers", "display_name": "Approvers"}, 201)["id"])
+	hr := str(admin.call("POST", "/api/v1/groups", map[string]any{"key": "hr-sensitive", "display_name": "HR"}, 201)["id"])
+	admin.call("PUT", members(approvers, user.ID), nil, 204)
+	admin.call("PUT", members(hr, user.ID), nil, 204)
 	if got := groups(); len(got) != 0 {
 		t.Fatalf("groups that are not linked to the app must not be shown to it: %v", got)
 	}
-	linked := admin.call("POST", "/api/service/access", map[string]any{"id": svc.ID, "access_rule": "anyone", "group_ids": []string{approvers}}, 200)
+	linked := admin.call("PUT", "/api/v1/apps/"+svc.ID+"/access", map[string]any{"access_rule": "anyone", "group_ids": []string{approvers}}, 200)
 	if linked["access_rule"] != "anyone" || fmt.Sprint(linked["group_ids"]) != "["+approvers+"]" {
 		t.Errorf("app after linking: rule %v, groups %v", linked["access_rule"], linked["group_ids"])
 	}
@@ -77,7 +77,7 @@ func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	}
 
 	// removing the member reaches the next refresh, and userinfo at once
-	admin.call("DELETE", members(approvers, user.ID), nil, 200)
+	admin.call("DELETE", members(approvers, user.ID), nil, 204)
 	if len(groups()) != 0 {
 		t.Fatalf("after removing the member the next refresh must not carry the group: %v", groups())
 	}
@@ -90,18 +90,18 @@ func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	if len(groups()) != 0 {
 		t.Error("a refused membership took effect")
 	}
-	admin.call("PUT", members(approvers, user.ID), map[string]any{"expires_at": "2999-01-01T00:00:00Z"}, 200)
+	admin.call("PUT", members(approvers, user.ID), map[string]any{"expires_at": "2999-01-01T00:00:00Z"}, 204)
 	if got := groups(); len(got) != 1 {
 		t.Fatalf("a membership that expires in the future must count: %v", got)
 	}
-	listed := admin.get("/api/groups/" + approvers + "/members")
+	listed := admin.get("/api/v1/groups/" + approvers + "/members")
 	if body := readBody(t, listed); !strings.Contains(body, `"username":"dave"`) || !strings.Contains(body, `"expires_at":"2999-01-01T00:00:00Z"`) {
 		t.Errorf("member listing: %.300s", body)
 	}
 
 	// renaming keeps the key, which is what the app sees
-	admin.call("PATCH", "/api/groups/"+approvers, map[string]any{"display_name": "Invoice approvers"}, 200)
-	admin.call("PATCH", "/api/groups/"+approvers, map[string]any{"key": "renamed"}, 400)
+	admin.call("PATCH", "/api/v1/groups/"+approvers, map[string]any{"display_name": "Invoice approvers"}, 200)
+	admin.call("PATCH", "/api/v1/groups/"+approvers, map[string]any{"key": "renamed"}, 400)
 	if got := groups(); len(got) != 1 || got[0] != "approvers" {
 		t.Fatalf("after renaming, the app must still see the same key: %v", got)
 	}
@@ -109,11 +109,11 @@ func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	// unknown accounts and unknown groups
 	admin.call("PUT", members(approvers, "00000000-0000-0000-0000-000000000000"), nil, 404)
 	admin.call("PUT", members("00000000-0000-0000-0000-000000000000", user.ID), nil, 404)
-	admin.call("POST", "/api/groups", map[string]any{"key": "approvers", "display_name": "Again"}, 409)
-	admin.call("POST", "/api/service/access", map[string]any{"id": svc.ID, "access_rule": "groups", "group_ids": []string{"00000000-0000-0000-0000-000000000000"}}, 400)
+	admin.call("POST", "/api/v1/groups", map[string]any{"key": "approvers", "display_name": "Again"}, 409)
+	admin.call("PUT", "/api/v1/apps/"+svc.ID+"/access", map[string]any{"access_rule": "groups", "group_ids": []string{"00000000-0000-0000-0000-000000000000"}}, 400)
 
 	// deleting the group removes it from its members
-	admin.call("DELETE", "/api/groups/"+approvers, nil, 200)
+	admin.call("DELETE", "/api/v1/groups/"+approvers, nil, 204)
 	if len(groups()) != 0 {
 		t.Error("a deleted group is still reported")
 	}
@@ -144,18 +144,28 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 		body         any
 	}
 	adminOnly := []req{
-		{"POST", "/api/groups", map[string]any{"key": "new-group", "display_name": "New"}},
-		{"GET", "/api/groups/" + team, nil},
-		{"PATCH", "/api/groups/" + team, map[string]any{"description": "changed"}},
-		{"GET", "/api/groups/" + team + "/members", nil},
+		{"POST", "/api/v1/groups", map[string]any{"key": "new-group", "display_name": "New"}},
+		{"GET", "/api/v1/groups/" + team, nil},
+		{"PATCH", "/api/v1/groups/" + team, map[string]any{"description": "changed"}},
+		{"GET", "/api/v1/groups/" + team + "/members", nil},
 		{"PUT", members(team, plainAcct.ID), nil},
 		{"PUT", members(adminGroup, plainAcct.ID), nil}, // nobody may make themselves an administrator
 		{"DELETE", members(team, plainAcct.ID), nil},
-		{"DELETE", "/api/groups/" + team, nil},
-		{"GET", "/api/service/list", nil}, // app settings and redirect URIs are not for everyone
-		{"GET", "/api/service/" + app.ID, nil},
-		{"POST", "/api/service/add", map[string]any{"name": "x1", "pretty_name": "x", "redirect_uris": []string{"https://x1.test/cb"}}},
-		{"POST", "/api/service/access", map[string]any{"id": app.ID, "access_rule": "anyone", "group_ids": []string{}}},
+		{"DELETE", "/api/v1/groups/" + team, nil},
+		{"GET", "/api/v1/apps", nil}, // app settings and redirect URIs are not for everyone
+		{"GET", "/api/v1/apps/" + app.ID, nil},
+		{"POST", "/api/v1/apps", map[string]any{"name": "x1", "pretty_name": "x", "redirect_uris": []string{"https://x1.test/cb"}}},
+		{"PATCH", "/api/v1/apps/" + app.ID, map[string]any{"pretty_name": "Mine"}},
+		{"PUT", "/api/v1/apps/" + app.ID + "/access", map[string]any{"access_rule": "anyone", "group_ids": []string{}}},
+		{"POST", "/api/v1/apps/" + app.ID + "/secret", nil},
+		{"DELETE", "/api/v1/apps/" + app.ID, nil},
+		{"GET", "/api/v1/accounts", nil},
+		{"POST", "/api/v1/accounts", map[string]any{"username": "made-by-plain", "password": testutil.DefaultPassword}},
+		{"GET", "/api/v1/accounts/" + plainAcct.ID, nil},
+		{"PATCH", "/api/v1/accounts/" + plainAcct.ID, map[string]any{"email": "plain@example.com"}}, // would be "verified"
+		{"PUT", "/api/v1/accounts/" + plainAcct.ID + "/password", map[string]any{"new_password": testutil.DefaultPassword}},
+		{"DELETE", "/api/v1/accounts/" + plainAcct.ID, nil},
+		{"GET", "/api/v1/audit", nil},
 	}
 	for _, r := range adminOnly {
 		anon.call(r.method, r.path, r.body, http.StatusUnauthorized)
@@ -169,26 +179,26 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	}
 
 	// the group listing answers everyone who is signed in, but only with what they may manage
-	anon.call("GET", "/api/groups", nil, http.StatusUnauthorized)
-	if body := readBody(t, plain.get("/api/groups")); strings.TrimSpace(body) != "[]" {
+	anon.call("GET", "/api/v1/groups", nil, http.StatusUnauthorized)
+	if body := readBody(t, plain.get("/api/v1/groups")); strings.TrimSpace(body) != `{"items":[]}` {
 		t.Errorf("an account that owns no group must get an empty list, got %.200s", body)
 	}
-	if body := readBody(t, admin.get("/api/groups")); !strings.Contains(body, `"key":"guardian-admins"`) || !strings.Contains(body, `"key":"team"`) {
+	if body := readBody(t, admin.get("/api/v1/groups")); !strings.Contains(body, `"key":"guardian-admins"`) || !strings.Contains(body, `"key":"team"`) {
 		t.Errorf("the administrator's listing lacks groups: %.300s", body)
 	}
 
 	// the built-in group cannot be deleted or edited, even by an administrator
-	admin.call("DELETE", "/api/groups/"+adminGroup, nil, http.StatusForbidden)
-	admin.call("PATCH", "/api/groups/"+adminGroup, map[string]any{"display_name": "Renamed"}, http.StatusForbidden)
-	admin.call("PATCH", "/api/groups/"+adminGroup, map[string]any{"owner_group_id": team}, http.StatusForbidden)
+	admin.call("DELETE", "/api/v1/groups/"+adminGroup, nil, http.StatusForbidden)
+	admin.call("PATCH", "/api/v1/groups/"+adminGroup, map[string]any{"display_name": "Renamed"}, http.StatusForbidden)
+	admin.call("PATCH", "/api/v1/groups/"+adminGroup, map[string]any{"owner_group_id": team}, http.StatusForbidden)
 
 	// becoming an administrator opens the API at once, on the same session
-	admin.call("PUT", members(adminGroup, plainAcct.ID), nil, 200)
-	plain.call("GET", "/api/service/list", nil, 200)
-	plain.call("POST", "/api/groups", map[string]any{"key": "new-group", "display_name": "New"}, 201)
+	admin.call("PUT", members(adminGroup, plainAcct.ID), nil, 204)
+	plain.call("GET", "/api/v1/apps", nil, 200)
+	plain.call("POST", "/api/v1/groups", map[string]any{"key": "new-group", "display_name": "New"}, 201)
 	// ...and losing it closes it again
-	admin.call("DELETE", members(adminGroup, plainAcct.ID), nil, 200)
-	plain.call("GET", "/api/service/list", nil, http.StatusForbidden)
+	admin.call("DELETE", members(adminGroup, plainAcct.ID), nil, 204)
+	plain.call("GET", "/api/v1/apps", nil, http.StatusForbidden)
 }
 
 func TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups(t *testing.T) {
@@ -206,37 +216,37 @@ func TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups(t *testing.T) {
 	lead.mustLogin("lead")
 
 	// the owner sees exactly the group it owns
-	body := readBody(t, lead.get("/api/groups"))
+	body := readBody(t, lead.get("/api/v1/groups"))
 	if !strings.Contains(body, `"key":"billing-users"`) || strings.Contains(body, `"key":"other"`) ||
 		strings.Contains(body, `"key":"billing-leads"`) || strings.Contains(body, `"key":"guardian-admins"`) {
 		t.Errorf("an owner must see only the groups it owns, got %.400s", body)
 	}
-	lead.call("GET", "/api/groups/"+users, nil, 200)
+	lead.call("GET", "/api/v1/groups/"+users, nil, 200)
 
 	// it can add and remove members there
-	lead.call("PUT", members(users, newcomer.ID), nil, 200)
+	lead.call("PUT", members(users, newcomer.ID), nil, 204)
 	if ok, _ := db.AccountInGroup(newcomer.ID, "billing-users"); !ok {
 		t.Fatal("the owner could not add a member")
 	}
-	if body := readBody(t, lead.get("/api/groups/"+users+"/members")); !strings.Contains(body, `"username":"newcomer"`) {
+	if body := readBody(t, lead.get("/api/v1/groups/"+users+"/members")); !strings.Contains(body, `"username":"newcomer"`) {
 		t.Errorf("member listing for the owner: %.200s", body)
 	}
-	lead.call("DELETE", members(users, newcomer.ID), nil, 200)
+	lead.call("DELETE", members(users, newcomer.ID), nil, 204)
 	if ok, _ := db.AccountInGroup(newcomer.ID, "billing-users"); ok {
 		t.Fatal("the owner could not remove a member")
 	}
 
 	// and nothing else: not its own owner group, not other groups, not the administrators, no group settings
 	for _, group := range []string{leads, other, adminGroup} {
-		lead.call("GET", "/api/groups/"+group, nil, http.StatusForbidden)
-		lead.call("GET", "/api/groups/"+group+"/members", nil, http.StatusForbidden)
+		lead.call("GET", "/api/v1/groups/"+group, nil, http.StatusForbidden)
+		lead.call("GET", "/api/v1/groups/"+group+"/members", nil, http.StatusForbidden)
 		lead.call("PUT", members(group, newcomer.ID), nil, http.StatusForbidden)
 		lead.call("DELETE", members(group, leadAcct.ID), nil, http.StatusForbidden)
 	}
-	lead.call("PATCH", "/api/groups/"+users, map[string]any{"display_name": "Mine now"}, http.StatusForbidden)
-	lead.call("PATCH", "/api/groups/"+users, map[string]any{"owner_group_id": ""}, http.StatusForbidden)
-	lead.call("DELETE", "/api/groups/"+users, nil, http.StatusForbidden)
-	lead.call("POST", "/api/groups", map[string]any{"key": "more", "display_name": "More"}, http.StatusForbidden)
+	lead.call("PATCH", "/api/v1/groups/"+users, map[string]any{"display_name": "Mine now"}, http.StatusForbidden)
+	lead.call("PATCH", "/api/v1/groups/"+users, map[string]any{"owner_group_id": ""}, http.StatusForbidden)
+	lead.call("DELETE", "/api/v1/groups/"+users, nil, http.StatusForbidden)
+	lead.call("POST", "/api/v1/groups", map[string]any{"key": "more", "display_name": "More"}, http.StatusForbidden)
 	if n := testutil.Count(t, `SELECT count(*) FROM group_member WHERE account_id = $1`, newcomer.ID); n != 0 {
 		t.Errorf("the owner changed %d memberships outside its group", n)
 	}
@@ -263,22 +273,23 @@ func TestE2ETheLastAdministratorIsProtected(t *testing.T) {
 	admin.mustLogin("root")
 
 	// two administrators: one can go
-	admin.call("DELETE", members(adminGroup, seeded.ID), nil, 200)
+	admin.call("DELETE", members(adminGroup, seeded.ID), nil, 204)
 
 	// now root is the last one, and cannot remove, expire or delete itself
 	admin.call("DELETE", members(adminGroup, root.ID), nil, http.StatusConflict)
 	admin.call("PUT", members(adminGroup, root.ID), map[string]any{"expires_at": "2999-01-01T00:00:00Z"}, http.StatusConflict)
-	admin.call("POST", "/api/account/delete", map[string]any{"id": root.ID}, http.StatusConflict)
+	admin.call("DELETE", "/api/v1/accounts/"+root.ID, nil, http.StatusConflict)
+	admin.call("PATCH", "/api/v1/accounts/"+root.ID, map[string]any{"status": "disabled"}, http.StatusConflict)
 	if ok, _ := db.IsAdmin(root.ID); !ok {
 		t.Fatal("the last administrator lost its rights")
 	}
-	admin.call("GET", "/api/groups", nil, 200) // and can still work
+	admin.call("GET", "/api/v1/groups", nil, 200) // and can still work
 
 	// with a second administrator, the first can leave
 	second := testutil.CreateAccount(t, "second")
-	admin.call("PUT", members(adminGroup, second.ID), nil, 200)
-	admin.call("DELETE", members(adminGroup, root.ID), nil, 200)
-	admin.call("GET", "/api/groups/"+adminGroup, nil, http.StatusForbidden)
+	admin.call("PUT", members(adminGroup, second.ID), nil, 204)
+	admin.call("DELETE", members(adminGroup, root.ID), nil, 204)
+	admin.call("GET", "/api/v1/groups/"+adminGroup, nil, http.StatusForbidden)
 }
 
 func TestE2EAppAccessRuleDecidesWhoMaySignIn(t *testing.T) {
@@ -480,7 +491,7 @@ func TestE2ELeavingAGroupEndsAccessAndNotifiesTheApp(t *testing.T) {
 
 	admin := newBrowser(t)
 	admin.mustLogin("root")
-	admin.call("DELETE", members(team, user.ID), nil, 200)
+	admin.call("DELETE", members(team, user.ID), nil, 204)
 
 	// the app is told at once, for the user's session
 	lt := parseJWT(t, waitToken(t, logouts), jwt.WithIssuer(testIssuer), jwt.WithAudience(app.ClientID))
@@ -491,7 +502,7 @@ func TestE2ELeavingAGroupEndsAccessAndNotifiesTheApp(t *testing.T) {
 	// and an app that missed it finds out at its next refresh: the access rule is applied again
 	refreshRefused(t, app, secret, tok.Refresh)
 	// the user is still signed in to Guardian itself
-	me := ub.get("/api/account/me")
+	me := ub.get("/api/v1/me")
 	wantStatus(t, me, 200)
 	drain(me)
 }
@@ -503,7 +514,7 @@ func TestE2ESignUpIsOpenButRateLimited(t *testing.T) {
 	admin.mustLogin("root")
 	anon := newBrowser(t)
 	register := func(name string) *http.Response {
-		return anon.postJSON("/api/account/register", map[string]any{"username": name, "password": testutil.DefaultPassword})
+		return anon.postJSON("/api/v1/signup", map[string]any{"username": name, "password": testutil.DefaultPassword})
 	}
 
 	for i := 1; i <= 10; i++ {
@@ -525,7 +536,7 @@ func TestE2ESignUpIsOpenButRateLimited(t *testing.T) {
 	}
 
 	// administrators can still add accounts
-	ar := admin.postJSON("/api/account/add", map[string]any{"username": "added-by-admin", "password": testutil.DefaultPassword})
+	ar := admin.postJSON("/api/v1/accounts", map[string]any{"username": "added-by-admin", "password": testutil.DefaultPassword})
 	wantStatus(t, ar, http.StatusCreated)
 	drain(ar)
 
@@ -540,7 +551,7 @@ func TestE2ESignUpValidation(t *testing.T) {
 	testutil.Reset(t)
 	anon := newBrowser(t)
 	post := func(user, pw string) *http.Response {
-		return anon.postJSON("/api/account/register", map[string]any{"username": user, "password": pw})
+		return anon.postJSON("/api/v1/signup", map[string]any{"username": user, "password": pw})
 	}
 	ok := post("Alice", testutil.DefaultPassword)
 	wantStatus(t, ok, http.StatusCreated)
@@ -640,7 +651,7 @@ func TestE2ECSRFProtections(t *testing.T) {
 	noLogoutToken := br.postForm("/logout", url.Values{})
 	wantStatus(t, noLogoutToken, http.StatusForbidden)
 	drain(noLogoutToken)
-	if r := br.get("/api/account/me"); r.StatusCode != 200 {
+	if r := br.get("/api/v1/me"); r.StatusCode != 200 {
 		t.Error("a CSRF-rejected logout must not end the session")
 	} else {
 		drain(r)
@@ -648,15 +659,15 @@ func TestE2ECSRFProtections(t *testing.T) {
 
 	// JSON API: cross-site browser requests are blocked, same-origin and non-browser requests work
 	body := map[string]any{"display_name": "Alice"}
-	evil := br.postJSON("/api/account/update", body, "Origin", "https://evil.example")
+	evil := br.sendJSON("PATCH", "/api/v1/me", body, "Origin", "https://evil.example")
 	wantStatus(t, evil, http.StatusForbidden)
 	drain(evil)
 	for _, origin := range []string{testIssuer, ""} {
 		var resp *http.Response
 		if origin == "" {
-			resp = br.postJSON("/api/account/update", body)
+			resp = br.sendJSON("PATCH", "/api/v1/me", body)
 		} else {
-			resp = br.postJSON("/api/account/update", body, "Origin", origin)
+			resp = br.sendJSON("PATCH", "/api/v1/me", body, "Origin", origin)
 		}
 		wantStatus(t, resp, 200)
 		drain(resp)
@@ -681,13 +692,8 @@ func TestE2EAccountSelfServiceAPI(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
 	anon := newBrowser(t)
-	for _, p := range []string{"/api/account/me", "/api/service/list"} {
-		r := anon.get(p)
-		wantStatus(t, r, http.StatusUnauthorized)
-		drain(r)
-	}
-	for _, p := range []string{"/api/account/update", "/api/account/update/username", "/api/account/update/password"} {
-		r := anon.postJSON(p, map[string]any{})
+	for _, c := range []struct{ method, path string }{{"GET", "/api/v1/me"}, {"GET", "/api/v1/apps"}, {"PATCH", "/api/v1/me"}, {"PUT", "/api/v1/me/password"}} {
+		r := anon.sendJSON(c.method, c.path, map[string]any{})
 		wantStatus(t, r, http.StatusUnauthorized)
 		drain(r)
 	}
@@ -695,11 +701,11 @@ func TestE2EAccountSelfServiceAPI(t *testing.T) {
 	br := newBrowser(t)
 	br.mustLogin("alice")
 	update := func(body map[string]any) (int, map[string]any) {
-		resp := br.postJSON("/api/account/update", body)
+		resp := br.sendJSON("PATCH", "/api/v1/me", body)
 		return resp.StatusCode, decodeMap(t, resp)
 	}
-	status, got := update(map[string]any{"display_name": "Alice A", "email": "alice@example.com", "locale": "sv-SE"})
-	if status != 200 || got["display_name"] != "Alice A" || got["email"] != "alice@example.com" || got["email_verified"] != false {
+	status, got := update(map[string]any{"display_name": "Alice A", "locale": "sv-SE"})
+	if status != 200 || got["display_name"] != "Alice A" || got["locale"] != "sv-SE" {
 		t.Fatalf("update: %d %v", status, got)
 	}
 	if _, got = update(map[string]any{"locale": "en-US"}); got["display_name"] != "Alice A" || got["locale"] != "en-US" {
@@ -708,31 +714,50 @@ func TestE2EAccountSelfServiceAPI(t *testing.T) {
 	if status, _ = update(map[string]any{"picture_url": "http://insecure.example/a.png"}); status != http.StatusBadRequest {
 		t.Errorf("non-https picture accepted: %d", status)
 	}
-	_, got = update(map[string]any{"username": "hacked", "status": "disabled", "id": "x"})
-	if got["username"] != "alice" || got["status"] != "active" {
-		t.Errorf("mass assignment: protected fields were changed: %v", got)
+	// fields a user may not set are refused outright, not ignored: email (needs verification), status, id
+	for _, field := range []string{"email", "status", "id", "email_verified"} {
+		if status, body := update(map[string]any{field: "x"}); status != http.StatusBadRequest || !strings.Contains(str(body["message"]), field) {
+			t.Errorf("%s: %d %v", field, status, body)
+		}
+	}
+	me := decodeMap(t, br.get("/api/v1/me"))
+	if me["status"] != "active" || me["email"] != nil || me["is_admin"] != false {
+		t.Errorf("me = %v", me)
 	}
 
 	// username
 	testutil.CreateAccount(t, "taken")
 	for body, want := range map[string]int{`taken`: 409, `TAKEN`: 409, `x`: 400, `with space`: 400, `alice2`: 200} {
-		resp := br.postJSON("/api/account/update/username", map[string]any{"username": body})
-		if resp.StatusCode != want {
-			t.Errorf("rename to %q: %d, want %d", body, resp.StatusCode, want)
+		status, _ := update(map[string]any{"username": body})
+		if status != want {
+			t.Errorf("rename to %q: %d, want %d", body, status, want)
 		}
-		drain(resp)
 	}
 
-	// password: needs the current one, enforces the length, takes effect immediately
+	// password: needs the current one, enforces the length, takes effect immediately, and ends the
+	// user's other sessions but not this one
+	other := newBrowser(t)
+	other.mustLogin("alice2")
 	for _, c := range []struct {
 		cur, next string
 		want      int
-	}{{"wrong-current", "brand-new-password", 403}, {testutil.DefaultPassword, "short", 400}, {testutil.DefaultPassword, "brand-new-password", 200}} {
-		resp := br.postJSON("/api/account/update/password", map[string]any{"currentPassword": c.cur, "newPassword": c.next})
+	}{{"wrong-current", "brand-new-password", 403}, {testutil.DefaultPassword, "short", 400}, {testutil.DefaultPassword, "brand-new-password", 204}} {
+		resp := br.sendJSON("PUT", "/api/v1/me/password", map[string]any{"current_password": c.cur, "new_password": c.next})
 		if resp.StatusCode != c.want {
 			t.Errorf("password change %+v: %d", c, resp.StatusCode)
 		}
 		drain(resp)
+	}
+	for name, b := range map[string]*browser{"this session": br, "other session": other} {
+		want := 200
+		if name == "other session" {
+			want = http.StatusUnauthorized
+		}
+		r := b.get("/api/v1/me")
+		if r.StatusCode != want {
+			t.Errorf("%s after the password change: %d, want %d", name, r.StatusCode, want)
+		}
+		drain(r)
 	}
 	fresh := newBrowser(t)
 	if r := fresh.login("alice2", testutil.DefaultPassword, ""); r.StatusCode != http.StatusUnauthorized {
@@ -761,19 +786,22 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	admin.mustLogin("root")
 
 	// not for ordinary users, and not with bad input
-	r := bb.postJSON("/api/account/delete", map[string]any{"id": victim.ID})
+	r := bb.sendJSON("DELETE", "/api/v1/accounts/"+victim.ID, nil)
 	wantStatus(t, r, http.StatusForbidden)
 	drain(r)
-	r = admin.postJSON("/api/account/delete", map[string]any{"id": "not-a-uuid"})
-	wantStatus(t, r, http.StatusBadRequest)
+	r = admin.sendJSON("DELETE", "/api/v1/accounts/not-a-uuid", nil)
+	wantStatus(t, r, http.StatusNotFound)
 	drain(r)
 	refreshed(t, app, secret, tok.Refresh)
 
-	r = admin.postJSON("/api/account/delete", map[string]any{"id": victim.ID})
-	wantStatus(t, r, 200)
+	r = admin.sendJSON("DELETE", "/api/v1/accounts/"+victim.ID, nil)
+	wantStatus(t, r, http.StatusNoContent)
+	drain(r)
+	r = admin.sendJSON("DELETE", "/api/v1/accounts/"+victim.ID, nil)
+	wantStatus(t, r, http.StatusNotFound) // already gone
 	drain(r)
 
-	me := vb.get("/api/account/me")
+	me := vb.get("/api/v1/me")
 	wantStatus(t, me, http.StatusUnauthorized)
 	drain(me)
 	refreshRefused(t, app, secret, tok.Refresh)
@@ -787,7 +815,7 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	wantStatus(t, login, http.StatusUnauthorized)
 	drain(login)
 	// others are untouched
-	ok := bb.get("/api/account/me")
+	ok := bb.get("/api/v1/me")
 	wantStatus(t, ok, 200)
 	drain(ok)
 }
@@ -806,11 +834,11 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 		"redirect_uris": []string{"https://newsvc.test/cb"}, "scopes": []string{"openid", "email"},
 		"access_token_ttl_seconds": 3600,
 	}
-	r := plain.postJSON("/api/service/add", valid)
+	r := plain.postJSON("/api/v1/apps", valid)
 	wantStatus(t, r, http.StatusForbidden)
 	drain(r)
 
-	resp := admin.postJSON("/api/service/add", valid)
+	resp := admin.postJSON("/api/v1/apps", valid)
 	wantStatus(t, resp, http.StatusCreated)
 	created := decodeMap(t, resp)
 	secret := str(created["client_secret"])
@@ -831,14 +859,14 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	}
 
 	// validation and conflicts
-	dup := admin.postJSON("/api/service/add", valid)
+	dup := admin.postJSON("/api/v1/apps", valid)
 	wantStatus(t, dup, http.StatusConflict)
 	drain(dup)
 	bad := map[string]any{"name": "evilsvc", "pretty_name": "x", "redirect_uris": []string{"http://evil.example/cb"}}
-	rb := admin.postJSON("/api/service/add", bad)
+	rb := admin.postJSON("/api/v1/apps", bad)
 	wantStatus(t, rb, http.StatusBadRequest)
 	drain(rb)
-	pub := admin.postJSON("/api/service/add", map[string]any{"name": "spa", "pretty_name": "SPA", "client_type": "public",
+	pub := admin.postJSON("/api/v1/apps", map[string]any{"name": "spa", "pretty_name": "SPA", "client_type": "public",
 		"redirect_uris": []string{"https://spa.test/cb"}})
 	wantStatus(t, pub, http.StatusCreated)
 	if pc := decodeMap(t, pub); pc["client_secret"] != nil {
@@ -851,25 +879,25 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	}
 
 	// listing: administrators only, never any secret material
-	list := admin.get("/api/service/list")
+	list := admin.get("/api/v1/apps")
 	wantStatus(t, list, 200)
 	body := readBody(t, list)
 	if !strings.Contains(body, "newsvc") || strings.Contains(body, `"client_secret":`) || strings.Contains(body, "secret_hash") {
 		t.Errorf("list leaks or lacks data: %.300s", body)
 	}
-	forbidden := plain.get("/api/service/list")
+	forbidden := plain.get("/api/v1/apps")
 	wantStatus(t, forbidden, http.StatusForbidden)
 	drain(forbidden)
-	one := admin.get("/api/service/not-a-uuid")
+	one := admin.get("/api/v1/apps/not-a-uuid")
 	wantStatus(t, one, http.StatusNotFound)
 	drain(one)
 
 	// removal: administrators only; removing an app kills its credentials at once
-	rp := plain.sendJSON("DELETE", "/api/service/remove", map[string]any{"id": app["id"]})
+	rp := plain.sendJSON("DELETE", "/api/v1/apps/"+str(app["id"]), nil)
 	wantStatus(t, rp, http.StatusForbidden)
 	drain(rp)
-	rm := admin.sendJSON("DELETE", "/api/service/remove", map[string]any{"id": app["id"]})
-	wantStatus(t, rm, 200)
+	rm := admin.sendJSON("DELETE", "/api/v1/apps/"+str(app["id"]), nil)
+	wantStatus(t, rm, http.StatusNoContent)
 	drain(rm)
 	if status, _ := refreshRequest(t, registered, secret, "garbage"); status != http.StatusUnauthorized {
 		t.Errorf("a removed app still authenticates: %d", status)
@@ -903,7 +931,7 @@ func TestE2EInternalListenerProbesAndMetrics(t *testing.T) {
 		}
 	}
 	// route labels use patterns, so ids never explode the label cardinality
-	r := br.get("/api/service/11111111-1111-1111-1111-111111111111")
+	r := br.get("/api/v1/apps/11111111-1111-1111-1111-111111111111")
 	drain(r)
 	m = readBody(t, mustGet(t, intSrv.URL+"/metrics"))
 	if strings.Contains(m, "11111111-1111-1111-1111-111111111111") {
@@ -1021,11 +1049,11 @@ func TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers(t *testing.T) {
 	// turning machine access off, or disabling the app, stops tokens that were already issued
 	admin := newBrowser(t)
 	admin.mustLogin("root")
-	admin.call("POST", "/api/service/access", map[string]any{"id": app.ID, "access_rule": "anyone", "group_ids": []string{staff}, "machine_api": false}, 200)
+	admin.call("PUT", "/api/v1/apps/"+app.ID+"/access", map[string]any{"access_rule": "anyone", "group_ids": []string{staff}, "machine_api": false}, 200)
 	if status, _ := machineGet(t, tok, "/groups"); status != http.StatusUnauthorized {
 		t.Errorf("after turning machine access off: %d, want 401", status)
 	}
-	admin.call("POST", "/api/service/access", map[string]any{"id": app.ID, "access_rule": "anyone", "group_ids": []string{staff}, "machine_api": true}, 200)
+	admin.call("PUT", "/api/v1/apps/"+app.ID+"/access", map[string]any{"access_rule": "anyone", "group_ids": []string{staff}, "machine_api": true}, 200)
 	tok = clientToken(t, app, secret)
 	testutil.Exec(t, `UPDATE app SET enabled = FALSE WHERE id = $1`, app.ID)
 	if status, _ := machineGet(t, tok, "/groups"); status != http.StatusUnauthorized {
@@ -1033,7 +1061,7 @@ func TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers(t *testing.T) {
 	}
 	// an app without a secret cannot be given machine access, and the refused request changes nothing
 	spa, _ := testutil.CreateApp(t, "spa", testutil.AppOptions{Public: true, AccessRule: "groups"})
-	admin.call("POST", "/api/service/access", map[string]any{"id": spa.ID, "access_rule": "anyone", "group_ids": []string{}, "machine_api": true}, 400)
+	admin.call("PUT", "/api/v1/apps/"+spa.ID+"/access", map[string]any{"access_rule": "anyone", "group_ids": []string{}, "machine_api": true}, 400)
 	if fresh, _ := db.GetApp(spa.ID); fresh.AccessRule != "groups" {
 		t.Error("a refused request changed the app's access rule")
 	}

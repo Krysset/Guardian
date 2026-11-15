@@ -1,7 +1,7 @@
 # Testing Guardian
 
 > **Status:** the whole suite was run for the first time on 2026-11-14 (Go 1.24, PostgreSQL 16, with `-race`):
-> 102 tests, all passing, none skipped (124 after the configuration, migration, group, token and machine API tests; last full run with Go 1.26 and the pgx driver). The first run found one real bug, an app could not be registered through
+> 102 tests, all passing, none skipped (140 after the configuration, migration, group, token, machine API and `/api/v1` tests; last full run on 2026-11-15 with Go 1.26 and the pgx driver). The first run found one real bug, an app could not be registered through
 > the API without `post_logout_redirect_uris`, which is fixed. When something fails, read the message first: it
 > may be a bug in the test, not in Guardian.
 
@@ -30,9 +30,9 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 
 | Layer | Where | Needs DB | What it proves |
 |---|---|---|---|
-| Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, HTML escaping and security headers, request validation, metrics labelling, discovery document |
-| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, rate-limit counters, client secrets, cleanup job |
-| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: login, SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, admin APIs, metrics |
+| Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, HTML escaping and security headers, request validation (unknown fields refused, one error shape), metrics labelling, discovery document, `docs/openapi.yaml` matching the router route for route |
+| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job |
+| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: login, SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics |
 
 ## Requirements and the tests that pin them down
 
@@ -44,7 +44,10 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | Only administrators manage Guardian; owners manage only their groups' members | `TestE2EGroupAndAppAPIsAreForAdministrators`, `TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups`, `TestGroupOwnersAreTheMembersOfTheOwnerGroup` |
 | An app's machine API shows only its own groups and users | `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers`, `TestAnAppMayKnowItsGroupMembersAndItsUsersOnly`, `TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers` |
 | Refresh tokens are stable and re-check everything | `TestE2ERefreshTokensAreStableAndRecheckEverything`, `TestE2ESessionTimeoutsEndRefreshes`, `TestConcurrentUseOfOneRefreshTokenAllSucceeds` |
-| There is always an administrator | `TestE2ETheLastAdministratorIsProtected`, `TestTheLastAdministratorCannotBeRemoved`, `TestAdministratorsRemovingEachOtherAtTheSameTimeLeaveOne` |
+| `/api/v1` and `docs/openapi.yaml` describe the same routes | `TestOpenAPIDescribesEveryRoute` |
+| Disabling an account or setting its password ends its sessions at once | `TestE2EDisablingAnAccountLocksItOutAndEnablingLetsItBackIn`, `TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged`, `TestDisablingAnAccountEndsItsSessionsAndSparesTheLastAdmin`, `TestPasswordChangesEndTheRightSessions` |
+| A rotated app secret keeps the old one only for the grace period | `TestE2EAdminsEditAppsAndRotateSecrets`, `TestAppUpdatesAndSecretRotation` |
+| There is always an administrator | `TestE2ETheLastAdministratorIsProtected`, `TestE2EAPIErrorsAndUnknownRoutes`, `TestTheLastAdministratorCannotBeRemoved`, `TestAdministratorsRemovingEachOtherAtTheSameTimeLeaveOne` |
 | Logout ends everything everywhere | `TestE2ESingleSignOnAndLogoutEverywhere`, `TestRevokeSessionEndsEverythingUnderIt` |
 | Account deletion / app disabling stop refreshes and userinfo at once | `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EDisablingAnAppStopsItsRefreshesAndLogins`, `TestSoftDeleteLocksTheAccountOutEverywhere` |
 | Access tokens are lean signed JWTs that apps verify themselves | `TestE2ELoginIssuesSignedAccessAndIDTokens`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens` |

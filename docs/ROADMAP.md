@@ -246,8 +246,8 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
   - **Done 2026-11-15:** `client_credentials` and the read-only machine API at `/api/v1/apps/self`.
   - **Done 2026-11-15:** the split of `internal/api` into `httpx`, `web`, `oidc`, `internalapi` and `api`. No change to behaviour.
 - **API and pages:**
-  - `/api/v1` with REST routes and `openapi.yaml`; admin checks through `guardian-admins`.
-  - The hosted login, sign-up (with its notices), consent, logout and error pages in the approved design.
+  - **Done 2026-11-15:** `/api/v1` with REST routes and `docs/openapi.yaml` (kept in step with the router by a test); admin checks through `guardian-admins`; account search, disabling and admin-set passwords; app edits and secret rotation; the audit log.
+  - The hosted login, sign-up (with its notices), consent, logout and error pages in the approved design, and the forced password change after an admin-set password.
 - **Done when:** with docker-compose, a test app and Grafana sign in through OIDC and receive the right groups.
 
 ### 0.2: it runs in the cluster
@@ -320,3 +320,4 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-13: first plan, then a full review settled 15 topics: groups and JWT, signing keys, the encryption keyring, migrations and backups, bundled Postgres, console hosting, delegation, email, recovery and MFA, access for new accounts, the scope boundary, GDPR, abuse protection, routing, and the release plan. This document was then consolidated.
 - 2026-11-14: second review. Replaced refresh rotation with stable refresh tokens for confidential apps (public clients get none until 1.x). Added groups in the ID token and userinfo, logout on membership removal, lean access tokens, group keys, session timeouts, the last-admin rule, sign-up notices, the honest limit of emergency key revocation, the post-restore checklist and the backup manifest. Split the first release in two (0.1 local, 0.2 cluster), giving 0.1 to 0.5 before 1.0. Access-rule enforcement moved to 0.1.
 - 2026-11-15: no legacy-option warnings before 1.0 (the `SESSION_TTL` refusal was removed). The old yUML diagrams were deleted, with a reminder to recreate that documentation before 1.0. The split of `internal/api` was done before the review of parts 2 and 3.
+- 2026-11-15: `/api/v1` replaced the old routes without aliases. Users set their own email only once verification exists (0.3); emails set by administrators count as verified.

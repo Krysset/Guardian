@@ -7,7 +7,7 @@ request.
 ## 1. Register the app (once, as a Guardian administrator)
 
 ```
-POST /api/service/add            (administrator session, JSON)
+POST /api/v1/apps                (administrator session, JSON; see docs/openapi.yaml)
 {
   "name": "billing",
   "pretty_name": "Billing",
@@ -27,9 +27,11 @@ The answer contains `client_id` and, once, `client_secret`. Keep both in a Kuber
 - **`access_rule`:** with `groups` (the default) only members of a linked group can sign in to the app;
   Guardian refuses everyone else before your app sees them. With `anyone` every account can sign in.
 - **`group_ids`:** the groups your app is told about. Your app never sees any other group a user is in.
-  Change both later with `POST /api/service/access` (`{"id", "access_rule", "group_ids"}`).
-- Groups are managed under `/api/groups`. A group's `key` (for example `billing-approvers`) never changes;
+  Change both later with `PUT /api/v1/apps/{id}/access` (`{"access_rule", "group_ids"}`).
+- Groups are managed under `/api/v1/groups`. A group's `key` (for example `billing-approvers`) never changes;
   that is the value your app receives.
+- The secret can be rotated with `POST /api/v1/apps/{id}/secret`. Pass `{"grace_seconds": 3600}` to keep the
+  old secret working for an hour while you roll out the new one.
 
 ## 2. Sign users in
 
@@ -97,8 +99,8 @@ useful when you want to know "right now", but it is a call to Guardian, so do no
 Sometimes an app needs to know about users who are not signed in right now, for example to show "who can
 approve invoices". For that an app with a secret can use Guardian's read-only machine API.
 
-1. An administrator turns it on: `POST /api/service/access` with `"machine_api": true` (together with the
-   app's `access_rule` and `group_ids`).
+1. An administrator turns it on: `PUT /api/v1/apps/{id}/access` with `"machine_api": true` (together with
+   the app's `access_rule` and `group_ids`).
 2. The app gets a token for itself: `POST /token` with `grant_type=client_credentials` and its client
    credentials. The token's audience is Guardian, it has no user, and it lives `access_token_ttl_seconds`.
    Get a new one when it expires; there is no refresh token.
@@ -110,6 +112,10 @@ approve invoices". For that an app with a secret can use Guardian's read-only ma
 | `GET /api/v1/apps/self/groups` | The groups linked to the app, with `key`, `display_name`, `description` and `member_count`. |
 | `GET /api/v1/apps/self/groups/{key}/members` | The active members of one linked group. |
 | `GET /api/v1/apps/self/users/{sub}` | One account, by `sub`. |
+
+Lists come as `{"items": [...]}`, and errors as `{"error": "<code>", "message": "<text>"}` (`invalid_token`
+for a bad or expired token, `not_found` for anything the app may not see). `docs/openapi.yaml` describes
+every field.
 
 What an app can see:
 

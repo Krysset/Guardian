@@ -47,7 +47,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
     - `internal/httpx/` — shared by the others: settings (`Configure`, `Issuer`, session timeouts, cookie names), `JSON`/`Error`/`Success`/`DecodeJSON`, `ClientIP`, `SafeReturnTo`, `ValidRedirectURI`, session cookie and CSRF helpers, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `AdminOnly`, `RequireSameOrigin`, request metrics and `RateLimited`.
     - `internal/web/` — hosted pages: `templates.go` (inline HTML, `Render`, `Message`, `Page`) and `login.go` (`/login`, login throttling, `guardian_logins_total`).
     - `internal/oidc/` — the provider: `oidc.go` (`Mount`, `SetKeys`, discovery, JWKS, token metric), `authorize.go` (authorize and consent), `token.go` (`/token`, `issueTokens`, `BuildClaims`, `/revoke`), `userinfo.go`, `client.go` (client_credentials tokens, `VerifyClientToken`), `logout.go` (RP-initiated logout, `SendLogoutNotices`, back-channel logout).
-    - `internal/api/` — the JSON API: `account.go`, `app.go`, `groups.go` (`/api/account`, `/api/service`, `/api/groups`) and `machine.go` (`/api/v1/apps/self`, Bearer client tokens checked by `oidc.VerifyClientToken`).
+    - `internal/api/` — the JSON API at `/api/v1`, described in `docs/openapi.yaml` (`TestOpenAPIDescribesEveryRoute` fails when they drift apart). `api.go` (the router, `list`, `pageLimit`), `account.go` (`/signup`, `/me`, `/accounts`), `groups.go`, `app.go` (`/apps`), `audit.go`, `machine.go` (`/apps/self`, Bearer client tokens checked by `oidc.VerifyClientToken`).
     - `internal/internalapi/` — internal router: `/metrics`, `/healthz`, `/readyz`.
     - `server.Configure(cfg, keys)` configures `httpx` and `oidc`; the e2e tests call it too.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
@@ -55,7 +55,7 @@ Hand-off notes for AI agents (and humans). Read this first in a new session, the
   - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
   - `internal/testutil/` — helpers for tests that need Postgres.
   - `e2e/` — end-to-end tests over HTTP against both routers.
-  - Tests: 124, all passing (`docs/TESTING.md`).
+  - Tests: 140, all passing (`docs/TESTING.md`).
 - `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
 - `frontend/` — empty.
 - `docs/` — `ARCHITECTURE.md` (design decisions, load, mermaid diagrams), `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`. The old yUML diagrams were deleted (2026-11-15); recreating app-to-Guardian communication diagrams is a 1.0 docs item in `docs/ROADMAP.md`.
@@ -162,7 +162,7 @@ charts/guardian/
 - Hosted auth pages (login, sign-up, consent, logout, reset, MFA) stay **server-rendered Go templates**: they work without JavaScript, allow a strict CSP and share the session cookie's origin.
 - The account and admin console is **Svelte 5 + SvelteKit (adapter-static) + TypeScript**, styled with plain CSS tokens; no Tailwind in 1.0. It runs on the same origin and uses the session cookie, so it needs no OIDC client of its own.
 - Migrations will use goose with embedded SQL; `schema.sql` becomes `00001_init.sql`. The driver moves to pgx (stdlib); logging to slog.
-- The API moves to `/api/v1` with REST verbs and Guardian-permission checks (not role-name checks), documented in `docs/openapi.yaml`.
+- The API is `/api/v1` with REST verbs and checks through `guardian-admins` and group ownership, documented in `docs/openapi.yaml` (done in 0.1 part 5).
 - WebAuthn security keys and passkeys are **in 1.0**, built on the latest spec and library (go-webauthn), alongside TOTP and recovery codes. The login page's "Use a security key" button stays.
 - The frontend is its **own deployment**, so it can scale and be hosted separately; it is not embedded in the Go binary.
 - **Email is optional at sign-up and never stored unverified.**
@@ -248,13 +248,13 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
   - **Not verified:** the Docker image build and CI.
   - **Deliberately not in M1:** splitting `internal/api`; it was done as part 4 of the groups and JWT work.
 - **Groups and JWT work of 0.1, in parts** (on branch `dev`; leave changes staged for the owner's review):
-  - **Part 1, groups: done and tested, staged for review (2026-11-14).**
+  - **Part 1, groups: done, reviewed and committed (2026-11-14).**
     - Schema: `user_group`, `group_member`, `app_group`, `app.access_rule`. Roles, permissions and the seeded `guardian` app are removed.
     - Store: `internal/store/groups.go`. The last-administrator rule lives there: one active account must always be in `guardian-admins` through a membership without an expiry. It is enforced on member removal, on adding an expiry and on account deletion, under a row lock on the administrators group.
     - API: `/api/groups` (REST). Administrators do everything; a group's owners (members of its owner group) may only list, add and remove its members. `/api/service` is now administrators only, with `POST /api/service/access` for the access rule and linked groups.
     - Sign-in: `/authorize` enforces the app's access rule; refused accounts get a 403 page, or `access_denied` with `prompt=none`.
     - **Schema revision check:** `00001_init.sql` records a fingerprint of itself (table `schema_revision`; comments and blank lines do not count) when it creates a database. `store.VerifySchemaRevision` compares it at every start and refuses a database made by another revision, with a message that says to recreate it. So after any edit to `00001_init.sql`, existing development databases must be recreated (`docker compose down -v`); tell the owner when a change needs that.
-  - **Part 2, tokens: done and tested, staged for review (2026-11-15).**
+  - **Part 2, tokens: done, reviewed and committed (2026-11-15).**
     - Access tokens are signed JWTs (`typ: at+jwt`) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr`, `jti` and, with the `groups` scope, `groups`. No profile data. Not stored. The ID token carries profile claims and `groups`, and is issued again at every refresh.
     - `issueTokens` (now `oidc/token.go`) is the single place that decides whether a user may (still) have tokens for an app. Every code exchange and every refresh goes through it and re-checks live data: session (idle and absolute), account, the app's access rule, groups.
     - Refresh tokens: `refresh_mode` per app, `stable` (confidential apps; one token per sign-in, never replaced, valid while the session lives) or `none` (public apps). A refresh returns no new refresh token. `offline_access` is accepted but changes nothing.
@@ -265,15 +265,23 @@ Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact
     - Removed: `/introspect`, the `access_token` table, `INTROSPECTION_URL`, `phone_number`, `birthdate`, the `phone` scope. Token lifetime 15-86400 seconds (database CHECK), default 300.
     - Metric `guardian_token_requests_total{grant,result}` replaces the introspection counter.
     - `docs/INTEGRATION.md` is rewritten for the new design.
-  - **Part 3, machine API: done and tested, staged for review (2026-11-15).**
+  - **Part 3, machine API: done, reviewed and committed (2026-11-15).**
     - `client_credentials` grant for confidential apps that have it in `grant_types`; turned on and off with `"machine_api"` on `POST /api/service/access` (checked before anything changes). Token: `at+jwt`, `sub` = `client_id` = the app's client id, `aud` = the issuer, no `sid`, lifetime `access_token_ttl_seconds`, no refresh token.
     - `GET /api/v1/apps/self`, `/groups`, `/groups/{key}/members`, `/users/{sub}`. Read-only. Mounted outside the cookie API, so no same-origin check.
     - Every request re-checks that the app is enabled and still has the grant, so turning access off stops existing tokens at once. User access tokens are refused (audience and `sid`).
     - Visibility: linked groups only; accounts that are active members of a linked group, or that have signed in to the app (new table `app_user`, written when an authorization code is exchanged). Anything else is the same 404 as an unknown account. Claims follow the app's allowed scopes.
-    - The owner was away and asked for work to continue and be reviewed together: part 2 and part 3 are staged together on `dev`. Separate diffs are in `.tools/review/` (git-ignored).
-  - **Part 4, split of `internal/api`: done and tested, left unstaged for review (2026-11-15).**
+  - **Part 4, split of `internal/api`: done, reviewed and committed (2026-11-15).**
     - New packages `httpx`, `web`, `oidc`, `internalapi`; `api` keeps the JSON API. No change to behaviour, routes or tests (still 124, moved to the package of the code they test).
-    - The owner asked for part 4 before the review, as a separate step: parts 2 and 3 (plus review feedback) are staged; part 4 is only in the working tree. Diff: `.tools/review/part4-split.diff`.
+  - **Part 5, `/api/v1` and `docs/openapi.yaml`: done and tested, left uncommitted for review (2026-11-15). Diff: `.tools/review/part5-api-v1.diff`.**
+    - Old routes removed without aliases (`/api/account/*`, `/api/service/*`, `/api/groups`).
+    - Routes: `POST /signup`; `GET/PATCH /me`, `PUT /me/password`; `/accounts` (list with `q`, `status`, `cursor`, `limit`; create; get with groups; patch incl. `email` and `status`; delete; `PUT /accounts/{id}/password`); `/groups` as before; `/apps` (list, create, get, patch, delete, `PUT /apps/{id}/access`, `POST /apps/{id}/secret`); `GET /audit`; the machine API.
+    - Conventions: snake_case; `httpx.DecodeJSON` refuses unknown fields and trailing data; lists `{"items"}` (+ `next_cursor` when paged); errors `{"error": code, "message"}` via `httpx.Error` (code from the status) or `httpx.ErrorCode` (`last_admin`, `wrong_password`, `invalid_token`); 204 for deletes and changes with nothing to return; JSON 404/405 for unknown routes.
+    - Users cannot set their own email until verification exists (0.3); an email set by an administrator counts as verified (`store.UpdateAccount`, `store.CreateAccountWithEmail`).
+    - Disabling an account (`PATCH status`) and admin-set passwords end all sessions with back-channel logout; the last admin cannot be disabled. A user's own password change ends their other sessions. Admin-set passwords set `must_change_password`; the login page does not enforce it yet (part 6).
+    - Secret rotation: `grace_seconds` (0 to 7 days) keeps older secrets working that long.
+    - Account paging orders by `lower(username) COLLATE "C"`, so it does not depend on the database locale.
+    - `store.UpdateProfile` and `store.UpdateUsername` are now only used by tests; 0.3 (email verification) replaces them.
+  - **Part 6 (next):** the hosted pages in the approved design: login, sign-up with its notices, consent, logout, error, and the forced password change for `must_change_password`.
   - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
 - **How to build and test in the cloud workspace:**
   - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.

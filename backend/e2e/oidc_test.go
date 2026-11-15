@@ -86,7 +86,7 @@ func TestE2ELoginIssuesSignedAccessAndIDTokens(t *testing.T) {
 	}
 
 	// the session works against the JSON API
-	resp := b.get("/api/account/me")
+	resp := b.get("/api/v1/me")
 	wantStatus(t, resp, 200)
 	if me := decodeMap(t, resp); me["username"] != "alice" {
 		t.Errorf("me = %v", me)
@@ -166,7 +166,7 @@ func TestE2ESingleSignOnAndLogoutEverywhere(t *testing.T) {
 	}
 	refreshRefused(t, appA, secA, a.Refresh)
 	refreshRefused(t, appB, secB, bb.Refresh)
-	r2 := b.get("/api/account/me")
+	r2 := b.get("/api/v1/me")
 	wantStatus(t, r2, http.StatusUnauthorized)
 	drain(r2)
 
@@ -401,7 +401,7 @@ func TestE2ERefreshTokensAreStableAndRecheckEverything(t *testing.T) {
 	}
 	refreshRefused(t, app, secret, tok.Refresh)
 	// ending one app's token leaves the Guardian session alone
-	me := b.get("/api/account/me")
+	me := b.get("/api/v1/me")
 	wantStatus(t, me, 200)
 	drain(me)
 
@@ -629,7 +629,7 @@ func TestE2ERPInitiatedLogout(t *testing.T) {
 		return "/logout?" + v.Encode()
 	}
 	loggedIn := func(b *browser) bool {
-		resp := b.get("/api/account/me")
+		resp := b.get("/api/v1/me")
 		defer drain(resp)
 		return resp.StatusCode == 200
 	}

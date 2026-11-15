@@ -11,16 +11,23 @@ import (
 const accountColumns = `id, username, COALESCE(display_name, ''), COALESCE(given_name, ''), COALESCE(family_name, ''),
 	COALESCE(picture_url, ''), COALESCE(locale, ''), COALESCE(zoneinfo, ''),
 	COALESCE(email, ''), email_verified_at IS NOT NULL,
-	status, must_change_password, created_at, updated_at`
+	status, must_change_password, created_at, updated_at, last_login_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanAccount(s scanner, extra ...any) (Account, error) {
 	var a Account
+	var lastLogin sql.NullTime
 	dest := []any{&a.ID, &a.Username, &a.DisplayName, &a.GivenName, &a.FamilyName, &a.PictureURL, &a.Locale, &a.Zoneinfo,
-		&a.Email, &a.EmailVerified, &a.Status, &a.MustChangePassword, &a.CreatedAt, &a.UpdatedAt}
+		&a.Email, &a.EmailVerified, &a.Status, &a.MustChangePassword, &a.CreatedAt, &a.UpdatedAt, &lastLogin}
 	dest = append(dest, extra...)
 	err := s.Scan(dest...)
+	// Times leave the API in UTC, whatever time zone the server runs in.
+	a.CreatedAt, a.UpdatedAt = a.CreatedAt.UTC(), a.UpdatedAt.UTC()
+	if lastLogin.Valid {
+		t := lastLogin.Time.UTC()
+		a.LastLoginAt = &t
+	}
 	return a, err
 }
 
@@ -123,19 +130,12 @@ func SoftDeleteAccount(id string) ([]LogoutNotice, error) {
 			return nil, ErrLastAdmin
 		}
 	}
-	// Collect who to tell before the sessions are revoked.
-	notices, err := logoutNotices(tx,
-		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
-		 FROM session s JOIN session_app sa ON sa.session_id = s.id JOIN app a ON a.id = sa.app_id
-		 WHERE s.account_id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
-		   AND a.backchannel_logout_uri IS NOT NULL`, id)
+	notices, err := revokeAccountSessions(tx, id, "")
 	if err != nil {
 		return nil, err
 	}
 	stmts := []string{
 		`UPDATE account SET deleted_at = now(), status = 'disabled' WHERE id = $1 AND deleted_at IS NULL`,
-		`UPDATE session SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL`,
-		`UPDATE refresh_token SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL`,
 		// A deleted account must not keep counting as a group member, for example as an administrator.
 		`DELETE FROM group_member WHERE account_id = $1`,
 	}

@@ -95,32 +95,20 @@ func newServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
-// PublicRouter serves browsers and apps: hosted pages, the OIDC endpoints and /api.
+// PublicRouter serves browsers and apps: hosted pages, the OIDC endpoints and /api/v1.
 func PublicRouter() http.Handler {
 	r := chi.NewRouter()
 	// No request logger on purpose: it would log authorization codes found in query strings.
 	r.Use(middleware.Recoverer, httpx.Metrics("public"))
 	oidc.Mount(r) // /authorize /consent /token /revoke /userinfo /logout /jwks.json /.well-known/...
 	web.Mount(r)  // /login
-	r.Mount("/api", apiRouter())
-	// The machine API authenticates with Bearer tokens, not cookies, so it is not behind the
-	// same-origin check of the browser API.
-	r.Mount("/api/v1/apps/self", api.GetMachineSubrouter())
+	r.Mount("/api/v1", api.Router())
 	return r
 }
 
 // InternalRouter serves /metrics, /healthz and /readyz. It must only be reachable in the cluster.
 func InternalRouter() http.Handler {
 	return internalapi.Router()
-}
-
-func apiRouter() http.Handler {
-	r := chi.NewRouter()
-	r.Use(httpx.RequireSameOrigin)
-	r.Mount("/account", api.GetAccountSubrouter())
-	r.Mount("/service", api.GetAppSubrouter())
-	r.Mount("/groups", api.GetGroupSubrouter())
-	return r
 }
 
 // BootstrapAdmin gives the seeded admin account its first password (the schema script can't hash one).

@@ -27,7 +27,7 @@ func call(h http.HandlerFunc, r *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestRegisterValidation(t *testing.T) {
+func TestSignupValidation(t *testing.T) {
 	cases := map[string]string{
 		"invalid json":         `{"username":`,
 		"empty body":           ``,
@@ -38,18 +38,23 @@ func TestRegisterValidation(t *testing.T) {
 		"password too short":   `{"username":"alice","password":"123456789"}`,
 		"password too long":    `{"username":"alice","password":"` + strings.Repeat("x", 1025) + `"}`,
 		"body over 1 MiB":      `{"username":"alice","password":"` + strings.Repeat("x", 1<<20) + `"}`,
+		"unknown field":        `{"username":"alice","password":"long-enough-password","email":"a@b.c"}`,
+		"trailing data":        `{"username":"alice","password":"long-enough-password"} {}`,
 	}
 	for name, body := range cases {
-		rec := call(register, jsonReq("POST", "/register", body))
+		rec := call(signup, jsonReq("POST", "/signup", body))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400 (and no database access)", name, rec.Code)
 		}
 	}
 }
 
-func TestUpdateUsernameValidation(t *testing.T) {
-	for _, body := range []string{`{"username":"x"}`, `{"username":"has space"}`, `{}`, `nope`} {
-		if rec := call(updateUsername, jsonReq("POST", "/update/username", body)); rec.Code != http.StatusBadRequest {
+func TestProfileChangesAreValidated(t *testing.T) {
+	long := strings.Repeat("x", 129)
+	for _, body := range []string{`{"username":"x"}`, `{"username":"has space"}`, `nope`, `{"email":"a@b.test"}`,
+		`{"display_name":"` + long + `"}`, `{"picture_url":"http://evil.test/p.png"}`, `{"locale":"` + long + `"}`,
+		`{"status":"disabled"}`} {
+		if rec := call(updateMe, jsonReq("PATCH", "/me", body)); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", body, rec.Code)
 		}
 	}
@@ -86,15 +91,18 @@ func TestAddAppValidation(t *testing.T) {
 		"unknown access rule":         with("access_rule", "everyone"),
 		"group id is not an id":       with("group_ids", []string{"nope"}),
 		"ttl too large":               with("access_token_ttl_seconds", 86401),
+		"scopes without openid":       with("scopes", []string{"profile"}),
+		"logo over http":              with("logo_url", "http://billing.test/logo.png"),
+		"unknown field":               with("secret", "x"),
 	}
 	for name, body := range cases {
-		if rec := call(addApp, jsonReq("POST", "/add", body)); rec.Code != http.StatusBadRequest {
+		if rec := call(createApp, jsonReq("POST", "/apps", body)); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400 (rejected before touching the database)", name, rec.Code)
 		}
 	}
 }
 
-func TestGroupAndAppAccessEndpointsValidateInput(t *testing.T) {
+func TestAdminEndpointsValidateInputBeforeTouchingTheDatabase(t *testing.T) {
 	type tc struct {
 		name    string
 		handler http.HandlerFunc
@@ -113,10 +121,26 @@ func TestGroupAndAppAccessEndpointsValidateInput(t *testing.T) {
 		{"update group: key cannot change", updateGroup, `{"key":"other"}`},
 		{"update group: empty display name", updateGroup, `{"display_name":""}`},
 		{"update group: owner is not an id", updateGroup, `{"owner_group_id":"nope"}`},
-		{"app access: app is not an id", setAppAccess, `{"id":"nope","access_rule":"anyone"}`},
-		{"app access: unknown rule", setAppAccess, `{"id":"` + someUUID + `","access_rule":"everyone"}`},
-		{"app access: missing rule", setAppAccess, `{"id":"` + someUUID + `"}`},
-		{"app access: group is not an id", setAppAccess, `{"id":"` + someUUID + `","access_rule":"groups","group_ids":["nope"]}`},
+		{"app access: unknown field", setAppAccess, `{"id":"` + someUUID + `","access_rule":"anyone"}`},
+		{"app access: unknown rule", setAppAccess, `{"access_rule":"everyone"}`},
+		{"app access: missing rule", setAppAccess, `{}`},
+		{"app access: group is not an id", setAppAccess, `{"access_rule":"groups","group_ids":["nope"]}`},
+		{"app update: empty pretty name", updateApp, `{"pretty_name":""}`},
+		{"app update: no redirect uris", updateApp, `{"redirect_uris":[]}`},
+		{"app update: ttl too small", updateApp, `{"access_token_ttl_seconds":14}`},
+		{"app update: scopes without openid", updateApp, `{"scopes":["email"]}`},
+		{"app update: bad back-channel uri", updateApp, `{"backchannel_logout_uri":"ftp://x/y"}`},
+		{"app update: name cannot change", updateApp, `{"name":"other"}`},
+		{"app secret: grace too long", rotateAppSecret, `{"grace_seconds":604801}`},
+		{"app secret: negative grace", rotateAppSecret, `{"grace_seconds":-1}`},
+		{"account create: bad username", createAccount, `{"username":"a b","password":"long-enough-password"}`},
+		{"account create: short password", createAccount, `{"username":"alice","password":"short"}`},
+		{"account create: bad email", createAccount, `{"username":"alice","password":"long-enough-password","email":"Alice <a@b.test>"}`},
+		{"account update: unknown status", updateAccount, `{"status":"locked"}`},
+		{"account update: bad email", updateAccount, `{"email":"not-an-address"}`},
+		{"account update: bad username", updateAccount, `{"username":"x"}`},
+		{"account password: too short", setAccountPassword, `{"new_password":"short"}`},
+		{"own password: too short", changeMyPassword, `{"current_password":"x","new_password":"short"}`},
 	}
 	for _, c := range cases {
 		if rec := call(c.handler, jsonReq("POST", "/", c.body)); rec.Code != http.StatusBadRequest {
@@ -146,5 +170,41 @@ func TestGroupFailMapsErrors(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "connection details") {
 			t.Errorf("internal error text leaked to the client: %s", rec.Body.String())
 		}
+	}
+}
+
+func TestListParametersAreValidated(t *testing.T) {
+	cases := map[string]struct {
+		h   http.HandlerFunc
+		url string
+	}{
+		"accounts: limit 0":        {listAccounts, "/accounts?limit=0"},
+		"accounts: limit too big":  {listAccounts, "/accounts?limit=201"},
+		"accounts: limit not int":  {listAccounts, "/accounts?limit=ten"},
+		"accounts: unknown status": {listAccounts, "/accounts?status=locked"},
+		"audit: bad cursor":        {listAudit, "/audit?cursor=abc"},
+		"audit: bad account":       {listAudit, "/audit?account=nope"},
+		"audit: bad event":         {listAudit, "/audit?event=DROP%20TABLE"},
+	}
+	for name, c := range cases {
+		if rec := call(c.h, httptest.NewRequest("GET", c.url, nil)); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, rec.Code)
+		}
+	}
+}
+
+func TestErrorsUseOneShape(t *testing.T) {
+	rec := call(signup, jsonReq("POST", "/signup", `{"username":"alice","password":"x","extra":1}`))
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "invalid_request" || !strings.Contains(body["message"], `"extra"`) || len(body) != 2 {
+		t.Errorf("error body = %v, want error=invalid_request and a message naming the field", body)
+	}
+	rec = httptest.NewRecorder()
+	Router().ServeHTTP(rec, httptest.NewRequest("GET", "/no-such-route", nil))
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `"error":"not_found"`) {
+		t.Errorf("unknown route: %d %s", rec.Code, rec.Body.String())
 	}
 }

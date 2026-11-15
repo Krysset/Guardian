@@ -17,6 +17,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/guardian ./cmd/gua
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/guardian /guardian
 USER nonroot:nonroot
-# 3001 public (OIDC, pages, /api), 3002 internal (/introspect, /metrics, probes).
+# 3001 public (OIDC, hosted pages, /api/v1), 3002 internal (/metrics, /healthz, /readyz).
 EXPOSE 3001 3002
 ENTRYPOINT ["/guardian"]

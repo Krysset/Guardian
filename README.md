@@ -54,4 +54,5 @@ GUARDIAN_TEST_DB=1 DB_HOST=localhost DB_USER=postgres DB_NAME=guardian_test go t
 - [docs/ROADMAP.md](docs/ROADMAP.md): the design and the plan to 1.0.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how Guardian is built and why.
 - [docs/INTEGRATION.md](docs/INTEGRATION.md): how to connect an app.
+- [docs/openapi.yaml](docs/openapi.yaml): the JSON API, `/api/v1`.
 - [Agents.md](Agents.md): notes for AI agents working on this repository.

@@ -3,20 +3,21 @@ package store
 import "time"
 
 type Account struct {
-	ID                 string    `json:"id"`
-	Username           string    `json:"username"`
-	DisplayName        string    `json:"display_name,omitempty"`
-	GivenName          string    `json:"given_name,omitempty"`
-	FamilyName         string    `json:"family_name,omitempty"`
-	PictureURL         string    `json:"picture_url,omitempty"`
-	Locale             string    `json:"locale,omitempty"`
-	Zoneinfo           string    `json:"zoneinfo,omitempty"`
-	Email              string    `json:"email,omitempty"`
-	EmailVerified      bool      `json:"email_verified"`
-	Status             string    `json:"status"`
-	MustChangePassword bool      `json:"must_change_password"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 string     `json:"id"`
+	Username           string     `json:"username"`
+	DisplayName        string     `json:"display_name,omitempty"`
+	GivenName          string     `json:"given_name,omitempty"`
+	FamilyName         string     `json:"family_name,omitempty"`
+	PictureURL         string     `json:"picture_url,omitempty"`
+	Locale             string     `json:"locale,omitempty"`
+	Zoneinfo           string     `json:"zoneinfo,omitempty"`
+	Email              string     `json:"email,omitempty"`
+	EmailVerified      bool       `json:"email_verified"`
+	Status             string     `json:"status"`
+	MustChangePassword bool       `json:"must_change_password"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
 }
 
 // App is an OIDC client. Secrets are never part of this struct (see app_secret).
