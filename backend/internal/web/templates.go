@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"guardian/internal/config"
+	"guardian/internal/mail"
 	db "guardian/internal/store"
 )
 
@@ -47,6 +48,13 @@ type Page struct {
 	IDTokenHint, ClientID, PostLogoutRedirectURI, State string // the logout request, carried through its form
 
 	Connected, Available []db.App // Home: the apps the user has signed in to, and the others they may use
+
+	Notice string // a confirmation above the form ("We sent a new link.")
+	Email  string // the email address typed at sign-up, or a masked address to show
+	Token  string // the one-time link's token, carried through the reset form
+	Icon   string // result pages: ok, warn or mail
+	Change bool   // the check-inbox page: show the form to change the address
+	Sent   bool   // the forgot-password page: the link was (or would have been) sent
 }
 
 // Link is a button that leads somewhere.
@@ -58,11 +66,21 @@ type field struct{ ID, Autocomplete, Error, Hint string }
 // footerLinks are the optional Help and Privacy links in the footer of every page.
 var footerLinks struct{ HelpURL, PrivacyURL string }
 
+// requireEmail makes an email address mandatory at sign-up (REQUIRE_EMAIL).
+var requireEmail bool
+
+// SendLogoutNotices delivers back-channel logouts. The oidc package sets it (web cannot import oidc).
+var SendLogoutNotices = func([]db.LogoutNotice) {}
+
 // Configure must be called once at startup, before serving. The configuration is already validated.
 func Configure(cfg config.Config) {
 	footerLinks.HelpURL = cfg.HelpURL
 	footerLinks.PrivacyURL = cfg.PrivacyURL
+	requireEmail = cfg.Mail.RequireEmail
 }
+
+// RequireEmail reports whether sign-up needs an email address.
+func RequireEmail() bool { return requireEmail && mail.Enabled() }
 
 // assetVersions maps each static file to a hash of its content. Pages link to /static/<name>?v=<hash>,
 // so a file can be cached for a year and a new release still loads the new file.
@@ -95,6 +113,9 @@ var funcs = template.FuncMap{
 		return "/static/" + name + "?v=" + v
 	},
 	"footer": func() any { return footerLinks },
+	// mail reports whether Guardian sends email: the email field, "Forgot password?" and resets need it.
+	"mail":         mail.Enabled,
+	"requireEmail": RequireEmail,
 	"field": func(id, autocomplete, errText, hint string) field {
 		return field{ID: id, Autocomplete: autocomplete, Error: errText, Hint: hint}
 	},

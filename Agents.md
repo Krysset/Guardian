@@ -65,22 +65,23 @@ current: they are the hand-off between sessions.
   check is committed (`632a0d4`). The owner ran the Grafana flow with Docker: admin signs in as Grafana Admin, an
   account without groups is refused, a `grafana-viewers` member signs in as Viewer, removal from the group
   refuses the next sign-in, and Grafana's sign-out goes through Guardian's.
-- **0.2 in progress** (`docs/ROADMAP.md` section 5), decided 2026-11-19: the image comes from the owner's own
-  registry (no publishing until 0.5); staging uses a Gateway API HTTPRoute and the bundled Postgres.
-  - **Part 1, the chart: built, uncommitted.** `charts/guardian` (see `docs/INSTALL.md`). There is no `helm` in
+- **0.2 is built and committed (`d3ec55a`)** but not installed: the cluster is not ready. Decided 2026-11-19:
+  the image comes from the owner's own registry (no publishing until 0.5); staging uses a Gateway API HTTPRoute
+  and the bundled Postgres.
+  - **Part 1, the chart.** `charts/guardian` (see `docs/INSTALL.md`). There is no `helm` in
     either workspace: templates were checked with a scratch renderer (Go templates plus the few sprig functions
     the chart uses; not in the repo), the schema with Python `jsonschema`. `.github/workflows/chart.yml` runs
     the real `helm lint`, `helm template` and kubeconform. Keep the chart to the functions it uses now, or check
     new ones carefully.
-  - **Part 2, backup and restore: built, uncommitted.** `internal/backup` (format, dump, restore, verify,
+  - **Part 2, backup and restore.** `internal/backup` (format, dump, restore, verify,
     decrypt) and `cmd/guardian/backup.go`; documented in `docs/INSTALL.md`, "Backup and restore". Encryption with
-    `filippo.io/age`: **the owner still has to vendor it** (`go get filippo.io/age && go mod tidy && go mod vendor`
-    in `backend`). Until then the cloud copy tests with a stand-in that calls the `age` CLI
-    (`age_cli_stub.go`, `age_cli_stub_test.go`; never delivered) while `age.go` and `age_test.go` sit in the
-    scratchpad. Once vendored: bring `vendor/` over, drop the stubs, rerun the tests.
-  - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1 wait
-    until the owner's cluster is.
-- Tests: 165, all passing with `-race` (`docs/TESTING.md`).
+    `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
+  - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
+    (including the email settings) wait until the owner's cluster is.
+- **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
+  (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
+  - **Part 1, email: built, uncommitted.** See "Email" below.
+- Tests: 177, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
@@ -163,9 +164,27 @@ current: they are the hand-off between sessions.
 - **Dark only.** The favicon is the head logo, black on light browser tabs and white on dark ones. The owner's
   logo files: "dark" means a black icon, "light" a white one; full, mid and head variants.
 - Error notices shake once per page load (not with reduced motion).
-- Parts of later releases (forgot password, security key, email at sign-up, "go to your account") stay out until
-  they work. `/` is a simple Home (connected and available apps) until the management UI's Home in 0.4.
+- Parts of later releases (security key, "go to your account") stay out until they work. The email field,
+  "Forgot password?" and `/forgot` appear only when email is configured (`mail` template function). `/` is a simple Home (connected and available apps) until the management UI's Home in 0.4.
 - The background image is the 640×360 one from the design board; a full-size one would look sharper.
+
+## Email (0.3 part 1)
+- `internal/mail`: `SMTP` sender (starttls, tls or none), `Compose` (multipart text and HTML, quoted-printable),
+  an in-memory background queue with retries (`Enqueue`; lost on restart, by decision), `Capture` for tests.
+  The emails (E1 confirm, E2 reset, E3 password changed, E5 email changing) render from one `email` value
+  through `templates/email.html` and `email.txt`; inline styles, light colours. Times in the account's
+  `zoneinfo` (`time/tzdata` is in the binary). `Mask` hides addresses (`a•••@example.com`).
+- Config: `SMTP_HOST` (empty = email off), `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SECURITY`,
+  `MAIL_FROM` (its name is the site name in emails), `REQUIRE_EMAIL`. Compose sends to Mailpit (port 3003 UI).
+- `internal/web/email.go`: S2b `/signup/inbox` (resend, change address), S12 `/confirm`, S10 `/forgot`, S11
+  `/reset`. Links are `account_token` rows (hash only; `store/tokens.go`); a new link replaces the account's
+  unused ones of the same purpose; 5 links per account per hour. Sign-up with an address creates a `pending`
+  account plus a `guardian_signup` cookie whose hash is in the token: the link signs in only in that browser.
+  Pending accounts go after 48 hours (maintenance). `ConfirmEmail` gives the address to the first account that
+  confirms it (`ErrEmailTaken` for the rest). `ResetPassword` ends every session.
+- `PUT /api/v1/me/email` sends E1 to the new address and E5 to the old one; no re-authentication yet (part 2
+  adds it). Password changes send E3 (S3, `PUT /me/password`, reset).
+- The cloud workspace tests real SMTP against a tiny Python sink (scratchpad `mailsink/sink.py`, port 2525).
 
 ## Design board
 - https://claude.ai/artifact/V4Qwf5xMJg2fWKAGQm3QKJ ("Guardian page designs"). It holds every page in

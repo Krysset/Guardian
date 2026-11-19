@@ -262,7 +262,9 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - **Done when:** installed via Argo CD in the staging cluster, and a backup restores into a fresh install.
 
 ### 0.3: accounts
+Built in parts, in this order: (1) email, (2) re-authentication, (3) two-factor, (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
 - Mailer, email verification and change, password reset, `REQUIRE_EMAIL`, and security notices.
+  - **Built 2026-11-19 (part 1):** `internal/mail` (SMTP with STARTTLS or TLS, a background queue with retries, the E1, E2, E3 and E5 emails), the S2 email field, S2b, S10, S11 and S12, and `PUT /api/v1/me/email`. Mailpit catches the emails locally. Email is off without `SMTP_HOST`. The chart's settings for email wait with the other chart features.
 - TOTP, recovery codes, the MFA challenge, the recovery ladder, admin MFA reset.
 - **Mandatory MFA for admins and group owners, and enforcement of the per-app "require MFA" setting.**
 - Re-authentication and the protected-change list.
@@ -338,3 +340,4 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-19: Home (`/`, H0) replaces the account area start page; it arrives with the management UI in 0.4, and until then a simple Home in the sign-in page style lists the user's apps. The sign-in pages of 0.1 are built; optional `HELP_URL` and `PRIVACY_URL` fill their footer.
 - 2026-11-19: 0.1 done. Single-app groups built in the backend. The sign-in pages are dark only; light mode is not planned for now. The owner checked the whole flow with Grafana; `docker-compose.yml` renames Grafana's built-in user and gives accounts without an email a placeholder address for Grafana.
 - 2026-11-19: backup and restore built (0.2). The manifest sits at the start of the backup file instead of in a sidecar, with the checksum at the end. The deletion log moved to 0.3, with account deletion. Destructive commands are audited instead of counted in a metric, since they run outside the server. Chart features wait until the cluster is ready; local development continues.
+- 2026-11-19: 0.3 started with email (part 1). Decided while building: the email queue is in memory (a lost email means asking for a new link); a confirmation link signs in only in the browser that signed up, so mail scanners cannot; an unconfirmed sign-up is removed after 48 hours; the first account to confirm an address gets it.

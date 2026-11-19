@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-19):** 165 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-19):** 177 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -59,6 +59,8 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | The sign-in pages escape everything, keep a strict CSP and never show technical details | `TestEveryPageRendersAndEscapesUntrustedData`, `TestPagesHaveNoInlineStylesOrScripts`, `TestPagesSendSecurityHeaders`, `TestErrorPagesNeverShowDetails`, `TestE2EPagesRoutingAndStaticFiles` |
 | Home lists only the apps the account may use | `TestE2EHomeListsTheAppsTheAccountMayUse` |
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |
+| Email links: sign-up waits for its confirmation, links work once and only the newest, the link signs in only the browser that signed up, the first account to confirm an address gets it, resets end every session, the reset answer never reveals an account | `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt`, `TestE2EPasswordResetByEmail`, `TestE2EChangingTheEmailAddress`, `TestE2EEmailOffAndEmailRequired` |
+| Emails are valid, escaped, and never sent in the clear when STARTTLS is asked for | `TestEveryEmailRendersBothPartsAndEscapes`, `TestComposeIsAValidMultipartMessage`, `TestSMTPSendsAndStartTLSIsRequired` |
 | A backup restores exactly into a new installation, and never over one in use | `TestBackupRestoresIntoAFreshInstallationExactly`, `TestBackupWithoutAuditLogAndDryRun`, `TestEveryTableIsBackedUpOrLeftOutOnPurpose`, `TestFormatDetectsDamage`, `TestBackupCommandLine` |
 | Metrics available for the Prometheus scrape | `TestE2EInternalListenerProbesAndMetrics`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
 
@@ -70,7 +72,8 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 * Graceful SIGTERM shutdown, `/readyz` failing when the database is down, connection-pool limits.
 * Kubernetes manifests and the NetworkPolicy.
 * Load and latency: use `guardian_http_request_duration_seconds{route="/token"}` and `guardian_token_requests_total` from a staging deployment.
-* Email verification, password reset, MFA (not implemented).
+* Delivery through a real mail server with TLS (tests use a fake SMTP server without TLS; Mailpit by hand).
+* MFA (not implemented).
 * Real off-the-shelf apps: Grafana is checked by hand (`docs/LOCAL-GRAFANA.md`).
 
 ## Known fragile spots

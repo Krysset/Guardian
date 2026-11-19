@@ -27,6 +27,7 @@ func TestEveryPageRendersAndEscapesUntrustedData(t *testing.T) {
 		FieldErrors: map[string]string{"username": evil, "password": evil, "password2": evil},
 		Username:    evil, App: db.App{PrettyName: evil}, Scopes: []string{evil}, Req: evil,
 		IDTokenHint: evil, ClientID: evil, PostLogoutRedirectURI: evil, State: evil,
+		Notice: evil, Email: evil, Token: evil,
 	}
 	for name := range pages {
 		body := render(t, name, data)
@@ -37,7 +38,8 @@ func TestEveryPageRendersAndEscapesUntrustedData(t *testing.T) {
 			t.Errorf("%s: untrusted text was not rendered (escaped)", name)
 		}
 	}
-	for _, want := range []string{"login", "signup", "password", "consent", "noaccess", "signout", "signedout", "signedin", "error"} {
+	for _, want := range []string{"login", "signup", "password", "consent", "noaccess", "signout", "signedout", "signedin", "error",
+		"inbox", "result", "forgot", "reset"} {
 		if pages[want] == nil {
 			t.Errorf("page %q is missing", want)
 		}

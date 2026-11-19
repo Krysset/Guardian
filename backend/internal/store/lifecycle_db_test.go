@@ -816,14 +816,22 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 	db.SaveAuthCode(auth.HashToken("old-code"), db.AuthCode{AppID: app.ID, AccountID: acct.ID, RedirectURI: "https://billing.test/callback",
 		Scopes: []string{"openid"}, AuthTime: time.Now()}, -48*time.Hour)
 	testutil.Exec(t, `INSERT INTO rate_limit (key, window_start, hits) VALUES ('old', now() - interval '2 days', 3), ('fresh', now(), 1)`)
+	// Sign-ups that never confirmed their address go after 48 hours; a recent one stays.
+	if _, err := db.CreatePendingAccount("abandoned", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreatePendingAccount("waiting", "h"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Exec(t, `UPDATE account SET created_at = now() - interval '49 hours' WHERE username = 'abandoned'`)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	db.StartMaintenance(ctx) // runs a cleanup pass immediately
 
 	deadline := time.Now().Add(10 * time.Second)
-	// the rate_limit delete is the LAST statement of a cleanup pass, so once it has happened all earlier ones have too
-	for testutil.Count(t, `SELECT count(*) FROM rate_limit WHERE key = 'old'`) != 0 && time.Now().Before(deadline) {
+	// removing abandoned sign-ups is the LAST statement of a cleanup pass, so once it has happened all earlier ones have too
+	for testutil.Count(t, `SELECT count(*) FROM account WHERE username = 'abandoned'`) != 0 && time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	exists := func(q string, args ...any) bool { return testutil.Count(t, q, args...) == 1 }
@@ -838,6 +846,9 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 	}
 	if rt("rt-revoked-long-ago") || !rt("rt-live") {
 		t.Error("refresh tokens were not cleaned correctly")
+	}
+	if !exists(`SELECT count(*) FROM account WHERE username = 'waiting'`) || exists(`SELECT count(*) FROM account WHERE username = 'abandoned'`) {
+		t.Error("abandoned sign-ups were not removed correctly")
 	}
 	if exists(`SELECT count(*) FROM authorization_code WHERE code_hash = $1`, auth.HashToken("old-code")) {
 		t.Error("an old authorization code was kept")

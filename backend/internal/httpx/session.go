@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"time"
 
 	"guardian/internal/auth"
 	db "guardian/internal/store"
@@ -147,5 +148,40 @@ func RequireSameOrigin(next http.Handler) http.Handler {
 			}
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// ---- Short-lived cookies for multi-step flows -------------------------------
+
+// FlowCookieName is the cookie's name: name, with the __Host- prefix when cookies are Secure.
+func FlowCookieName(name string) string {
+	if secureCookies {
+		return "__Host-" + name
+	}
+	return name
+}
+
+// SetFlowCookie sets a short-lived cookie that ties a step of a flow (such as a sign-up waiting for its
+// email confirmation) to this browser.
+func SetFlowCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name: FlowCookieName(name), Value: value, Path: "/", MaxAge: int(maxAge.Seconds()),
+		HttpOnly: true, Secure: secureCookies, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// FlowCookie returns the value of a flow cookie, or "".
+func FlowCookie(r *http.Request, name string) string {
+	if c, err := r.Cookie(FlowCookieName(name)); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// ClearFlowCookie removes a flow cookie.
+func ClearFlowCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: FlowCookieName(name), Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: secureCookies, SameSite: http.SameSiteLaxMode,
 	})
 }

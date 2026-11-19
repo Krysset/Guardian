@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"time"
 
@@ -23,6 +24,15 @@ const (
 // does is an email address.
 func ValidUsername(u string) bool { return usernameRe.MatchString(u) }
 
+// ValidEmail accepts a bare address such as alice@example.com, nothing else ("Alice <a@b>" is refused).
+func ValidEmail(s string) bool {
+	if len(s) > 254 {
+		return false
+	}
+	a, err := mail.ParseAddress(s)
+	return err == nil && a.Address == s && a.Name == ""
+}
+
 // ValidPassword reports whether p follows PasswordRule. The upper bound protects the hasher from huge inputs.
 func ValidPassword(p string) bool { return len(p) >= 10 && len(p) <= 1024 }
 
@@ -42,8 +52,9 @@ var (
 )
 
 // CreateAccount is open sign-up, for the sign-up page and POST /api/v1/signup alike. Only valid requests
-// count towards the per-address limit, so typos in the form do not use it up.
-func CreateAccount(r *http.Request, username, password string) (db.Account, error) {
+// count towards the per-address limit, so typos in the form do not use it up. A pending account waits for
+// its email address to be confirmed before it can sign in.
+func CreateAccount(r *http.Request, username, password string, pending bool) (db.Account, error) {
 	if !ValidUsername(username) {
 		return db.Account{}, ErrUsernameRule
 	}
@@ -62,7 +73,11 @@ func CreateAccount(r *http.Request, username, password string) (db.Account, erro
 	if err != nil {
 		return db.Account{}, err
 	}
-	acct, err := db.CreateAccount(username, hash)
+	create := db.CreateAccount
+	if pending {
+		create = db.CreatePendingAccount
+	}
+	acct, err := create(username, hash)
 	if db.IsUniqueViolation(err) {
 		return db.Account{}, ErrUsernameTaken
 	}

@@ -1,7 +1,9 @@
 # Installing Guardian in Kubernetes
 
 The Helm chart is in `charts/guardian`. It works with plain Helm and with Argo CD. This first version (release
-0.2) installs the backend, a bundled or external Postgres, and an HTTPRoute or Ingress. The management UI, the
+0.2) installs the backend, a bundled or external Postgres, and an HTTPRoute or Ingress. It has no email
+settings yet (0.3 adds email to Guardian; the chart follows when the cluster is ready), so installations from
+this chart run without email. The management UI, the
 NetworkPolicy, autoscaling and the ServiceMonitor come in later releases (`docs/ROADMAP.md`).
 
 Until 1.0 all data is test data: a new release may need a fresh database (see "Upgrades" below).

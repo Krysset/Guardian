@@ -134,7 +134,11 @@ appear from that release; until then the page is drawn without them.
   sign-ups from this address.
 - After sign-up the user is signed in and continues to the app they came from (or their account). With an
   email (0.3), sign-up is only complete once the address is confirmed: the page says "Check your inbox" (with
-  Resend and Change address), and the confirmation link (S12) signs them in and continues.
+  Resend and Change address, S2b), and the confirmation link (S12) signs them in and continues.
+- Built in 0.3: the link signs in only in the browser that signed up (a short-lived cookie ties them), so a
+  mail scanner that opens the link confirms the address but gets no session. Opened elsewhere, the page says
+  the account is ready and offers Sign in. Until the link is used, signing in with the right password says to
+  confirm the address first. An unconfirmed sign-up is removed after 48 hours, freeing its username.
 
 **S3 Choose a new password**
 - Shows: why ("An administrator set a temporary password for your account. Choose your own to continue.").
@@ -191,11 +195,14 @@ appear from that release; until then the page is drawn without them.
 - Shows: "Two-factor still applies when you sign in."
 - Actions: Save.
 - States: link expired or used (S9 variant).
+- Built in 0.3: after saving, every session of the account ends and S1 confirms the change.
 
 **S12 Email confirmation** (0.3)
 - States: confirmed (signs the user in if sign-up was waiting for it, and continues; otherwise continue to
   your account); link expired (request a new one from your profile); the address is now used by another
   account.
+- Built in 0.3: until the account area exists (0.4), "your profile" is Home. A link of a waiting sign-up leads
+  back to S2b (new link, or another address); a used link says so.
 
 **S13 Second factor** (0.3)
 - Fields: a 6-digit code from the authenticator app; or, after "Use a recovery code", a recovery code.
@@ -414,7 +421,6 @@ user. It holds no other personal data.
 
 ### What the API still lacks for these pages
 
-- With an email at sign-up (0.3), signing in only once it is confirmed (S2, S12).
 - The account area:
   - the user's own groups (AC5);
   - sessions (AC3);

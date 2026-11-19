@@ -79,5 +79,6 @@ func passwordSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.Audit("password.changed", acct.ID, "", httpx.ClientIP(r), map[string]any{"replaced_temporary": true})
+	NotifyPasswordChanged(acct)
 	http.Redirect(w, r, continueTo(returnTo), http.StatusSeeOther)
 }

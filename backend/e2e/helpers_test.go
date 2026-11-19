@@ -22,6 +22,7 @@ import (
 
 	"guardian/internal/auth"
 	"guardian/internal/config"
+	"guardian/internal/mail"
 	"guardian/internal/server"
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
@@ -33,6 +34,10 @@ var (
 	pubSrv   *httptest.Server // the public listener (what browsers and apps reach through the ingress)
 	intSrv   *httptest.Server // the internal listener (metrics, probes)
 	testKeys *auth.Keys
+	// testConfig is the configuration the servers run with.
+	testConfig config.Config
+	// mailbox catches every email; email is on in the end-to-end tests.
+	mailbox = &mail.Capture{}
 )
 
 func TestMain(m *testing.M) {
@@ -60,8 +65,9 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "load keys:", err)
 			os.Exit(1)
 		}
-		testKeys = k
+		testKeys, testConfig = k, cfg
 		server.Configure(cfg, k)
+		mail.Configure(mailbox, mail.Site{Name: "Test Guardian", Host: "guardian.test"})
 		pubSrv = httptest.NewServer(server.PublicRouter())
 		intSrv = httptest.NewServer(server.InternalRouter())
 	}
@@ -423,4 +429,5 @@ func contains(list []string, s string) bool { return slices.Contains(list, s) }
 func newTestEnv(t *testing.T) {
 	t.Helper()
 	testutil.Reset(t)
+	mailbox.Reset()
 }

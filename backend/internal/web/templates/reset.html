@@ -1,0 +1,13 @@
+{{define "content"}}
+      <h1>Choose a new password</h1>
+      {{template "error-banner" .}}
+      <form method="post" action="/reset">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="token" value="{{.Token}}">
+        <label for="password">New password</label>
+        {{template "password" (field "password" "new-password" (index .FieldErrors "password") "At least 10 characters. Use one you use nowhere else.")}}
+        <label for="password2">New password again</label>
+        {{template "password" (field "password2" "new-password" (index .FieldErrors "password2") "")}}
+        <div class="message">{{template "icon-info"}}<span>Two-factor still applies when you sign in.</span></div>
+        <button class="button" type="submit">Save</button>
+      </form>
+{{end}}

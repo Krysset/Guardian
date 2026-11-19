@@ -293,3 +293,7 @@ footer a { color: inherit; }
 .app-text { display: flex; flex-direction: column; min-width: 0; }
 .app-text strong { font-weight: 600; }
 .app-text span { font-size: 13px; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Email (0.3): the result of a link, and the address on the check-your-inbox page. */
+.badge-icon.ok { color: var(--ok); }
+.sub .strong { color: var(--ink); overflow-wrap: anywhere; }

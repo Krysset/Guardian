@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -46,9 +47,29 @@ type Config struct {
 	// AdminInitialPassword sets the seeded admin's first password. Empty means: generate one and log it once.
 	AdminInitialPassword string
 
-	DB  Database
-	Log Log
+	DB   Database
+	Log  Log
+	Mail Mail
 }
+
+// Mail is how Guardian sends email. Without SMTP_HOST, email is off: sign-up has no email field and only
+// an administrator can reset a forgotten password.
+type Mail struct {
+	Host     string // SMTP_HOST
+	Port     int    // SMTP_PORT, default 587
+	Username string // SMTP_USERNAME; empty means no authentication
+	Password string // SMTP_PASSWORD
+	// Security is starttls (default), tls or none (only for a local mail catcher).
+	Security string // SMTP_SECURITY
+	// From is the sender, such as "Hyrule Guardian <no-reply@auth.example.com>". Its name is also the name
+	// the emails use for this Guardian.
+	From *mail.Address // MAIL_FROM
+	// RequireEmail makes an email address mandatory at sign-up.
+	RequireEmail bool // REQUIRE_EMAIL
+}
+
+// Enabled reports whether email is configured.
+func (m Mail) Enabled() bool { return m.Host != "" }
 
 // Database is how to reach PostgreSQL.
 type Database struct {
@@ -164,6 +185,10 @@ func Load() (Config, error) {
 		}
 	}
 
+	if cfg.Mail, err = loadMail(); err != nil {
+		problems = append(problems, err)
+	}
+
 	if cfg.KeyEncryptionKey, err = ParseEncryptionKey(os.Getenv("KEY_ENCRYPTION_KEY")); err != nil {
 		problems = append(problems, err)
 	}
@@ -225,6 +250,52 @@ func ParseEncryptionKey(raw string) ([]byte, error) {
 		return nil, errors.New("KEY_ENCRYPTION_KEY must be 32 bytes, base64 encoded (generate one with: openssl rand -base64 32)")
 	}
 	return key, nil
+}
+
+func loadMail() (Mail, error) {
+	var problems []error
+	fail := func(format string, args ...any) { problems = append(problems, fmt.Errorf(format, args...)) }
+	m := Mail{
+		Host:     strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		Port:     587,
+		Username: os.Getenv("SMTP_USERNAME"),
+		Password: os.Getenv("SMTP_PASSWORD"),
+		Security: strings.ToLower(envOr("SMTP_SECURITY", "starttls")),
+	}
+	switch v := strings.ToLower(os.Getenv("REQUIRE_EMAIL")); v {
+	case "", "false", "0", "no":
+	case "true", "1", "yes":
+		m.RequireEmail = true
+	default:
+		fail("REQUIRE_EMAIL must be true or false, got %q", v)
+	}
+	if m.Host == "" {
+		if m.RequireEmail {
+			fail("REQUIRE_EMAIL needs email: set SMTP_HOST and MAIL_FROM")
+		}
+		return m, errors.Join(problems...)
+	}
+	if v := os.Getenv("SMTP_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 65535 {
+			fail("SMTP_PORT must be a port number between 1 and 65535, got %q", v)
+		} else {
+			m.Port = n
+		}
+	}
+	switch m.Security {
+	case "starttls", "tls", "none":
+	default:
+		fail("SMTP_SECURITY must be starttls, tls or none, got %q", m.Security)
+	}
+	if v := os.Getenv("MAIL_FROM"); v == "" {
+		fail("MAIL_FROM is not set (the sender of Guardian's emails, such as \"Guardian <no-reply@auth.example.com>\")")
+	} else if a, err := mail.ParseAddress(v); err != nil {
+		fail("MAIL_FROM must be an email address, optionally with a name, got %q", v)
+	} else {
+		m.From = a
+	}
+	return m, errors.Join(problems...)
 }
 
 func loadLog() (Log, error) {

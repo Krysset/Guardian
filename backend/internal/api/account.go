@@ -5,13 +5,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/mail"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"guardian/internal/auth"
 	"guardian/internal/httpx"
+	"guardian/internal/mail"
 	"guardian/internal/oidc"
 	db "guardian/internal/store"
 	"guardian/internal/web"
@@ -24,14 +25,7 @@ var (
 	validPassword = web.ValidPassword
 )
 
-// validEmail accepts a bare address such as alice@example.com, nothing else ("Alice <a@b>" is refused).
-func validEmail(s string) bool {
-	if len(s) > 254 {
-		return false
-	}
-	a, err := mail.ParseAddress(s)
-	return err == nil && a.Address == s && a.Name == ""
-}
+var validEmail = web.ValidEmail
 
 // signup is open to everyone, so it is limited per client IP (counters live in Postgres and are shared by
 // all replicas). Accounts created by administrators (POST /accounts) are not limited.
@@ -43,7 +37,12 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	acct, err := web.CreateAccount(r, req.Username, req.Password)
+	if web.RequireEmail() {
+		// Confirming the address needs the sign-up page, which waits for the link in the same browser.
+		httpx.ErrorCode(w, http.StatusBadRequest, "email_required", "Sign-up needs an email address here: use the sign-up page")
+		return
+	}
+	acct, err := web.CreateAccount(r, req.Username, req.Password, false)
 	switch {
 	case errors.Is(err, web.ErrUsernameRule), errors.Is(err, web.ErrPasswordRule):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
@@ -130,7 +129,7 @@ func getMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateMe changes the signed-in user's profile. Only fields present in the body change; "" clears one.
-// The email address is not here: it is set through verification, which arrives in release 0.3.
+// The email address is not here: it changes through PUT /me/email and its confirmation link.
 func updateMe(w http.ResponseWriter, r *http.Request) {
 	var req profileFields
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -149,6 +148,52 @@ func updateMe(w http.ResponseWriter, r *http.Request) {
 		db.Audit("account.username_changed", acct.ID, "", httpx.ClientIP(r), map[string]any{"username": acct.Username})
 	}
 	httpx.JSON(w, http.StatusOK, acct)
+}
+
+// changeMyEmail starts a change of the signed-in user's address: it emails a confirmation link to the new
+// address (E1) and a notice to the old one (E5). The address changes only when the link is opened.
+func changeMyEmail(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !mail.Enabled() {
+		httpx.ErrorCode(w, http.StatusConflict, "email_off", "This Guardian does not send email, so addresses cannot be confirmed")
+		return
+	}
+	if !validEmail(req.Email) {
+		httpx.Error(w, http.StatusBadRequest, "email must be an address such as name@example.com")
+		return
+	}
+	acct, err := db.GetAccount(httpx.AccountID(r))
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	if used, err := db.EmailInUse(req.Email); err != nil {
+		accountFail(w, err)
+		return
+	} else if used {
+		httpx.ErrorCode(w, http.StatusConflict, "email_in_use", "That email address is already in use")
+		return
+	}
+	err = web.SendConfirmation(acct, req.Email, false, "", "")
+	if errors.Is(err, web.ErrTooManyMails) {
+		w.Header().Set("Retry-After", "3600")
+		httpx.ErrorCode(w, http.StatusTooManyRequests, "too_many_emails", "Too many emails for this account. Try again in an hour.")
+		return
+	}
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	if acct.Email != "" {
+		mail.Enqueue(mail.EmailChanging(acct.Email, req.Email, time.Now(), acct.Zoneinfo))
+	}
+	db.Audit("email.change_requested", acct.ID, "", httpx.ClientIP(r), nil)
+	httpx.JSON(w, http.StatusAccepted, map[string]string{"pending_email": req.Email})
 }
 
 // changeMyPassword needs the current password. It ends the user's other sessions, so a changed password
@@ -186,6 +231,9 @@ func changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	oidc.SendLogoutNotices(notices)
 	db.Audit("password.changed", id, "", httpx.ClientIP(r), map[string]any{"other_sessions_ended": true})
+	if acct, err := db.GetAccount(id); err == nil {
+		web.NotifyPasswordChanged(acct)
+	}
 	httpx.NoContent(w)
 }
 

@@ -24,7 +24,7 @@ docker compose up --build
 - Guardian: <http://localhost:3001>. Sign in as `admin` with `ADMIN_INITIAL_PASSWORD` from `docker-compose.yml`;
   the first sign-in asks for a new password.
 - Metrics and health checks: <http://localhost:3002/metrics>, `/healthz`, `/readyz`.
-- Mail catcher (from 0.3): <http://localhost:3003>.
+- Mailpit: <http://localhost:3003> catches every email Guardian sends (confirmation and reset links).
 - To try a real app, follow [docs/LOCAL-GRAFANA.md](docs/LOCAL-GRAFANA.md).
 
 The passwords and keys in `docker-compose.yml` are throwaway development values.

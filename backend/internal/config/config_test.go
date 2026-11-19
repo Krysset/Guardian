@@ -21,6 +21,8 @@ func setValid(t *testing.T) {
 		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "",
 		"TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
 		"LOG_FORMAT": "", "LOG_LEVEL": "",
+		"SMTP_HOST": "", "SMTP_PORT": "", "SMTP_USERNAME": "", "SMTP_PASSWORD": "", "SMTP_SECURITY": "",
+		"MAIL_FROM": "", "REQUIRE_EMAIL": "",
 	} {
 		t.Setenv(k, v)
 	}
@@ -163,5 +165,41 @@ func TestDSNQuotesAwkwardValues(t *testing.T) {
 	d.Password = ""
 	if got := d.DSN(); !strings.Contains(got, "password='' ") {
 		t.Errorf("an empty password must be quoted, got %s", got)
+	}
+}
+
+func TestMailIsOffWithoutAHostAndCheckedWithOne(t *testing.T) {
+	setValid(t)
+	cfg, err := Load()
+	if err != nil || cfg.Mail.Enabled() {
+		t.Fatalf("mail without SMTP_HOST: enabled=%v, err=%v", cfg.Mail.Enabled(), err)
+	}
+
+	t.Setenv("REQUIRE_EMAIL", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REQUIRE_EMAIL needs email") {
+		t.Errorf("REQUIRE_EMAIL without mail: %v", err)
+	}
+
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("MAIL_FROM", "Hyrule Guardian <no-reply@auth.example.com>")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cfg.Mail
+	if !m.Enabled() || !m.RequireEmail || m.Port != 587 || m.Security != "starttls" || m.From.Name != "Hyrule Guardian" ||
+		m.From.Address != "no-reply@auth.example.com" {
+		t.Errorf("mail = %+v", m)
+	}
+
+	t.Setenv("SMTP_PORT", "70000")
+	t.Setenv("SMTP_SECURITY", "ssl")
+	t.Setenv("MAIL_FROM", "not an address")
+	t.Setenv("REQUIRE_EMAIL", "maybe")
+	_, err = Load()
+	for _, want := range []string{"SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "REQUIRE_EMAIL"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("no complaint about %s: %v", want, err)
+		}
 	}
 }

@@ -25,6 +25,12 @@
 
 {{define "icon-warn"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"></path></svg>{{end}}
 
+{{define "icon-ok"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>{{end}}
+
+{{define "icon-info"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>{{end}}
+
+{{define "notice-banner"}}{{if .Notice}}<div class="message ok" role="status">{{template "icon-ok"}}<span>{{.Notice}}</span></div>{{end}}{{end}}
+
 {{define "error-banner"}}{{if .Error}}<div class="message error" role="alert">{{template "icon-warn"}}<span>{{.Error}}</span></div>{{end}}{{end}}
 
 {{define "hidden-flow"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{if .ReturnTo}}<input type="hidden" name="return_to" value="{{.ReturnTo}}">{{end}}{{end}}

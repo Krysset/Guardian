@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,7 @@ import (
 	"guardian/internal/config"
 	"guardian/internal/httpx"
 	"guardian/internal/internalapi"
+	"guardian/internal/mail"
 	"guardian/internal/oidc"
 	db "guardian/internal/store"
 	"guardian/internal/web"
@@ -45,6 +47,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("load signing keys: %w", err)
 	}
 	Configure(cfg, keys)
+	if m := cfg.Mail; m.Enabled() {
+		mail.Configure(mail.SMTP{Host: m.Host, Port: m.Port, Username: m.Username, Password: m.Password,
+			Security: m.Security, From: *m.From}, mail.Site{Name: m.From.Name, Host: issuerHost(cfg.IssuerURL)})
+	} else {
+		slog.Warn("email is off (no SMTP_HOST): sign-up has no email field and only administrators can reset passwords")
+	}
 	if err := BootstrapAdmin(cfg.AdminInitialPassword); err != nil {
 		return err
 	}
@@ -83,6 +91,7 @@ func Configure(cfg config.Config, keys *auth.Keys) {
 	httpx.Configure(cfg)
 	web.Configure(cfg)
 	oidc.SetKeys(keys)
+	web.SendLogoutNotices = oidc.SendLogoutNotices
 }
 
 func newServer(addr string, h http.Handler) *http.Server {
@@ -137,4 +146,11 @@ func BootstrapAdmin(password string) error {
 		slog.Warn("initial admin password generated; it is shown only once, change it after signing in", "password", password)
 	}
 	return nil
+}
+
+func issuerHost(issuer string) string {
+	if u, err := url.Parse(issuer); err == nil {
+		return u.Host
+	}
+	return ""
 }

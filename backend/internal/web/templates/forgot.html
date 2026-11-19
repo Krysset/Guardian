@@ -1,0 +1,18 @@
+{{define "content"}}
+      <h1>Forgot your password?</h1>
+      {{if .Sent}}
+      <div class="message ok" role="status">{{template "icon-ok"}}<span>If the account has a confirmed email address, we have sent a link. It works for 1 hour.</span></div>
+      <div class="message">{{template "icon-info"}}<span>No email address on your account? Only an administrator can reset your password. Ask them for a temporary one.</span></div>
+      <p class="small"><a href="/login">Back to sign in</a></p>
+      {{else}}
+      <p class="sub">We'll email you a link to choose a new one.</p>
+      {{template "error-banner" .}}
+      <form method="post" action="/forgot">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <label for="username">Username or email</label>
+        <input class="text" id="username" name="username" type="text" autocomplete="username" value="{{.Login}}" required autofocus>
+        <button class="button" type="submit">Send reset link</button>
+      </form>
+      <p class="small"><a href="/login">Back to sign in</a></p>
+      {{end}}
+{{end}}

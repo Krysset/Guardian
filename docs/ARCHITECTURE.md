@@ -35,6 +35,8 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |
 | At most 4 concurrent argon2 hashes | Each hash needs 64 MiB; unbounded logins would exhaust a memory-limited pod. |
 | Migrations with goose, embedded in the binary | One image, no SQL files beside it; a Postgres lock makes replicas take turns. |
+| **Email queued in memory**, sent in the background | Pages answer at once and in the same time whether or not an email goes out, so the reset page reveals nothing. A queued email is lost if the pod stops; the user asks for a new link. No outbox table to run. |
+| A **confirmation link signs in only the browser that signed up** | A cookie set at sign-up must match the link. Mail scanners and forwarded links confirm the address but get no session. |
 | **Backups through the CLI**, encrypted with age to an offline key | `kubectl exec` access decides who can back up or restore; the cluster never holds the private key. Logical rows (JSON) instead of `pg_dump`, so a restore can check schema revision, keys and counts, and refuses to overwrite an installation in use. |
 | Graceful shutdown, `/healthz`, `/readyz`, bounded DB pool | Rolling deployments without dropped requests; Postgres connections stay bounded. |
 

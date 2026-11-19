@@ -39,6 +39,7 @@ func Router() http.Handler {
 			r.Get("/me", getMe)
 			r.Patch("/me", updateMe)
 			r.Put("/me/password", changeMyPassword)
+			r.Put("/me/email", changeMyEmail)
 
 			// Groups: administrators may do everything; a group's owners may see it and manage its members.
 			r.Get("/groups", listGroups)

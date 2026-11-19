@@ -49,7 +49,10 @@ paths:
     post:
       tags: [me]
       summary: Create an account
-      description: Open to everyone, limited to 10 sign-ups per client IP per hour. No email yet; it arrives with verification in 0.3.
+      description: >-
+        Open to everyone, limited to 10 sign-ups per client IP per hour. Takes no email address: a sign-up with
+        one goes through the sign-up page, which waits for the confirmation link in the same browser. With
+        REQUIRE_EMAIL set, this route refuses every request (error email_required).
       operationId: signup
       security: []
       requestBody:
@@ -140,6 +143,51 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: The current password is wrong (error wrong_password), or a cross-origin request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/email:
+    put:
+      tags: [me]
+      summary: Change the signed-in account's email address
+      description: >-
+        Emails a confirmation link (valid 24 hours) to the new address, and a notice to the current one. The
+        address changes only when the link is opened; until then the account keeps its current address. At
+        most 5 emails per account per hour.
+      operationId: changeMyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202':
+          description: The link was sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_email: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CrossOrigin' }
+        '409':
+          description: The address is in use (error email_in_use), or this Guardian sends no email (error email_off).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Too many emails for this account (error too_many_emails).
+          headers:
+            Retry-After:
+              schema: { type: integer }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

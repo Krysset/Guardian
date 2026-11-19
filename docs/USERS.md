@@ -67,10 +67,10 @@ personal details by accident.
 |---|---|---|---|
 | V1 | Sign in with username or email and password. | 0.1 | done |
 | V2 | Clear messages for wrong credentials and too many attempts, never revealing whether an account exists. | 0.1 | done |
-| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The password is typed twice. After sign-up the user is signed in and continues to the app they came from; when they gave an email, only once it is confirmed. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | done (email 0.3) |
+| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The password is typed twice. After sign-up the user is signed in and continues to the app they came from; when they gave an email, only once it is confirmed. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | done |
 | V4 | Understand what went wrong when an app sends a broken sign-in request, an expired form, or a page that does not exist. | 0.1 | done |
-| V5 | Forgot password: ask for a reset link (the answer is the same whether or not the account exists), then set a new password from the link. Two-factor still applies afterwards. | 0.3 | planned |
-| V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | planned |
+| V5 | Forgot password: ask for a reset link (the answer is the same whether or not the account exists), then set a new password from the link. Two-factor still applies afterwards. | 0.3 | done |
+| V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | done |
 | V7 | Pass the second factor at sign-in: an authenticator code or a recovery code (0.3), or a security key (0.5). | 0.3, keys 0.5 | planned |
 | V8 | Sign in with a passkey, without a password. | 0.5 | planned |
 
@@ -95,7 +95,7 @@ Everything a visitor has, plus:
 |---|---|---|---|
 | U7 | View and change their profile: display, given and family name, picture, locale, time zone. The email address is shown masked (for example `a•••@example.com`) until the user chooses to show it. | 0.1 / 0.4 | API done |
 | U8 | Change their username. | 0.1 / 0.4 | API done |
-| U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | planned |
+| U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | API done (change); removal and the page in 0.4 |
 | U10 | Change their password with the current one; their other sessions end. | 0.1 / 0.4 | API done |
 | U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | planned |
 | U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | planned |
@@ -103,7 +103,7 @@ Everything a visitor has, plus:
 | U14 | Download their data as JSON. | 0.3 / 0.4 | planned |
 | U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | planned |
 | U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | planned |
-| U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | planned |
+| U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | done for password and email changes; the two-factor ones come with two-factor |
 | U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
 | U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | simple version done (0.1) |
 | U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | simple version done (0.1) |
@@ -187,7 +187,7 @@ Works in the CLI and with Kubernetes, never in the management UI. Has no require
 | Id | Requirement | Release | Status |
 |---|---|---|---|
 | P1 | Run database migrations (`guardian migrate`, or at startup). | 0.1 | done |
-| P2 | Back up, verify, restore, and export the deletion log. | 0.2 | planned |
+| P2 | Back up, verify, restore, and export the deletion log. | 0.2 | done (the deletion log comes in 0.3) |
 | P3 | Rotate or emergency-revoke signing keys; add and promote encryption keys. | 0.3 | planned |
 | P4 | Reset two-factor for everyone (dry run by default, confirmation required). | 0.3 | planned |
 | P5 | Set the first admin password through a Secret. | 0.1 | done |

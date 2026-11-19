@@ -16,6 +16,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	// Time zone data inside the binary: emails show times in each account's zone, and the image has none.
+	_ "time/tzdata"
 
 	"github.com/joho/godotenv"
 

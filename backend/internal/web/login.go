@@ -28,6 +28,13 @@ func Mount(r chi.Router) {
 	r.Post("/signup", signupSubmit)
 	r.Get("/password", passwordPage)
 	r.Post("/password", passwordSubmit)
+	r.Get("/signup/inbox", inboxPage)
+	r.Post("/signup/inbox", inboxSubmit)
+	r.Get("/confirm", confirmPage)
+	r.Get("/forgot", forgotPage)
+	r.Post("/forgot", forgotSubmit)
+	r.Get("/reset", resetPage)
+	r.Post("/reset", resetSubmit)
 	r.Get("/static/*", serveStatic)
 	r.Head("/static/*", serveStatic)
 }
@@ -85,7 +92,11 @@ func loginPage(w http.ResponseWriter, r *http.Request) {
 		signedInPage(w, r, sess)
 		return
 	}
-	Render(w, http.StatusOK, "login", Page{Title: "Sign in", CSRF: httpx.CSRFToken(w, r), ReturnTo: returnTo})
+	page := Page{Title: "Sign in", CSRF: httpx.CSRFToken(w, r), ReturnTo: returnTo}
+	if r.URL.Query().Get("reset") == "done" {
+		page.Notice = "Your password was changed, and every session was signed out. Sign in with the new one."
+	}
+	Render(w, http.StatusOK, "login", page)
 }
 
 func loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +132,7 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	acct, hash, err := db.GetAccountForLogin(login)
 	valid := false
-	if err == nil && hash != "" && acct.Status == "active" {
+	if err == nil && hash != "" && (acct.Status == "active" || acct.Status == "pending") {
 		valid = auth.VerifyPassword(password, hash)
 	} else {
 		auth.DummyVerify(password) // same cost whether or not the account exists
@@ -136,6 +147,15 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db.RateLimitReset(userKey, loginWindow)
+	if acct.Status == "pending" {
+		// The right password, but the sign-up waits for its email confirmation.
+		msg := "Confirm your email address first: open the link we sent you."
+		if httpx.FlowCookie(r, signupCookie) != "" {
+			msg += " To get a new one, go back to the check-your-inbox page."
+		}
+		showError(http.StatusForbidden, msg)
+		return
+	}
 	loginsTotal.WithLabelValues("success").Inc()
 	if _, err := httpx.StartSession(w, r, acct.ID); err != nil {
 		slog.Error("failed to start a session", "error", err)

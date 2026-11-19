@@ -7,14 +7,18 @@
         <input class="text" id="username" name="username" type="text" autocomplete="username" value="{{.Login}}" required maxlength="64"{{if .FieldErrors.username}} aria-invalid="true" aria-describedby="username-error username-hint"{{else}} aria-describedby="username-hint"{{end}}>
         {{with .FieldErrors.username}}<p class="field-error" id="username-error">{{.}}</p>{{end}}
         <p class="hint" id="username-hint">3–64 letters, digits, dots, dashes or underscores.</p>
-        <label for="password">Password</label>
+        {{if mail}}<label for="email">Email</label>
+        <input class="text" id="email" name="email" type="email" autocomplete="email" value="{{.Email}}" maxlength="254" placeholder="name@example.com"{{if requireEmail}} required{{end}}{{if .FieldErrors.email}} aria-invalid="true" aria-describedby="email-error email-hint"{{else}} aria-describedby="email-hint"{{end}}>
+        {{with .FieldErrors.email}}<p class="field-error" id="email-error">{{.}}</p>{{end}}
+        <p class="hint" id="email-hint">{{if requireEmail}}We send a link to confirm it before the account is ready.{{else}}Optional. Without one, only an administrator can reset a forgotten password.{{end}}</p>
+        {{end}}<label for="password">Password</label>
         {{template "password" (field "password" "new-password" (index .FieldErrors "password") "At least 10 characters. Use one you use nowhere else.")}}
         <label for="password2">Password again</label>
         {{template "password" (field "password2" "new-password" (index .FieldErrors "password2") "")}}
         <div class="trap" aria-hidden="true"><label for="website">Leave this empty</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
         <div class="message note"><strong>Before you start</strong>
           <ul>
-            <li>Without an email address, only an administrator can reset a forgotten password.</li>
+            {{if not requireEmail}}<li>Without an email address, only an administrator can reset a forgotten password.</li>{{end}}
             <li>Guardian is a hobby project under active development.</li>
             <li>Use a password you use nowhere else.</li>
           </ul>
