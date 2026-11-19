@@ -65,14 +65,34 @@ current: they are the hand-off between sessions.
   check is committed (`632a0d4`). The owner ran the Grafana flow with Docker: admin signs in as Grafana Admin, an
   account without groups is refused, a `grafana-viewers` member signs in as Viewer, removal from the group
   refuses the next sign-in, and Grafana's sign-out goes through Guardian's.
-- **Next: 0.2** (`docs/ROADMAP.md` section 5): a minimal Helm chart and `guardian backup` / `guardian restore`,
-  installed via Argo CD in the staging cluster.
-- Tests: 154, all passing with `-race` (`docs/TESTING.md`).
+- **0.2 in progress** (`docs/ROADMAP.md` section 5), decided 2026-11-19: the image comes from the owner's own
+  registry (no publishing until 0.5); staging uses a Gateway API HTTPRoute and the bundled Postgres.
+  - **Part 1, the chart: built, uncommitted.** `charts/guardian` (see `docs/INSTALL.md`). There is no `helm` in
+    either workspace: templates were checked with a scratch renderer (Go templates plus the few sprig functions
+    the chart uses; not in the repo), the schema with Python `jsonschema`. `.github/workflows/chart.yml` runs
+    the real `helm lint`, `helm template` and kubeconform. Keep the chart to the functions it uses now, or check
+    new ones carefully.
+  - **Part 2, backup and restore: built, uncommitted.** `internal/backup` (format, dump, restore, verify,
+    decrypt) and `cmd/guardian/backup.go`; documented in `docs/INSTALL.md`, "Backup and restore". Encryption with
+    `filippo.io/age`: **the owner still has to vendor it** (`go get filippo.io/age && go mod tidy && go mod vendor`
+    in `backend`). Until then the cloud copy tests with a stand-in that calls the `age` CLI
+    (`age_cli_stub.go`, `age_cli_stub_test.go`; never delivered) while `age.go` and `age_test.go` sit in the
+    scratchpad. Once vendored: bring `vendor/` over, drop the stubs, rerun the tests.
+  - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1 wait
+    until the owner's cluster is.
+- Tests: 165, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
   - `cmd/guardian/main.go` — entry point (`serve`, `migrate`): loads `.env` if present, validates the
-    configuration, sets up logging, runs the server.
+    configuration, sets up logging, runs the server. `backup.go` — `backup`, `backup verify`, `backup decrypt`
+    and `restore`: data on stdout, everything else (logs too) on stderr; `verify` and `decrypt` need no
+    configuration.
+  - `internal/backup/` — the backup file (`format.go`: magic line, manifest in the clear, age payload of
+    gzipped JSON rows, size and SHA-256 trailer), `database.go` (the table list in restore order, the tables
+    left out, snapshot dump, restore into a fresh database with `json_populate_recordset`), `commands.go` (dry
+    runs, the destructive-command rules, audit entries). A new table must go into `tables` or `notBackedUp`;
+    `TestEveryTableIsBackedUpOrLeftOutOnPurpose` fails otherwise.
   - `internal/config/` — every environment variable in one place, validated at startup; all problems reported
     at once. `backend/.env.example` lists them.
   - `internal/server/` — wiring: database, keys, the two routers, both listeners, clean shutdown.
@@ -100,10 +120,12 @@ current: they are the hand-off between sessions.
     development databases must be recreated (`docker compose down -v`); tell the owner.** Columns for later
     features (require-MFA flag, key stages, keyring tags, deletion log) are added with their feature, not before.
   - `internal/testutil/` (helpers for database tests), `e2e/` (HTTP tests against both routers).
-- `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders (0.2 starts here).
+- `charts/guardian/` — the Helm chart (0.2): backend Deployment, Services, PDB, bundled Postgres, HTTPRoute,
+  Ingress; `ci/*.yaml` are the values CI renders. `docs/INSTALL.md` explains it.
 - `frontend/` — empty (0.4).
 - `docker-compose.yml` — backend, Postgres 16, Mailpit, and Grafana behind the `grafana` profile.
-- `.github/workflows/backend.yml` — format check, vet, tests against Postgres, image build.
+- `.github/workflows/backend.yml` — format check, vet, tests against Postgres, image build;
+  `chart.yml` — helm lint, helm template and kubeconform for every `charts/guardian/ci/*.yaml`.
 - `docs/` — see `README.md` for the list.
 
 ## Data model (`00001_init.sql`)

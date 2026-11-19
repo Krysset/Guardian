@@ -32,9 +32,21 @@ var (
 	}, []string{"endpoint"}) // login | register
 )
 
-// RegisterDBMetrics exposes connection-pool stats (open, in use, idle, wait count/duration).
+// RegisterDBMetrics exposes connection-pool stats (open, in use, idle, wait count/duration) and the time of
+// the last backup. Backups run in their own process (kubectl exec), so the time is read from the audit log
+// at each scrape.
 func RegisterDBMetrics() {
 	prometheus.MustRegister(collectors.NewDBStatsCollector(db.GetDatabaseConnection(), "guardian"))
+	prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "guardian", Name: "backup_last_success_timestamp_seconds",
+		Help: "When the last backup was written (Unix time), from the audit log; 0 if there is none.",
+	}, func() float64 {
+		t, err := db.LastBackupTime()
+		if err != nil || t.IsZero() {
+			return 0
+		}
+		return float64(t.Unix())
+	}))
 }
 
 type statusRecorder struct {

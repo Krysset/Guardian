@@ -1,0 +1,32 @@
+{{- if .Values.httpRoute.enabled }}
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "httpRoute.parentRefs is required when httpRoute.enabled is true: name the Gateway to attach to" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "guardian.fullname" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    {{- if .Values.httpRoute.hostnames }}
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+    {{- else }}
+    - {{ include "guardian.host" . | quote }}
+    {{- end }}
+  rules:
+    # Everything goes to the backend until the management UI arrives (0.4), when /account, /admin and /_app
+    # go to the frontend.
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: {{ include "guardian.fullname" . }}
+          port: 3001
+{{- end }}

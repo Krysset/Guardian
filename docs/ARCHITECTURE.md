@@ -35,6 +35,7 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |
 | At most 4 concurrent argon2 hashes | Each hash needs 64 MiB; unbounded logins would exhaust a memory-limited pod. |
 | Migrations with goose, embedded in the binary | One image, no SQL files beside it; a Postgres lock makes replicas take turns. |
+| **Backups through the CLI**, encrypted with age to an offline key | `kubectl exec` access decides who can back up or restore; the cluster never holds the private key. Logical rows (JSON) instead of `pg_dump`, so a restore can check schema revision, keys and counts, and refuses to overwrite an installation in use. |
 | Graceful shutdown, `/healthz`, `/readyz`, bounded DB pool | Rolling deployments without dropped requests; Postgres connections stay bounded. |
 
 ## Load and when to worry
@@ -135,7 +136,8 @@ erDiagram
 
 ## Kubernetes notes
 
-The Helm chart (release 0.2) creates these. The shape matters more than the details:
+The Helm chart (`charts/guardian`, `docs/INSTALL.md`) creates these; the NetworkPolicy comes in 0.5. The shape
+matters more than the details:
 
 - The ingress or Gateway points only at port 3001. Port 3002 is exposed by a separate ClusterIP Service.
 - A NetworkPolicy lets only the ingress controller reach 3001 (its namespace is a chart value) and only

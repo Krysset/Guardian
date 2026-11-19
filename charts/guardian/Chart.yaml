@@ -1,0 +1,8 @@
+apiVersion: v2
+name: guardian
+description: Guardian, an OIDC login service with accounts and groups.
+type: application
+# The chart's own version. appVersion is the default image tag.
+version: 0.2.0
+appVersion: "0.2.0"
+keywords: [oidc, identity, sso]

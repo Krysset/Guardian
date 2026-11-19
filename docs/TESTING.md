@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-19):** 154 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-19):** 165 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -28,8 +28,8 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 
 | Layer | Where | Needs DB | What it proves |
 |---|---|---|---|
-| Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, every sign-in page rendering with escaping, security headers and no inline styles or scripts, static files and their caching, request validation (unknown fields refused, one error shape), metrics labelling, discovery document, `docs/openapi.yaml` matching the router route for route |
-| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, single-app groups, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job |
+| Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, `internal/backup` (file format), `cmd/guardian` (backup command line), and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, every sign-in page rendering with escaping, security headers and no inline styles or scripts, static files and their caching, request validation (unknown fields refused, one error shape), metrics labelling, discovery document, `docs/openapi.yaml` matching the router route for route, the backup file's checksum catching truncation and damage |
+| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, single-app groups, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job; in `internal/backup`, backup and restore against a real database |
 | End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: the sign-in pages driven like a browser without JavaScript (sign-up, sign-in by username or email, temporary passwords, switching account, Home, error pages), SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics |
 
 ## Requirements and the tests that pin them down
@@ -59,6 +59,7 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | The sign-in pages escape everything, keep a strict CSP and never show technical details | `TestEveryPageRendersAndEscapesUntrustedData`, `TestPagesHaveNoInlineStylesOrScripts`, `TestPagesSendSecurityHeaders`, `TestErrorPagesNeverShowDetails`, `TestE2EPagesRoutingAndStaticFiles` |
 | Home lists only the apps the account may use | `TestE2EHomeListsTheAppsTheAccountMayUse` |
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |
+| A backup restores exactly into a new installation, and never over one in use | `TestBackupRestoresIntoAFreshInstallationExactly`, `TestBackupWithoutAuditLogAndDryRun`, `TestEveryTableIsBackedUpOrLeftOutOnPurpose`, `TestFormatDetectsDamage`, `TestBackupCommandLine` |
 | Metrics available for the Prometheus scrape | `TestE2EInternalListenerProbesAndMetrics`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
 
 ## Not covered (yet)

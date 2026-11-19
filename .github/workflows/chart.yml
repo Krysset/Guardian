@@ -1,0 +1,33 @@
+name: chart
+on:
+  push:
+    paths: ["charts/**", ".github/workflows/chart.yml"]
+  pull_request:
+    paths: ["charts/**", ".github/workflows/chart.yml"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Lint and render with every CI values file
+        run: |
+          set -euo pipefail
+          for f in charts/guardian/ci/*.yaml; do
+            echo "== $f"
+            helm lint --strict charts/guardian -f "$f"
+            helm template guardian charts/guardian -n auth -f "$f" > "rendered-$(basename "$f")"
+          done
+      - name: The chart refuses an install without the required values
+        run: |
+          if helm template guardian charts/guardian > /dev/null 2>&1; then
+            echo "helm template succeeded without issuerURL, image and secrets"; exit 1
+          fi
+      - name: Validate the rendered manifests
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/w" -w /w ghcr.io/yannh/kubeconform:v0.6.7 \
+            -strict -summary -ignore-missing-schemas rendered-*.yaml

@@ -3,12 +3,15 @@
 //	guardian            start the server (the default)
 //	guardian serve      the same
 //	guardian migrate    apply pending database migrations, then exit
+//	guardian backup     write an encrypted backup to stdout (see backup.go)
+//	guardian restore    restore a backup into a new installation
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -25,16 +28,25 @@ func main() {
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
-	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
-		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate]")
-		os.Exit(2)
-	}
 
 	// .env is optional: in containers the variables are injected directly.
 	envErr := godotenv.Load()
 
+	if command == "backup" || command == "restore" {
+		// stdout carries the backup, so log lines go to stderr.
+		os.Exit(runBackupCommand(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, func() (config.Config, error) {
+			cfg, err := config.Load()
+			slog.SetDefault(newLogger(cfg.Log, os.Stderr))
+			return cfg, err
+		}))
+	}
+	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
+		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore]")
+		os.Exit(2)
+	}
+
 	cfg, err := config.Load()
-	slog.SetDefault(newLogger(cfg.Log))
+	slog.SetDefault(newLogger(cfg.Log, os.Stdout))
 	if envErr != nil {
 		slog.Debug("no .env file loaded", "error", envErr)
 	}
@@ -64,7 +76,7 @@ func main() {
 	}
 }
 
-func newLogger(cfg config.Log) *slog.Logger {
+func newLogger(cfg config.Log, w io.Writer) *slog.Logger {
 	level := slog.LevelInfo
 	switch cfg.Level {
 	case "debug":
@@ -76,9 +88,9 @@ func newLogger(cfg config.Log) *slog.Logger {
 	}
 	opts := &slog.HandlerOptions{Level: level}
 	if cfg.Format == "text" {
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+		return slog.New(slog.NewTextHandler(w, opts))
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	return slog.New(slog.NewJSONHandler(w, opts))
 }
 
 // flatten expands joined errors, so nested lists of problems become one flat list.

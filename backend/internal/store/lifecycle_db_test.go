@@ -926,3 +926,16 @@ func TestADatabaseFromAnotherSchemaRevisionIsRefused(t *testing.T) {
 		t.Error("re-running the script on an existing database recorded a revision")
 	}
 }
+
+func TestLastBackupTimeComesFromTheAuditLog(t *testing.T) {
+	testutil.Reset(t)
+	if got, err := db.LastBackupTime(); err != nil || !got.IsZero() {
+		t.Fatalf("no backup yet: %v, %v", got, err)
+	}
+	testutil.Exec(t, `INSERT INTO audit_log (event_type, occurred_at) VALUES
+		('backup.created', now() - interval '2 days'), ('backup.created', now() - interval '1 hour'), ('backup.restored', now())`)
+	got, err := db.LastBackupTime()
+	if err != nil || time.Since(got) < 59*time.Minute || time.Since(got) > 61*time.Minute {
+		t.Errorf("last backup = %v (%v), want an hour ago", got, err)
+	}
+}

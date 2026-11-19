@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"time"
 )
@@ -37,4 +38,12 @@ func cleanup() {
 			slog.Error("maintenance query failed", "error", err)
 		}
 	}
+}
+
+// LastBackupTime returns when the last backup was written (the newest backup.created audit entry), or the
+// zero time if there is none.
+func LastBackupTime() (time.Time, error) {
+	var t sql.NullTime
+	err := GetDatabaseConnection().QueryRow(`SELECT max(occurred_at) FROM audit_log WHERE event_type = 'backup.created'`).Scan(&t)
+	return t.Time, err
 }

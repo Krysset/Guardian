@@ -1,0 +1,13 @@
+# Used by CI (helm lint and helm template) and as an example: bundled Postgres behind a Gateway API HTTPRoute.
+issuerURL: https://auth.example.com
+image:
+  repository: registry.example.com/guardian-backend
+  tag: dev
+secrets:
+  existingSecret: guardian
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+      sectionName: https

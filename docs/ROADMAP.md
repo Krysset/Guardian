@@ -154,14 +154,14 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - **After restoring an older backup,** security changes made since are reverted: removed admins, changed passwords and revoked app secrets come back. The runbook has a post-restore checklist.
   - **Scheduled backups:** a CronJob writes backups, plus the matching deletion log, to its own disk claim and storage class, and keeps the last N. S3 comes in 1.x.
   - **Backup manifest:**
-    - Each backup gets an unencrypted sidecar file with no personal data: format and schema version, time, row counts per table, the size and SHA-256 of the encrypted file, and the keyring key id it needs.
-    - `guardian backup verify` checks a file against its manifest without the private key.
-    - Metrics report the time and counts of the last successful backup.
+    - Each backup starts with an unencrypted manifest with no personal data: format and schema version, time, issuer, row counts per table, and the id of the key-encryption key it needs. The size and SHA-256 of the encrypted part close the file, because the backup is streamed and they are known only at the end. One file instead of a sidecar, so `kubectl exec ... > file` captures all of it.
+    - `guardian backup verify` checks a file against its manifest without the private key; with the key it also counts the rows.
+    - Metrics report the time of the last successful backup (`guardian_backup_last_success_timestamp_seconds`, read from the audit log); the counts are in the backup's audit entry.
     - A restore drill with the private key is documented, because only a real restore proves a backup works.
 - **Rules for destructive commands** (key revoke, `mfa reset-totp --all`, restore):
   - They exist only as CLI commands, so Kubernetes RBAC on `pods/exec` decides who can run them.
   - They do a dry run by default. To execute they need `--execute`, `--reason`, and the issuer host typed back (or `--confirm=<host>`).
-  - Each run is audited and increments a metric.
+  - Each run is audited. (A metric per run is not possible: the commands run in their own process, not in the server that Prometheus scrapes. The audit log is the record.)
   - They are idempotent: either a single transaction, or resumable batches.
   - Backup itself needs `--execute` and `--reason`, and is audited.
 - **Bundled Postgres** (`database.mode: bundled`, the default; `external` is the alternative):
@@ -256,7 +256,9 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 
 ### 0.2: it runs in the cluster
 - A minimal chart: backend, bundled or external Postgres, Ingress/HTTPRoute, required Secrets, startup migrations.
-- `guardian backup` and `guardian restore`, with the deletion log, the manifest and the rules for destructive commands.
+  - **Built 2026-11-19, not yet installed:** `charts/guardian` with the backend Deployment, both Services, a PDB, the bundled Postgres StatefulSet, HTTPRoute and Ingress, `values.schema.json`, CI values, and `docs/INSTALL.md`. A `chart` CI workflow lints, renders and validates it. The image comes from the owner's own registry until the release workflow (0.5).
+- `guardian backup` and `guardian restore`, with the manifest and the rules for destructive commands.
+  - **Built 2026-11-19, tested locally:** `internal/backup` and the `backup`, `backup verify`, `backup decrypt` and `restore` commands (`docs/INSTALL.md`, "Backup and restore"). A restore only goes into a new installation, needs the same schema revision and key-encryption key, and is rehearsed in a rolled-back transaction by the dry run. The deletion log moved to 0.3, where account deletion creates it.
 - **Done when:** installed via Argo CD in the staging cluster, and a backup restores into a fresh install.
 
 ### 0.3: accounts
@@ -264,7 +266,7 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - TOTP, recovery codes, the MFA challenge, the recovery ladder, admin MFA reset.
 - **Mandatory MFA for admins and group owners, and enforcement of the per-app "require MFA" setting.**
 - Re-authentication and the protected-change list.
-- Account deletion with the grace period and hard delete, and "download my data".
+- Account deletion with the grace period and hard delete, and "download my data". The deletion log arrives with it, in backups too, with `--apply-deletions` and `guardian deletions export`.
 - The signing-key lifecycle with automatic rotation, the encryption keyring with re-encryption, and the runbook commands.
 - Abuse protection (login limits and the honeypot).
 - **Done when:** end-to-end tests cover reset, verification, MFA sign-in, re-authentication, deletion, and key and keyring rotation.
@@ -335,3 +337,4 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-15: page contents reviewed: passwords typed twice, sign-up signs the user in, session IPs masked like emails, admin-created accounts change their password at first sign-in, temporary passwords typed by the admin (a generate button in 0.5).
 - 2026-11-19: Home (`/`, H0) replaces the account area start page; it arrives with the management UI in 0.4, and until then a simple Home in the sign-in page style lists the user's apps. The sign-in pages of 0.1 are built; optional `HELP_URL` and `PRIVACY_URL` fill their footer.
 - 2026-11-19: 0.1 done. Single-app groups built in the backend. The sign-in pages are dark only; light mode is not planned for now. The owner checked the whole flow with Grafana; `docker-compose.yml` renames Grafana's built-in user and gives accounts without an email a placeholder address for Grafana.
+- 2026-11-19: backup and restore built (0.2). The manifest sits at the start of the backup file instead of in a sidecar, with the checksum at the end. The deletion log moved to 0.3, with account deletion. Destructive commands are audited instead of counted in a metric, since they run outside the server. Chart features wait until the cluster is ready; local development continues.

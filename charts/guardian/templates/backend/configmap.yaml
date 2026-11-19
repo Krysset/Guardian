@@ -1,0 +1,44 @@
+{{- $bundled := eq .Values.database.mode "bundled" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "guardian.fullname" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+data:
+  ISSUER_URL: {{ trimSuffix "/" (required "issuerURL is required" .Values.issuerURL) | quote }}
+  PUBLIC_ADDR: ":3001"
+  INTERNAL_ADDR: ":3002"
+  TRUSTED_PROXY_HOPS: {{ .Values.trustedProxyHops | quote }}
+  LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  {{- with .Values.config.sessionIdleTimeout }}
+  SESSION_IDLE_TIMEOUT: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.sessionMaxLifetime }}
+  SESSION_MAX_LIFETIME: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.helpURL }}
+  HELP_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.privacyURL }}
+  PRIVACY_URL: {{ . | quote }}
+  {{- end }}
+  DB_MAX_CONNS: {{ .Values.database.maxConns | quote }}
+  {{- if $bundled }}
+  DB_HOST: {{ include "guardian.postgresName" . | quote }}
+  DB_PORT: "5432"
+  DB_USER: {{ .Values.database.bundled.user | quote }}
+  DB_NAME: {{ .Values.database.bundled.name | quote }}
+  DB_SSLMODE: "disable"
+  {{- else }}
+  DB_HOST: {{ required "database.external.host is required when database.mode is external" .Values.database.external.host | quote }}
+  DB_PORT: {{ .Values.database.external.port | quote }}
+  DB_USER: {{ .Values.database.external.user | quote }}
+  DB_NAME: {{ .Values.database.external.name | quote }}
+  DB_SSLMODE: {{ .Values.database.external.sslMode | quote }}
+  {{- end }}
+  {{- range $name, $value := .Values.config.extraEnv }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}

@@ -8,8 +8,9 @@ Guardian is a hobby project under active development. It is not ready for produc
 ## Status
 
 Release 0.1 (it runs locally) is done: OIDC with signed JWT access tokens, groups and per-app access rules,
-the sign-in pages, a simple Home, the JSON API at `/api/v1`, and a read-only machine API for apps. Next is 0.2: a
-Helm chart and backups. The management UI (the account and admin areas) comes in 0.4. The plan is in
+the sign-in pages, a simple Home, the JSON API at `/api/v1`, and a read-only machine API for apps. 0.2 is in
+progress: the Helm chart and encrypted backups (`guardian backup`, `guardian restore`) are built, and wait for
+the cluster. The management UI (the account and admin areas) comes in 0.4. The plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Run it locally
@@ -59,6 +60,7 @@ GUARDIAN_TEST_DB=1 DB_HOST=localhost DB_USER=postgres DB_NAME=guardian_test go t
 For app developers:
 
 - [docs/INTEGRATION.md](docs/INTEGRATION.md): how to connect an app.
+- [docs/INSTALL.md](docs/INSTALL.md): installing Guardian in Kubernetes with the Helm chart.
 - [docs/openapi.yaml](docs/openapi.yaml): the JSON API, `/api/v1`.
 - [docs/LOCAL-GRAFANA.md](docs/LOCAL-GRAFANA.md): try the whole sign-in flow locally with Grafana.
 
