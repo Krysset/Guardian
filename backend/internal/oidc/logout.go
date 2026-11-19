@@ -61,13 +61,9 @@ func resolvePostLogoutRedirect(hint, clientID, uri string) string {
 }
 
 func finishLogout(w http.ResponseWriter, r *http.Request, redirectURI, state string) {
-	if redirectURI == "" {
-		web.Message(w, http.StatusOK, "Signed out", "You have been signed out of Guardian and all connected apps.")
-		return
-	}
 	u, err := url.Parse(redirectURI)
-	if err != nil {
-		web.Message(w, http.StatusOK, "Signed out", "You have been signed out.")
+	if redirectURI == "" || err != nil {
+		web.Render(w, http.StatusOK, "signedout", web.Page{Title: "Signed out"})
 		return
 	}
 	if state != "" {
@@ -108,19 +104,25 @@ func logoutPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	web.Render(w, http.StatusOK, "logout", web.Page{
-		Title: "Sign out", Message: "Sign out of Guardian? You will be signed out of all connected apps.",
+	acct, _ := db.GetAccount(sess.AccountID)
+	web.Render(w, http.StatusOK, "signout", web.Page{
+		Title: "Sign out?", Username: acct.Username,
 		CSRF: httpx.CSRFToken(w, r), IDTokenHint: hint, ClientID: clientID, PostLogoutRedirectURI: uri, State: state,
 	})
 }
 
 func logoutSubmit(w http.ResponseWriter, r *http.Request) {
 	if !httpx.CSRFValid(r) {
-		web.Message(w, http.StatusForbidden, "Request rejected", "Your form expired. Reload the page and try again.")
+		web.Error(w, web.FormExpired)
 		return
 	}
 	if sess, ok := httpx.SessionFromRequest(r); ok {
 		performLogout(w, r, sess)
+	}
+	// "Not you? Sign out" and "Sign out to switch account" continue the app's sign-in as someone else.
+	if returnTo := httpx.SafeReturnTo(r.PostFormValue("return_to")); returnTo != "" {
+		http.Redirect(w, r, "/login?return_to="+url.QueryEscape(returnTo), http.StatusSeeOther)
+		return
 	}
 	redirectURI := resolvePostLogoutRedirect(r.PostFormValue("id_token_hint"), r.PostFormValue("client_id"),
 		r.PostFormValue("post_logout_redirect_uri"))

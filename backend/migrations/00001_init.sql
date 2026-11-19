@@ -173,7 +173,15 @@ CREATE TABLE IF NOT EXISTS user_group (
 	-- Members of the owner group may add and remove members of this group. One level only.
 	owner_group_id  UUID REFERENCES user_group(id) ON DELETE SET NULL,
 	created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	CHECK (owner_group_id IS DISTINCT FROM id)
+	-- Single-app groups: bound_at is set when the group is bound to one app, for good. It can then only
+	-- be linked to that app. When the app is deleted, bound_app_id becomes NULL and bound_app_deleted_at
+	-- records when, so the group can never be linked again and is cleaned up after audit retention (0.5).
+	bound_app_id          UUID REFERENCES app(id) ON DELETE SET NULL,
+	bound_at              TIMESTAMPTZ,
+	bound_app_deleted_at  TIMESTAMPTZ,
+	CHECK (owner_group_id IS DISTINCT FROM id),
+	CHECK (bound_app_id IS NULL OR bound_at IS NOT NULL),
+	CHECK (NOT (is_system AND bound_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS ix_user_group_owner ON user_group (owner_group_id);
 

@@ -65,10 +65,10 @@ personal details by accident.
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| V1 | Sign in with username or email and password. | 0.1 | done (new design in 0.1) |
+| V1 | Sign in with username or email and password. | 0.1 | done |
 | V2 | Clear messages for wrong credentials and too many attempts, never revealing whether an account exists. | 0.1 | done |
-| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The password is typed twice. After sign-up the user is signed in and continues to the app they came from; when they gave an email, only once it is confirmed. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | API done |
-| V4 | Understand what went wrong when an app sends a broken sign-in request, an expired form, or a page that does not exist. | 0.1 | done (new design in 0.1) |
+| V3 | Create an account: username and password; email optional, or required when the operator sets `REQUIRE_EMAIL`, and confirmed by a link. The password is typed twice. After sign-up the user is signed in and continues to the app they came from; when they gave an email, only once it is confirmed. The sign-up page shows three notices: without an email only an admin can reset a forgotten password; Guardian is a hobby project under development; use a unique password. | 0.1 (email 0.3) | done (email 0.3) |
+| V4 | Understand what went wrong when an app sends a broken sign-in request, an expired form, or a page that does not exist. | 0.1 | done |
 | V5 | Forgot password: ask for a reset link (the answer is the same whether or not the account exists), then set a new password from the link. Two-factor still applies afterwards. | 0.3 | planned |
 | V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | planned |
 | V7 | Pass the second factor at sign-in: an authenticator code or a recovery code (0.3), or a security key (0.5). | 0.3, keys 0.5 | planned |
@@ -82,12 +82,12 @@ Everything a visitor has, plus:
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| U1 | Consent: which app asks, as whom the user is signed in, and what the app will get. Allow or deny. | 0.1 | done (new design in 0.1) |
-| U2 | Be told plainly that their account has no access to an app, and what to do about it. | 0.1 | done (new design in 0.1) |
-| U3 | Choose a new password after an admin set a temporary one, before going on. | 0.1 | planned (part 6) |
+| U1 | Consent: which app asks, as whom the user is signed in, and what the app will get. Allow or deny. | 0.1 | done |
+| U2 | Be told plainly that their account has no access to an app, and what to do about it. | 0.1 | done |
+| U3 | Choose a new password after an admin set a temporary one, before going on. | 0.1 | done |
 | U4 | Set up two-factor when it is required (they are an admin or a group owner, or the app requires it), including saving recovery codes and confirming one before setup finishes. | 0.3, keys 0.5 | planned |
-| U5 | Confirm signing out when an app asks for it without proof it is them, and see that they are signed out of Guardian and all apps. | 0.1 | done (new design in 0.1) |
-| U6 | When already signed in: see as whom, go to their account, or sign out to switch account. | 0.1 | done (new design in 0.1) |
+| U5 | Confirm signing out when an app asks for it without proof it is them, and see that they are signed out of Guardian and all apps. | 0.1 | done |
+| U6 | When already signed in: see as whom, go to their account, or sign out to switch account. | 0.1 | done (the account link comes with the account area, 0.4) |
 
 **In the account area**
 
@@ -105,8 +105,8 @@ Everything a visitor has, plus:
 | U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | planned |
 | U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | planned |
 | U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
-| U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.4 | planned |
-| U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.4 / 0.4 | planned |
+| U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | simple version done (0.1) |
+| U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | simple version done (0.1) |
 
 ## Group owner
 
@@ -163,7 +163,7 @@ Everything an app admin has for every app, and everything a group owner has for 
 | A13 | Manage the members of any group, with expiry dates; also from an account's page. | 0.1 / 0.4 | API done |
 | A14 | Set or remove a group's owner group. | 0.1 / 0.4 | API done |
 | A26 | Mark a group as hidden from its members: it is left out of their own group list (U18). Owners and admins still see it, and apps still receive it in tokens, which a user's browser can sometimes read, so this hides it from the account area, not from a determined user. | 1.x, if needed | deferred |
-| A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | planned |
+| A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | API done |
 | A29 | Copy a group: a new group, with a new key, starting with the same members (and their expiry dates), after which the two are unrelated. For replacing an app without adding every member again, for two groups that start alike but will grow apart, and for starting a larger group from a smaller one. | 1.x | planned |
 
 **Apps**

@@ -36,6 +36,11 @@ type Config struct {
 	// SessionMaxLifetime ends a sign-in session this long after sign-in, however active it is.
 	SessionMaxLifetime time.Duration
 
+	// HelpURL and PrivacyURL are the Help and Privacy links in the footer of the sign-in pages.
+	// Each link is left out when its address is empty.
+	HelpURL    string
+	PrivacyURL string
+
 	// KeyEncryptionKey is the 32-byte AES key that encrypts signing keys at rest.
 	KeyEncryptionKey []byte
 	// AdminInitialPassword sets the seeded admin's first password. Empty means: generate one and log it once.
@@ -116,6 +121,22 @@ func Load() (Config, error) {
 		if o = strings.TrimRight(strings.TrimSpace(o), "/"); o != "" {
 			cfg.AllowedOrigins = append(cfg.AllowedOrigins, o)
 		}
+	}
+
+	for _, s := range []struct {
+		key  string
+		into *string
+	}{{"HELP_URL", &cfg.HelpURL}, {"PRIVACY_URL", &cfg.PrivacyURL}} {
+		key, into := s.key, s.into
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			fail("%s must be an http:// or https:// URL, got %q", key, v)
+			continue
+		}
+		*into = v
 	}
 
 	duration := func(key string, into *time.Duration) {

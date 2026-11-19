@@ -323,6 +323,10 @@ paths:
                 display_name: { type: string, minLength: 1, maxLength: 128 }
                 description: { type: string, maxLength: 1024 }
                 owner_group_id: { type: string, format: uuid, description: The group whose members manage this group's members. }
+                bound_app_id:
+                  type: string
+                  format: uuid
+                  description: Makes a single-app group, bound to this app for good and linked to it. It can never be linked to another app.
       responses:
         '201':
           description: The new group.
@@ -387,6 +391,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group}/bind:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    post:
+      tags: [groups]
+      summary: Bind a group to one app
+      description: |
+        Makes the group a single-app group: bound to the app for good, and linked to it. Refused for built-in
+        groups, for a group that is already bound (already_bound), and for a group linked to any other app
+        (linked_elsewhere). A binding can never be removed or moved.
+      operationId: bindGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [app_id]
+              properties:
+                app_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The bound group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /groups/{group}/members:
     parameters:
@@ -583,7 +620,8 @@ paths:
         The access rule and the complete list of linked groups. With "groups", only members of a linked group may
         sign in; with "anyone", every account may, and the linked groups only decide which groups the app is
         told about. machine_api (optional) turns the app's own read-only machine API access on or off; only
-        confidential apps may have it. A refused request changes nothing.
+        confidential apps may have it. A group bound to another app cannot be linked (409, group_bound). A
+        refused request changes nothing.
       operationId: setAppAccess
       requestBody:
         required: true
@@ -607,6 +645,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /apps/{app}/secret:
     parameters:
@@ -948,7 +987,7 @@ components:
 
     Group:
       type: object
-      required: [id, key, display_name, description, is_system, member_count, app_ids, created_at]
+      required: [id, key, display_name, description, is_system, member_count, app_ids, created_at, single_app]
       properties:
         id: { type: string, format: uuid }
         key: { type: string }
@@ -959,6 +998,10 @@ components:
         member_count: { type: integer, description: Memberships that have not expired. }
         app_ids: { type: array, items: { type: string, format: uuid } }
         created_at: { type: string, format: date-time }
+        single_app: { type: boolean, description: Bound to one app for good; it can be linked to no other. }
+        bound_app_id: { type: string, format: uuid, description: The app a single-app group is bound to; absent once that app was deleted. }
+        bound_at: { type: string, format: date-time }
+        bound_app_deleted_at: { type: string, format: date-time, description: When the bound app was deleted. Such a group can never be linked again. }
     GroupMember:
       type: object
       required: [account_id, username, added_at]

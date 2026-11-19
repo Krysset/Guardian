@@ -24,6 +24,9 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | **Stable refresh tokens** for apps with a secret | One per sign-in, never replaced, valid while the session lives. Parallel refreshes and retries cannot trip a reuse detector; a stolen token is useless without the client secret. Apps without a secret get none until rotation is added for mobile apps. |
 | **Back-channel logout** on logout, account deletion and leaving a group | Makes those changes immediate for apps that support it (2). Delivery is best effort; the next refresh is the safety net. |
 | The **access rule** is enforced by Guardian | With `groups`, accounts outside the app's linked groups never get a code or a token, at sign-in or at refresh. Apps do not have to remember to refuse them. |
+| **Single-app groups** | A group made for one app can be bound to it for good, so it can never grant access to another app, not even by being moved. Binding and linking lock the same rows, so they cannot race. |
+| **Sign-in pages rendered by the backend** | Go templates with embedded styles and scripts: they work without JavaScript, share the session cookie's origin, and allow a strict Content-Security-Policy (no inline styles or scripts). The management UI (0.4) is a separate frontend on the same origin. |
+| An account with a **temporary password** gets nothing until it chooses its own | Login, Home and `/authorize` all send it to the new-password page first, so an admin-set password never reaches an app. |
 | **No Redis, no cache** | Each refresh is a handful of indexed queries. Load scales with signed-in users times apps divided by the token lifetime, not with request rate. One component fewer to run and keep consistent. |
 | **Two listeners**: public `:3001`, internal `:3002` | Metrics and probes are never reachable through the ingress, even if an ingress rule is wrong. |
 | Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login and sign-up volumes (1). |
@@ -80,9 +83,12 @@ sequenceDiagram
   A-->>B: redirect to /authorize (PKCE)
   B->>G: GET /authorize
   alt no session cookie
-    G-->>B: login form
+    G-->>B: sign-in page
     B->>G: POST /login (password)
     G-->>B: session cookie, redirect back
+  end
+  opt temporary password set by an admin
+    G-->>B: choose a new password first
   end
   Note over G: access rule: is the account in a group linked to the app?
   G-->>B: redirect to app with code
@@ -119,6 +125,7 @@ erDiagram
   USER_GROUP |o--o{ USER_GROUP : "owns (owner group)"
   APP ||--o{ APP_GROUP : "is told about"
   USER_GROUP ||--o{ APP_GROUP : "linked to"
+  APP |o--o{ USER_GROUP : "binds (single-app)"
   ACCOUNT ||--o{ SESSION : "signs in"
   SESSION ||--o{ REFRESH_TOKEN : "ends with"
   APP ||--o{ REFRESH_TOKEN : holds

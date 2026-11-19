@@ -1,0 +1,14 @@
+{{define "bar"}} large{{end}}
+{{define "content"}}
+      <h1>Sign in</h1>
+      {{template "error-banner" .}}
+      <form method="post" action="/login">
+        {{template "hidden-flow" .}}
+        <label for="username">Username or email</label>
+        <input class="text" id="username" name="username" type="text" autocomplete="username" value="{{.Login}}" required{{if not .Login}} autofocus{{end}}>
+        <label for="password">Password</label>
+        <div class="password"><input class="text" id="password" name="password" type="password" autocomplete="current-password" required{{if .Login}} autofocus{{end}}></div>
+        <button class="button" type="submit">Sign in</button>
+      </form>
+      <p class="small">New to Guardian? <a href="/signup{{if .ReturnTo}}?return_to={{.ReturnTo}}{{end}}">Create an account</a></p>
+{{end}}

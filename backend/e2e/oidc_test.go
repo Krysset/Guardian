@@ -99,7 +99,7 @@ func TestE2ESessionCookieIsHardenedAndStoredHashed(t *testing.T) {
 	b := newBrowser(t)
 	resp := b.login("alice", testutil.DefaultPassword, "")
 	wantStatus(t, resp, http.StatusSeeOther)
-	if resp.Header.Get("Location") != "/login" {
+	if resp.Header.Get("Location") != "/" {
 		t.Errorf("login without return_to goes to %q", resp.Header.Get("Location"))
 	}
 	var session *http.Cookie
@@ -556,7 +556,7 @@ func TestE2EConsentFlowForThirdPartyApps(t *testing.T) {
 	resp := b.get(query("openid email", nil))
 	wantStatus(t, resp, 200)
 	page := readBody(t, resp)
-	for _, want := range []string{"App thirdparty", "Your email address", "Verify your identity"} {
+	for _, want := range []string{"App thirdparty", "Your email address", "Who you are: your account id"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("consent page lacks %q", want)
 		}

@@ -57,6 +57,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"SESSION_IDLE_TIMEOUT": "2h", "SESSION_MAX_LIFETIME": "12h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
 		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret",
 		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug",
+		"HELP_URL": "https://example.com/help", "PRIVACY_URL": " https://example.com/privacy ",
 	} {
 		t.Setenv(k, v)
 	}
@@ -80,6 +81,9 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 	if cfg.Log.Format != "text" || cfg.Log.Level != "debug" {
 		t.Errorf("log = %+v", cfg.Log)
 	}
+	if cfg.HelpURL != "https://example.com/help" || cfg.PrivacyURL != "https://example.com/privacy" {
+		t.Errorf("footer links = %q, %q", cfg.HelpURL, cfg.PrivacyURL)
+	}
 }
 
 func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
@@ -88,6 +92,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 		"DB_HOST": "", "DB_PORT": "abc", "DB_SSLMODE": "maybe", "DB_MAX_CONNS": "0",
 		"ISSUER_URL": "", "KEY_ENCRYPTION_KEY": "", "SESSION_IDLE_TIMEOUT": "soon", "SESSION_MAX_LIFETIME": "-1h",
 		"TRUSTED_PROXY_HOPS": "-1", "LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
+		"HELP_URL": "javascript:alert(1)", "PRIVACY_URL": "/privacy",
 	} {
 		t.Setenv(k, v)
 	}
@@ -97,7 +102,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	}
 	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "ISSUER_URL",
 		"KEY_ENCRYPTION_KEY", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
-		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL"} {
+		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL", "HELP_URL", "PRIVACY_URL"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("the error does not mention %s:\n%v", name, err)
 		}

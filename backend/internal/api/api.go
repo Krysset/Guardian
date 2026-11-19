@@ -53,6 +53,7 @@ func Router() http.Handler {
 				r.Post("/groups", createGroup)
 				r.Patch("/groups/{group}", updateGroup)
 				r.Delete("/groups/{group}", deleteGroup)
+				r.Post("/groups/{group}/bind", bindGroup)
 
 				r.Get("/accounts", listAccounts)
 				r.Post("/accounts", createAccount)

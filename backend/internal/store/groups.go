@@ -16,6 +16,15 @@ var (
 	ErrGroupNotFound = errors.New("group not found")
 	ErrSystemGroup   = errors.New("built-in groups cannot be changed or deleted")
 	ErrInvalidOwner  = errors.New("the owner must be another existing group")
+	// ErrGroupBound: the group is bound to another app (or to an app that was deleted), so it cannot be
+	// linked to this one.
+	ErrGroupBound = errors.New("the group is bound to another app")
+	// ErrAlreadyBound: a binding is permanent and cannot be moved.
+	ErrAlreadyBound = errors.New("the group is already bound to an app; a binding cannot be changed")
+	// ErrLinkedElsewhere: a group can only be bound to an app if it is linked to no other app.
+	ErrLinkedElsewhere = errors.New("the group is linked to another app")
+	// ErrAppNotFound: the app to bind a group to does not exist.
+	ErrAppNotFound = errors.New("app not found")
 	// ErrLastAdmin protects against locking everyone out: one active account must always be an
 	// administrator through a membership that does not expire.
 	ErrLastAdmin = errors.New("Guardian must keep at least one active administrator whose membership does not expire")
@@ -31,6 +40,13 @@ type Group struct {
 	MemberCount  int       `json:"member_count"` // memberships that have not expired
 	AppIDs       []string  `json:"app_ids"`      // apps this group is linked to
 	CreatedAt    time.Time `json:"created_at"`
+
+	// SingleApp groups are bound to one app for good (BoundAppID), and can be linked to no other. A
+	// single-app group without BoundAppID lost its app: BoundAppDeletedAt says when.
+	SingleApp         bool       `json:"single_app"`
+	BoundAppID        string     `json:"bound_app_id,omitempty"`
+	BoundAt           *time.Time `json:"bound_at,omitempty"`
+	BoundAppDeletedAt *time.Time `json:"bound_app_deleted_at,omitempty"`
 }
 
 type GroupMember struct {
@@ -47,13 +63,23 @@ const activeMember = `(m.expires_at IS NULL OR m.expires_at > now())`
 
 const groupColumns = `g.id, g.key, g.display_name, g.description, g.is_system, COALESCE(g.owner_group_id::text, ''),
 	(SELECT count(*) FROM group_member m WHERE m.group_id = g.id AND ` + activeMember + `),
-	ARRAY(SELECT ag.app_id::text FROM app_group ag WHERE ag.group_id = g.id ORDER BY 1), g.created_at`
+	ARRAY(SELECT ag.app_id::text FROM app_group ag WHERE ag.group_id = g.id ORDER BY 1), g.created_at,
+	COALESCE(g.bound_app_id::text, ''), g.bound_at, g.bound_app_deleted_at`
 
 func scanGroup(s scanner) (Group, error) {
 	var g Group
+	var boundAt, deletedAt sql.NullTime
 	err := s.Scan(&g.ID, &g.Key, &g.DisplayName, &g.Description, &g.IsSystem, &g.OwnerGroupID, &g.MemberCount,
-		scanArray(&g.AppIDs), &g.CreatedAt)
+		scanArray(&g.AppIDs), &g.CreatedAt, &g.BoundAppID, &boundAt, &deletedAt)
 	g.CreatedAt = g.CreatedAt.UTC()
+	if boundAt.Valid {
+		t := boundAt.Time.UTC()
+		g.SingleApp, g.BoundAt = true, &t
+	}
+	if deletedAt.Valid {
+		t := deletedAt.Time.UTC()
+		g.BoundAppDeletedAt = &t
+	}
 	return g, err
 }
 
@@ -99,19 +125,92 @@ func GetGroup(id string) (Group, error) {
 }
 
 // CreateGroup makes a new, empty group. The key can never be changed afterwards, because apps match on it.
-// ownerGroupID may be "".
-func CreateGroup(key, displayName, description, ownerGroupID string) (string, error) {
+// ownerGroupID may be "". With boundAppID the group is a single-app group: bound to that app for good
+// and linked to it.
+func CreateGroup(key, displayName, description, ownerGroupID, boundAppID string) (string, error) {
 	if ownerGroupID != "" {
 		if _, err := GetGroup(ownerGroupID); err != nil {
 			return "", ErrInvalidOwner
 		}
 	}
+	tx, err := GetDatabaseConnection().Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
 	var id string
-	err := GetDatabaseConnection().QueryRow(
+	err = tx.QueryRow(
 		`INSERT INTO user_group (key, display_name, description, owner_group_id)
 		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid) RETURNING id`,
 		key, displayName, description, ownerGroupID).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	if boundAppID != "" {
+		if err := bindGroup(tx, id, boundAppID); err != nil {
+			return "", err
+		}
+	}
+	return id, tx.Commit()
+}
+
+// BindGroup makes an existing group a single-app group: bound to the app for good, and linked to it. It is
+// refused for built-in groups, for groups that are already bound (a binding never moves) and for groups
+// linked to any other app.
+func BindGroup(groupID, appID string) error {
+	if !IsUUID(groupID) {
+		return ErrGroupNotFound
+	}
+	tx, err := GetDatabaseConnection().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := bindGroup(tx, groupID, appID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func bindGroup(tx *sql.Tx, groupID, appID string) error {
+	if !IsUUID(appID) {
+		return ErrAppNotFound
+	}
+	// The row lock keeps a concurrent link (linkAppGroups locks the same rows) from slipping in between
+	// the check and the binding.
+	var isSystem, bound bool
+	err := tx.QueryRow(`SELECT is_system, bound_at IS NOT NULL FROM user_group WHERE id = $1 FOR UPDATE`, groupID).
+		Scan(&isSystem, &bound)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrGroupNotFound
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case isSystem:
+		return ErrSystemGroup
+	case bound:
+		return ErrAlreadyBound
+	}
+	var appExists, linkedElsewhere bool
+	err = tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM app WHERE id = $2),
+		        EXISTS (SELECT 1 FROM app_group WHERE group_id = $1 AND app_id <> $2)`, groupID, appID).
+		Scan(&appExists, &linkedElsewhere)
+	if err != nil {
+		return err
+	}
+	if !appExists {
+		return ErrAppNotFound
+	}
+	if linkedElsewhere {
+		return ErrLinkedElsewhere
+	}
+	if _, err := tx.Exec(`UPDATE user_group SET bound_app_id = $2, bound_at = now() WHERE id = $1`, groupID, appID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO app_group (app_id, group_id) VALUES ($2, $1) ON CONFLICT DO NOTHING`, groupID, appID)
+	return err
 }
 
 // GroupUpdate lists what UpdateGroup may change. A nil field is left as it is.
@@ -337,7 +436,21 @@ func SetAppAccess(appID, accessRule string, groupIDs []string) error {
 
 // linkAppGroups replaces the app's linked groups. Unknown group ids are an error, so a typo cannot
 // silently leave an app without the group that was meant to open it.
+// Groups bound to another app (or to a deleted one) are refused with ErrGroupBound.
 func linkAppGroups(tx *sql.Tx, appID string, groupIDs []string) error {
+	// Lock the groups so that a concurrent BindGroup sees these links, or this sees its binding.
+	var boundElsewhere bool
+	err := tx.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM (SELECT bound_at, bound_app_id FROM user_group
+		        WHERE id = ANY($2::text[]::uuid[]) FOR SHARE) g
+		        WHERE g.bound_at IS NOT NULL AND g.bound_app_id IS DISTINCT FROM $1::uuid)`,
+		appID, strArray(groupIDs)).Scan(&boundElsewhere)
+	if err != nil {
+		return err
+	}
+	if boundElsewhere {
+		return ErrGroupBound
+	}
 	if _, err := tx.Exec(`DELETE FROM app_group WHERE app_id = $1`, appID); err != nil {
 		return err
 	}

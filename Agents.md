@@ -1,80 +1,178 @@
 # Agents.md — Guardian
 
-Hand-off notes for AI agents (and humans). Read this first in a new session, then `docs/ROADMAP.md`. Update both when decisions change.
+Hand-off notes for AI agents (and humans). Read this first in a new session. `docs/ROADMAP.md` is the source
+of truth for design decisions and the release plan; if this file disagrees with it, the roadmap wins. Keep both
+current: they are the hand-off between sessions.
 
 ## What Guardian is
-- OIDC provider and account service with per-app permissions, similar in function to Authentik. It is meant to be the single source of truth for users and for what they may do in each app.
-- Named after the Guardian enemies in *Zelda: Breath of the Wild*; the visual identity follows from that.
-- Deployed to Kubernetes as one Helm release (frontend, backend, Postgres connection). Other services, usually in the same cluster, call it over HTTP.
+- An OIDC provider and account service, similar in function to Authentik: the single source of truth for
+  accounts and group membership. Apps map groups to their own permissions.
+- Named after the Guardians in *Zelda: Breath of the Wild*; the visual identity follows from that.
+- Deployed to Kubernetes as one Helm release (frontend, backend, Postgres). Apps, usually in the same cluster,
+  use it over HTTP.
 
 ## Hard requirements (do not trade these away)
 - Open sign-up, rate limited.
-- **Bounded staleness** (changed 2026-11-13; earlier docs said "immediate"):
-  - Group changes, logout and disabling reach an app within its `access_token_ttl_seconds`. This is configurable per app, with a floor of 15 seconds.
-  - Every refresh re-checks session, account, app and groups.
-  - Back-channel logout makes logout and disabling immediate for apps that implement it.
-- **Do not overload Guardian:** there is no per-request call from apps. Apps validate JWT access tokens locally and only call Guardian to refresh.
-- **Integration is just "use any OIDC library and read the `groups` claim"**, plus an optional read-only machine API via `client_credentials`.
-- Prometheus metrics from the backend.
-- Helm chart with Traefik as an ingress option (not nginx).
+- **Bounded staleness:** group changes, logout and disabling reach an app within its `access_token_ttl_seconds`
+  (per app, at least 15 seconds). Every refresh re-checks session, account, app and groups. Back-channel logout
+  makes it immediate for apps that support it.
+- **No per-request calls from apps:** they validate JWT access tokens locally and call Guardian only to refresh.
+- **Integration is "any OIDC library plus the `groups` claim"**, with an optional read-only machine API.
+- Prometheus metrics. Helm chart with standard Ingress or Gateway API routing (works with Traefik; nothing
+  Traefik-specific).
+
+## Working with the owner
+- Leave changes **uncommitted (staged)** so the owner can review them; the owner commits. Do not push or merge.
+- Number questions so the owner can answer by number.
+- Words: **sign-in pages** (served by the backend), **management UI** (the SvelteKit frontend) with the
+  **account area** (`/account`) and the **admin area** (`/admin`), **Home** (`/`). Never "console": the owner
+  read that as a terminal. The **CLI** (`guardian ...` via `kubectl exec`) is only for cluster operations.
+- No warnings or refusals for legacy or removed settings before 1.0: nothing is deployed until then.
+- Light mode is not wanted for now: don't build anything for it.
 
 ## Environment
-- Owner works on Windows; repo is at `D:\Projekt\Guardian`.
-- Branches: `main`, `dev`, `oidc-refactor`. Work happens on `oidc-refactor`. Nothing has been pushed or merged by an agent; the owner decides when.
-- **Where things can run (checked 2026-11-14):**
-  - **The cloud workspace** has PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`) and gofmt, but no network. Go 1.24 is preinstalled, which is too old for the repo; unpack the Go 1.26 toolchain from `.tools/` instead. Go modules cannot be downloaded there.
-  - **The shell on the owner's PC** (`device_bash`, a Linux VM with the repo mounted at `$HOME/mnt/Guardian`) has git, python3, tar and gcc, but no Go, no Postgres, no Docker and no network.
-  - **Go dependencies** therefore come from `backend/vendor/` (the owner runs `go mod vendor` on Windows; the folder is git-ignored). Access to the owner's Go module cache folder was denied by policy; do not ask again.
-  - **Docker cannot run in either place.** The image and compose setup are verified by the owner, or by the `image` job in CI.
-- **Moving files between the two:**
-  - PC to cloud: `git archive` or `tar` in the VM into the repo folder, then `device_stage_files` on that one file. Delete the transfer file afterwards.
-  - Cloud to PC: write patches (`git diff --no-renames --binary`), tar them into `/mnt/user-data/outputs/`, send with `device_commit_files`, check the SHA-256 in the VM, then `git apply --index`.
-  - Renames that only change letter case (for example `dockerfile` to `Dockerfile`) fail in a patch on the Windows disk. Use `git mv` through a temporary name.
-- **Git in the VM:**
-  - Always pass `-c core.autocrlf=true`. The owner's Windows checkout has CRLF files, and without it they show as modified.
-  - The VM has no git identity. Commit with the author of the latest commit: `-c user.name="$(git log -1 --format=%an)" -c user.email="$(git log -1 --format=%ae)"`.
-  - Deleting files, including git's own lock files, needs `device_request_delete_permission` once per session.
-- After writing single files to the PC with `device_commit_files`, check size or checksum. It has several times written the *previous* version of a file; committing again with `force` fixed it.
+- Owner works on Windows; repo at `D:\Projekt\Guardian`, branch `dev` (`main`, `implement-m1` and
+  `oidc-refactor` are older).
+- **Where things can run:**
+  - **Cloud workspace:** PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`; it is killed
+    between turns, so restart it in each command that needs it), gofmt, Chromium with Playwright for
+    screenshots. No network. The preinstalled Go is too old: unpack `.tools/go1.26.11.linux-amd64.tar.gz`
+    (SHA-256 `9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`) and put its `bin` first on `PATH`.
+  - **Owner's PC shell** (`device_bash`, a Linux VM with the repo at `$HOME/mnt/Guardian`): git, python3, tar,
+    gcc. No Go, Postgres, Docker or network.
+  - **Docker runs only on the owner's PC.** The owner checks the image, compose and the Grafana flow.
+- **Go modules** come from `backend/vendor/` (git-ignored; the owner runs `go mod vendor` on Windows). Tar it in
+  the VM and unpack it in the cloud copy. When dependencies change, write the code that imports them first, then
+  the owner runs `go get`, `go mod tidy` and `go mod vendor` in `backend`. Access to the owner's Go module cache
+  was denied by policy; do not ask again.
+- **Build and test in the cloud:** `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local`, and for database tests
+  `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`; run with `-race -p 1`.
+- **Moving files:**
+  - PC to cloud: `git archive` (or `tar`) into a file in the repo, `device_stage_files` it, delete it afterwards.
+  - Cloud to PC: `git diff --no-renames --binary` into `/mnt/user-data/outputs/`, `device_commit_files`, check
+    the SHA-256 in the VM, then `git -c core.autocrlf=true apply --index`. Check size or checksum after every
+    `device_commit_files`: it has written a *previous* version of a file before.
+  - Renames that only change letter case fail in a patch on the Windows disk; use `git mv` through a temporary
+    name.
+- **Git in the VM:** always `-c core.autocrlf=true` (the checkout has CRLF files). Deleting files, including
+  git's lock and temporary files, needs `device_request_delete_permission` once per session. To commit (only
+  when asked), use the latest commit's author: `-c user.name="$(git log -1 --format=%an)" -c
+  user.email="$(git log -1 --format=%ae)"`.
+- Review diffs for the owner go in `.tools/review/` (git-ignored); delete them once the work is committed.
 
-## Repository map (current)
-- `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus. About 3,300 lines plus a large test suite.
-  - `cmd/guardian/main.go` — the entry point: loads `.env` if present, loads and validates the configuration, sets up logging, runs the server.
-  - `internal/config/` — every environment variable in one place, validated at startup; all problems are reported at once.
-  - `internal/server/` — wiring: opens the database, loads keys, builds the two routers, runs both listeners and shuts down cleanly.
-    - Public `:3001`: OIDC, sign-in pages, `/api/v1`.
+## Status (2026-11-19)
+- **0.1 is done.** Everything up to and including the sign-in pages, Home, single-app groups and the Grafana
+  check is committed (`632a0d4`). The owner ran the Grafana flow with Docker: admin signs in as Grafana Admin, an
+  account without groups is refused, a `grafana-viewers` member signs in as Viewer, removal from the group
+  refuses the next sign-in, and Grafana's sign-out goes through Guardian's.
+- **Next: 0.2** (`docs/ROADMAP.md` section 5): a minimal Helm chart and `guardian backup` / `guardian restore`,
+  installed via Argo CD in the staging cluster.
+- Tests: 154, all passing with `-race` (`docs/TESTING.md`).
+
+## Repository map
+- `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
+  - `cmd/guardian/main.go` — entry point (`serve`, `migrate`): loads `.env` if present, validates the
+    configuration, sets up logging, runs the server.
+  - `internal/config/` — every environment variable in one place, validated at startup; all problems reported
+    at once. `backend/.env.example` lists them.
+  - `internal/server/` — wiring: database, keys, the two routers, both listeners, clean shutdown.
+    `server.Configure(cfg, keys)` configures `httpx`, `web` and `oidc`; the e2e tests call it too.
+    - Public `:3001`: Home, sign-in pages, OIDC, `/api/v1`, `/static/`. Unknown paths get the HTML 404 page.
     - Internal `:3002`: `/metrics`, `/healthz`, `/readyz`.
-  - HTTP packages (split in 0.1 part 4). Dependencies point one way: `httpx` <- `web` <- `oidc` <- `api`; `internalapi` uses only `httpx`.
-    - `internal/httpx/` — shared by the others: settings (`Configure`, `Issuer`, session timeouts, cookie names), `JSON`/`Error`/`Success`/`DecodeJSON`, `ClientIP`, `SafeReturnTo`, `ValidRedirectURI`, session cookie and CSRF helpers, `Authenticate`, `RequireAdmin` (member of `guardian-admins`), `AdminOnly`, `RequireSameOrigin`, request metrics and `RateLimited`.
-    - `internal/web/` — sign-in pages: `templates.go` (inline HTML, `Render`, `Message`, `Page`) and `login.go` (`/login`, login throttling, `guardian_logins_total`).
-    - `internal/oidc/` — the provider: `oidc.go` (`Mount`, `SetKeys`, discovery, JWKS, token metric), `authorize.go` (authorize and consent), `token.go` (`/token`, `issueTokens`, `BuildClaims`, `/revoke`), `userinfo.go`, `client.go` (client_credentials tokens, `VerifyClientToken`), `logout.go` (RP-initiated logout, `SendLogoutNotices`, back-channel logout).
-    - `internal/api/` — the JSON API at `/api/v1`, described in `docs/openapi.yaml` (`TestOpenAPIDescribesEveryRoute` fails when they drift apart). `api.go` (the router, `list`, `pageLimit`), `account.go` (`/signup`, `/me`, `/accounts`), `groups.go`, `app.go` (`/apps`), `audit.go`, `machine.go` (`/apps/self`, Bearer client tokens checked by `oidc.VerifyClientToken`).
-    - `internal/internalapi/` — internal router: `/metrics`, `/healthz`, `/readyz`.
-    - `server.Configure(cfg, keys)` configures `httpx` and `oidc`; the e2e tests call it too.
+  - HTTP packages; dependencies point one way: `httpx` <- `web` <- `oidc` <- `api`; `internalapi` uses only
+    `httpx`.
+    - `internal/httpx/` — settings (`Issuer`, session timeouts, cookie names), JSON responses and errors
+      (`Error`, `ErrorCode`, `DecodeJSON`), `ClientIP`, `SafeReturnTo` (only `/authorize?...`),
+      `ValidRedirectURI`, session cookie and CSRF helpers, `Authenticate`, `AdminOnly`, `RequireSameOrigin`,
+      request metrics, `RateLimited`.
+    - `internal/web/` — Home and the sign-in pages (see "Sign-in pages" below).
+    - `internal/oidc/` — `oidc.go` (discovery, JWKS), `authorize.go` (authorize, consent, no-access, the
+      temporary-password check), `token.go` (`/token`, `issueTokens` — the one place that decides whether a user
+      may have tokens — `/revoke`), `userinfo.go`, `client.go` (client_credentials), `logout.go` (RP-initiated
+      logout with `return_to` for "switch account", back-channel logout).
+    - `internal/api/` — `/api/v1`, described in `docs/openapi.yaml`; `TestOpenAPIDescribesEveryRoute` fails when
+      they drift apart. `account.go`, `groups.go`, `app.go`, `audit.go`, `machine.go` (`/apps/self`).
+    - `internal/internalapi/` — `/metrics`, `/healthz`, `/readyz`.
   - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
-  - `internal/store/` — queries (imported as `db`); `connection.go` connects and applies migrations with goose at startup.
-  - `migrations/00001_init.sql` — the full data model, described below. It is embedded into the binary.
-  - `internal/testutil/` — helpers for tests that need Postgres.
-  - `e2e/` — end-to-end tests over HTTP against both routers.
-  - Tests: 140, all passing (`docs/TESTING.md`).
-- `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders so far.
-- `frontend/` — empty.
-- `docs/` — `ARCHITECTURE.md` (design decisions, load, mermaid diagrams), `INTEGRATION.md`, `TESTING.md`, `ROADMAP.md`. The old yUML diagrams were deleted (2026-11-15); recreating app-to-Guardian communication diagrams is a 1.0 docs item in `docs/ROADMAP.md`.
+  - `internal/store/` — queries (imported as `db`); goose migrations at startup.
+  - `migrations/00001_init.sql` — the whole data model, embedded. Edited in place until 1.0; it records a
+    fingerprint of itself and Guardian refuses a database made by another revision, so **after any edit, existing
+    development databases must be recreated (`docker compose down -v`); tell the owner.** Columns for later
+    features (require-MFA flag, key stages, keyring tags, deletion log) are added with their feature, not before.
+  - `internal/testutil/` (helpers for database tests), `e2e/` (HTTP tests against both routers).
+- `charts/guardian/` — only an empty `Chart.yaml` and empty `helper/` and `images/` folders (0.2 starts here).
+- `frontend/` — empty (0.4).
+- `docker-compose.yml` — backend, Postgres 16, Mailpit, and Grafana behind the `grafana` profile.
+- `.github/workflows/backend.yml` — format check, vet, tests against Postgres, image build.
+- `docs/` — see `README.md` for the list.
 
-## Data model (backend/migrations/00001_init.sql)
-- `account` — the OIDC subject; profile columns map 1:1 to standard claims. Status is pending, active, disabled or locked. Soft delete via `deleted_at`.
-- `app` — an OIDC client: public or confidential, redirect URIs, PKCE, first-party (skips consent), TTLs. `app_secret` allows several active secrets, so rotation can overlap.
-- `scope`, `app_scope`, `account_consent` — standard and custom scopes, and the scopes a user has consented to.
-- **Groups** (the old roles, permissions and the effective-permission view are gone):
-  - `user_group` — the group itself ("group" is a reserved word). It has an immutable `key` (what apps see), an editable `display_name`, `is_system`, and an optional `owner_group_id`.
-  - `group_member` — membership, with optional `expires_at`. Expired rows do not count.
-  - `app_group` — which groups an app is told about.
-  - `app.access_rule` — `groups` (the default: only members of a linked group may sign in) or `anyone`.
-- Session and token tables: `session` (SSO; `last_seen_at` drives the idle timeout, `expires_at` is the absolute end), `authorization_code`, `refresh_token` (one stable token per sign-in and app, bound to the session; `family_id` unused, kept for rotation later), `session_app` (for back-channel logout), `signing_key`. Access tokens are signed JWTs and are not stored.
-- `account_token` — one-time tokens for reset, verification, re-authentication and invites. `account_mfa` holds TOTP, WebAuthn and recovery codes. Both are unused so far.
-- `rate_limit` (UNLOGGED) and `audit_log` (append-only).
-- Seed data: standard scopes; the system group `guardian-admins`; and an `admin` account in that group with no password, set at startup from `ADMIN_INITIAL_PASSWORD` or logged once. No app is seeded.
+## Data model (`00001_init.sql`)
+- `account` — the OIDC subject; profile columns map to standard claims. `email` is always confirmed or NULL.
+  `must_change_password` is set by admin-set passwords and on the seeded admin. Soft delete via `deleted_at`.
+- `app` — an OIDC client: public or confidential, redirect URIs, PKCE, first-party (skips consent), token
+  lifetime, `refresh_mode` (`stable` or `none`), `access_rule` (`groups` or `anyone`), homepage. `app_secret`
+  holds several secrets, so rotation can overlap.
+- `scope`, `app_scope`, `account_consent`; `app_user` (accounts that have signed in to an app).
+- **Groups:** `user_group` (immutable `key`, editable `display_name`, `is_system`, optional `owner_group_id`;
+  single-app groups have `bound_at`, `bound_app_id` and, once the app is deleted, `bound_app_deleted_at`),
+  `group_member` (optional `expires_at`), `app_group` (which groups an app is told about).
+- `session` (SSO; idle and absolute timeouts), `authorization_code`, `refresh_token` (one stable token per
+  sign-in and app; `family_id` kept for rotation later), `session_app` (for back-channel logout), `signing_key`.
+  Access tokens are not stored.
+- `account_token`, `account_mfa` — for 0.3, unused so far. `rate_limit` (UNLOGGED), `audit_log` (append-only).
+- Seed: standard scopes; the group `guardian-admins`; an `admin` account in it, whose password comes from
+  `ADMIN_INITIAL_PASSWORD` (or is generated and logged once) and must be changed at its first sign-in.
+- The last-administrator rule lives in the store: one active account always stays in `guardian-admins` through a
+  membership without expiry.
 
-## Agreed chart layout
+## Sign-in pages and Home (`internal/web`)
+- `templates/*.html`: `layout.html` plus one file per page (each defines `content`, optionally `bar`).
+  `static/`: `guardian.css`, `guardian.js`, `background.jpg`, `logo-mask.svg`, `favicon.svg`. All embedded and
+  served from `/static/<name>?v=<content hash>`, cached for a year.
+- `templates.go`: `Render`, `Page`, `Error(w, kind)` for the error pages, `ScopeLines` (consent wording),
+  `Configure` (the optional `HELP_URL` and `PRIVACY_URL` footer links). `login.go`, `signup.go`, `password.go`
+  (the forced new password after a temporary one), `home.go`, `account.go` (username and password rules and
+  `CreateAccount`, shared with `POST /api/v1/signup`).
+- **No inline styles or scripts:** the CSP is `default-src 'none'; style-src 'self'; script-src 'self'`, enforced
+  by `TestPagesHaveNoInlineStylesOrScripts`. A side effect: `fetch` from the browser console fails on these pages
+  (use a JSON page such as `/api/v1/me`).
+- `guardian.js` adds the password show buttons and centres the bar's content vertically, moving the logo
+  cut-out with it (`--logo-y`). Without JavaScript the content sits at the top. The consent page is not centred.
+- **Dark only.** The favicon is the head logo, black on light browser tabs and white on dark ones. The owner's
+  logo files: "dark" means a black icon, "light" a white one; full, mid and head variants.
+- Error notices shake once per page load (not with reduced motion).
+- Parts of later releases (forgot password, security key, email at sign-up, "go to your account") stay out until
+  they work. `/` is a simple Home (connected and available apps) until the management UI's Home in 0.4.
+- The background image is the 640×360 one from the design board; a full-size one would look sharper.
+
+## Design board
+- https://claude.ai/artifact/V4Qwf5xMJg2fWKAGQm3QKJ ("Guardian page designs"). It holds every page in
+  `docs/PAGES.md`: the sign-in pages (S1–S16, settled; S1 and S4 are the reference), the emails E1–E6, and Home,
+  the account area and the admin area in **design F** (settled for now). Earlier directions (A, B, D, E) are in
+  an archive section at the bottom. Dashed tags (0.3, 0.5, 1.x) mark parts of later releases, for review only.
+- AD11 tries a full-width glass plate behind the page title; the owner has not decided on it yet.
+- Colours: the sign-in blue is the main highlight (`#4fd1e0` on dark), Sheikah orange (`#ff9a3c` on dark) the
+  secondary one. Font: Figtree (not bundled yet; the system font is the fallback).
+- The board's page files were generated by a script that is not in the repo; edit the board files directly.
+
+## Users, pages and personal data
+- `docs/USERS.md`: roles and every requirement with a stable id (V1, U12, O3, A18, P2, M1). Never renumber ids;
+  add new ones. `docs/PAGES.md`: every page (S, H, AC, AD, E) with its requirements, and the reverse table. Keep
+  both directions in step.
+- Personal data only where someone went to see it: Home and the admin overview show none; the account area opens
+  on the profile, where the email is masked until shown; session IPs are masked too.
+
+## Working conventions
+- Never let staleness exceed the app's `access_token_ttl_seconds`; every refresh re-checks session, account,
+  app and groups (`issueTokens`).
+- No feature may depend on the number of backend replicas, or on which cluster a replica runs in.
+- Secrets and tokens are stored only as hashes or encrypted values. Never log query strings on OIDC routes; logs
+  hold account ids at most.
+- `docs/openapi.yaml` changes with every API change; `docs/ARCHITECTURE.md`'s mermaid diagrams (they render with
+  `mmdc`) change with the design.
+- Check visual changes in a real browser (Playwright in the cloud workspace) before handing them over.
+
+## Agreed chart layout (0.2 onwards)
 ```
 charts/guardian/
 ├── Chart.yaml                 # version = chart semver, appVersion = image tag for both images
@@ -83,7 +181,7 @@ charts/guardian/
 ├── ci/                        # chart-testing values: default, ha, external-db
 ├── templates/
 │   ├── _helpers.tpl, NOTES.txt, serviceaccount.yaml, configmap.yaml
-│   ├── ingress.yaml           # optional standard Ingress; one host, path routing (/account, /admin -> frontend; rest -> backend)
+│   ├── ingress.yaml           # optional standard Ingress; one host, path routing (/account, /admin, /_app -> frontend; rest -> backend)
 │   ├── httproute.yaml         # optional Gateway API HTTPRoute, same routing, attaches to an existing Gateway
 │   ├── networkpolicy.yaml
 │   ├── postgres/ statefulset, service, secret   # only when database.mode=bundled
@@ -91,221 +189,6 @@ charts/guardian/
 │   ├── frontend/ deployment, service, hpa, pdb
 │   └── tests/test-connection.yaml
 ```
-
-## Decisions (2026-11-13; see ROADMAP.md for the reasoning)
-- **Groups replace per-app permissions.** Apps only see the groups linked to them; groups are flat; grants carry no attributes.
-- **Access tokens are short-lived signed JWTs.**
-  - Lifetime is the app's `access_token_ttl_seconds`, minimum 15 seconds.
-  - Claims: `sub`, `aud`, `scope`, `sid`, `groups` and the profile claims for the granted scopes.
-  - They are not stored in the database.
-- **`/introspect` is removed.**
-  - The internal `:3002` listener keeps only `/metrics`, `/healthz` and `/readyz`.
-  - RFC 7009 revocation covers refresh tokens.
-- **Machine access for apps:** the `client_credentials` grant, plus a read-only API limited to the calling app (its linked groups, their members, user lookup by id).
-- **Signing keys:**
-  - Four stages: pending (published but not signing, 1 h), active (one per algorithm), retiring (until the longest token lifetime plus skew has passed), retired.
-  - Replicas reload every 60 seconds; JWKS is served with `max-age=900`.
-  - Automatic rotation every 90 days; `guardian keys rotate`, plus `--now --revoke-current` for emergencies.
-  - **RS256 / RSA-2048 for 1.0.** Never hardcode the algorithm: there is an app-level signing-alg setting.
-  - ES256 is a late stretch goal before 1.0, otherwise 1.x.
-- **Encryption keyring:**
-  - Read from `KEY_ENCRYPTION_KEYS_FILE` and reloaded every 60 seconds; values are tagged with their key id; the row is bound as associated data.
-  - New keys are added decrypt-only, then promoted; background re-encryption follows.
-  - Guardian refuses to start when a key is missing.
-  - Secrets come via `existingSecret`, filled by Bitwarden (owner's choice). No KMS integration.
-- **Versioning:**
-  - In 0.x the schema may change; edit `00001_init.sql`; upgrades go through backup and restore.
-  - From 1.0: minor releases use expand/contract with a CI compatibility check; major releases mean back up, then upgrade, starting from the last previous minor.
-  - Forward-only: recovery is a restore, never a down migration.
-- **Migrations:** goose; `migrations.mode: startup` (default) or `job` (Helm hook and Argo CD Sync hook with waves: Postgres -2, Job -1, apps 0). In job mode the backend waits for the expected schema version. The owner uses Argo CD; plain Helm must keep working.
-- **Backup and restore:** `guardian backup` and `guardian restore` via `kubectl exec`.
-  - Guardian's own versioned format, `age`-encrypted to a public key (private key in Bitwarden). Sessions and tokens are excluded.
-  - Restore only into an empty database; a deletion log keeps erased accounts erased.
-  - Must exist in the first real install.
-- **Secrets:** the chart generates none, because Argo CD renders without `lookup`. Everything comes from operator-provided Secrets, and the schema fails the install when one is missing.
-- **Bundled Postgres:**
-  - Single instance with the major version pinned; the disk is kept on uninstall.
-  - Basic options: tag, resources, storage, placement, Postgres settings, security context.
-  - Password rotation is manual, by runbook; there is no sync sidecar (owner's decision).
-- **Availability:**
-  - The backend must work with any replica count (default 2 plus a PDB).
-  - Production should use an external HA Postgres.
-  - Apps treat `invalid_grant` as a logout, but keep the session through Guardian network errors for about one token lifetime.
-- **Scheduled backups:** a CronJob writes to its own disk claim in 1.0; S3 comes in 1.x.
-- **Management UI hosting:** the same hostname with path routing (`/account` and `/admin` to the frontend, the rest to the backend); the management UI uses Guardian's session cookie. The owner wants replica control and multi-cluster support. Backends in several clusters share one Postgres, with no cluster-local state.
-- **Delegation:**
-  - 1.0 has group owners: an owner group manages an owned group's members. Only global admins touch system groups, and owners can't change their own ownership. Delegated actions are audited.
-  - Apps and their group links are global-admin only in 1.0. App owners come in 1.x.
-- **Recovery and MFA:**
-  - A reset changes only the password; MFA still applies.
-  - Recovery ladder: another factor, then a recovery code, then an audited admin reset.
-  - Protected changes need re-authentication at save (`reauth_required` → management UI dialog → retry), with a 5-minute grace period.
-  - MFA is mandatory for global admins and group owners.
-  - Tokens carry `amr`. A per-app "require MFA" setting is enforced at sign-in; `acr_values` comes in 1.x.
-  - Passkey-only accounts are allowed.
-- **App access rule:** "linked groups only" (the default, enforced by Guardian at sign-in) or "anyone with an account". Sign-up is always open and auto-approved, with no default groups. A "request access" screen comes in 1.x.
-- **Scope boundary:** Guardian does identity and groups only; apps own per-record authorization. Keep the docs on this short.
-- **GDPR:**
-  - Deletion: 30-day grace period, then a hard-delete job, with the id added to the deletion log.
-  - Audit log retention is 6 months by default; personal details are removed from the entries of erased accounts.
-  - "Download my data" export in the account area.
-  - `phone_number`, `birthdate` and the `phone` scope are removed.
-  - Logs hold account ids only. `docs/DATA-PROTECTION.md` documents it all.
-  - A restore re-applies the deletion log; `--apply-deletions` handles restoring an older backup.
-- **Abuse protection:** login limits per username+IP and per IP, never an automatic lock; a sign-up honeypot; no third-party CAPTCHA. Proof-of-work comes in 1.x.
-- **Routing:** an optional standard `Ingress` and an optional Gateway API `HTTPRoute`; nothing Traefik-specific. The NetworkPolicy ingress source is configurable, HTTPS is required, and `TRUSTED_PROXY_HOPS` is a value (default 1).
-- **Destructive commands** (emergency key revoke, `mfa reset-totp --all`):
-  - CLI only, gated by Kubernetes RBAC.
-  - Dry run by default; they need `--execute`, `--reason` and the issuer host typed back.
-  - Audited and counted in a metric.
-  - Idempotent: single-step commands run in one transaction, and re-encryption resumes where it stopped.
-- Hosted auth pages (login, sign-up, consent, logout, reset, MFA) stay **server-rendered Go templates**: they work without JavaScript, allow a strict CSP and share the session cookie's origin.
-- The management UI (account area `/account`, admin area `/admin`) is **Svelte 5 + SvelteKit (adapter-static) + TypeScript**, styled with plain CSS tokens; no Tailwind in 1.0. It runs on the same origin and uses the session cookie, so it needs no OIDC client of its own.
-- Migrations will use goose with embedded SQL; `schema.sql` becomes `00001_init.sql`. The driver moves to pgx (stdlib); logging to slog.
-- The API is `/api/v1` with REST verbs and checks through `guardian-admins` and group ownership, documented in `docs/openapi.yaml` (done in 0.1 part 5).
-- WebAuthn security keys and passkeys are **in 1.0**, built on the latest spec and library (go-webauthn), alongside TOTP and recovery codes. The login page's "Use a security key" button stays.
-- The frontend is its **own deployment**, so it can scale and be hosted separately; it is not embedded in the Go binary.
-- **Email is optional at sign-up and never stored unverified.**
-  - An entered address waits in `account_token` until its link is clicked.
-  - `account.email` is always verified or NULL.
-  - Login works with a username or that email; resets only go there.
-  - `REQUIRE_EMAIL` (default off) makes an email mandatory at sign-up.
-  - Sign-up reports a taken username or email plainly; login and reset never reveal whether an account exists.
-- The chart supports `database.mode: bundled | external`.
-  - Bundled is the default: a single-instance Postgres StatefulSet using the official image, with its PVC kept on uninstall.
-  - External is for managed or HA databases.
-  - A CloudNativePG option is planned for after 1.0.
-
-## M0: done (2026-11-14)
-- **Build and tests:** `go build ./...` and `go vet ./...` pass. All 102 tests pass with `-race` against PostgreSQL 16, with none skipped. The tests had never been run before.
-- **One real bug found and fixed:** registering an app without `post_logout_redirect_uris` failed, because a missing list was stored as NULL in a NOT NULL column. `database.strArray` now binds a nil slice as an empty array.
-- **Smoke test:** the static binary starts against Postgres, serves discovery, JWKS, the login page, health and metrics, and the admin can sign in and register an app.
-- **Infrastructure:**
-  - gofmt on all Go code.
-  - A multi-stage distroless `backend/Dockerfile` (renamed from `dockerfile`) and `.dockerignore`.
-  - `docker-compose.yml` with the right `DB_*` names, ports 3001/3002, a dev key, Postgres 16 with a health check, and Mailpit.
-  - CI at `.github/workflows/backend.yml` (format check, vet, tests against Postgres, image build).
-  - `.gitattributes`, `.gitignore`, `README.md` and `TESTING.md` updates.
-- **No tests were deleted in M0.** The tests for introspection and the old permission model were replaced in the groups and tokens work.
-- **Not verified:** the Docker image build and `docker compose up` (no Docker available to the agent), and the CI workflow (nothing has been pushed).
-- **Left to the owner:** pushing, and merging `oidc-refactor` into `dev`.
-- **Fixed since, in the groups work:** admin routes used to mix `OnlyAdmin` and `RequirePermission`, and any signed-in user could list all apps.
-
-## Login page design (approved)
-Mockup: claude.ai artifact "Guardian – login page" (https://claude.ai/artifact/TCheh3oE3wEhtFxMxKY59J). It is to be implemented in the Go templates (milestone M3).
-- Full-screen background: BotW screenshot of the wall with the destroyed Guardians, `cover`.
-- Left bar `min(460px, 100%)`, full height, translucent white `rgba(255,255,255,.80)` with `backdrop-filter: blur(14px)`. On phones under 560px it is full width.
-- The logo (white SVG, viewBox `0 0 275.52 282.11`) is **cut out of the bar** with a CSS mask (`mask-composite: exclude`), so the background shows through it. A small script aligns the mask to an empty `.logo-slot` element.
-- Logo is centered horizontally above the form (168px, or 128px on mobile). Logo, "Sign in" heading and fields form one vertically centered group.
-- Footer pinned to the bottom: Help, Privacy, "Powered by Guardian".
-- Copy: the heading is just "Sign in", with no "continue to <app>" line (the owner removed it). Fields are "Username or email" and "Password", with "Forgot password?" on the password label row. Buttons are "Sign in", an "or" divider, and "Use a security key" (WebAuthn/passkey, in 1.0).
-- Tokens:
-  - Sheikah teal `#0b6f7c` (hover `#085b66`; dark mode `#4fd1e0`).
-  - Ink `#1b2a2e`, muted `#4d6469`, lines `#9db4b8`, 6px radius.
-  - Font: Figtree.
-  - Dark panel: `rgba(14,26,30,.78)`.
-- Unused idea: Guardian-beam orange/red as a bolder accent.
-
-## Second review (2026-11-14)
-- **Tokens:**
-  - Access tokens are lean (`sub`, `aud`, `scope`, `sid`, `amr`, `groups`) with type `at+jwt`. Profile data is in the ID token (re-issued at refresh) and `/userinfo`.
-  - The `groups` scope puts group keys in the ID token, userinfo and access token. Apps key users on `sub`.
-  - The docs recommend a lifetime of 60 seconds or more; the floor stays at 15.
-- **Refresh tokens (confirmed):**
-  - Stable, non-rotating, for apps with a client secret. There is no grace window and no reuse detection.
-  - Apps without a secret get none in 1.0.
-  - The owner needs a mobile app later, so rotation for public clients returns in 1.x. Keep the per-app refresh mode setting (`stable`, `none`, reserved `rotating`), a single issuing function, and the family id column.
-- **Sessions:** idle timeout 7 days, absolute 30 days, configurable. Refresh tokens never outlive the session.
-- **Membership removal and disabling send a back-channel logout.** Apps that neither refresh nor support it are as stale as their own session.
-- **Planned off-the-shelf apps:** Grafana and SonarQube. Argo CD deliberately does not use Guardian, to avoid lock-out.
-- **Groups have an immutable key** (in tokens) and an editable display name.
-- **Last admin:** `guardian-admins` always keeps one active member. The owner wants **no break-glass command**; recovery is a documented SQL statement.
-- **Sign-up page notices:** no email means admin-only password reset; hobby project under active development; use a unique password.
-- **Security notices by email** for password and MFA changes.
-- **Emergency key revoke:** the runbook admits apps keep accepting old-key tokens until their key cache expires, and tells the operator to restart them.
-- **Restore:** a post-restore checklist, because an older backup reverts security changes.
-- **Backup manifest (confirmed):** an unencrypted sidecar with counts and checksum, `guardian backup verify`, metrics, and a restore drill.
-- **Routing:** `/_app` also goes to the frontend.
-- **Staging only until 1.0;** all data before then is test data.
-
-## Status and next step (2026-11-14)
-- **Two design reviews are complete.** `docs/ROADMAP.md` is the source of truth; if this file disagrees, it wins.
-- **No open confirmations.**
-- **Release plan:**
-  - **0.1 local:** M0, M1, groups and JWT, access-rule enforcement, `/api/v1`, sign-in pages including sign-up; runs with docker-compose.
-  - **0.2 cluster:** minimal chart, backup and restore, install via Argo CD in staging.
-  - **0.3 accounts:** email, TOTP, mandatory admin MFA, require-MFA enforcement, re-authentication, GDPR deletion and export, key and keyring rotation, abuse limits.
-  - **0.4 management UI:** account area, admin area, group owners.
-  - **0.5 complete:** WebAuthn and passkeys, scheduled backups, job migrations, the full chart, the release workflow.
-  - **1.0:** hardening, docs, and ES256 if time allows.
-- **M1 is done** (2026-11-14), on branch `implement-m1`. The owner reviews changes before anything is committed: **do not commit on the owner's branches unless asked**; leave changes staged.
-  - **Part 1:** the move to `cmd/guardian`, `internal/{api,auth,store,server,config}`, `e2e/` and `migrations/`; the config package with validation; structured logging with `log/slog` (`LOG_FORMAT`, `LOG_LEVEL`); the schema embedded in the binary.
-  - **Part 2:** goose migrations and the pgx driver.
-    - `migrations/00001_init.sql` is a goose migration: `-- +goose Up` with one statement block and no `BEGIN`/`COMMIT` of its own. It still takes its advisory lock and stays idempotent.
-    - `store.Migrate` runs goose with a Postgres session lock, asking for the lock once a second; `store.Open` calls it. `guardian migrate` applies migrations and exits.
-    - The driver is `pgx/v5/stdlib` (pgx 5.13, goose 3.30). Arrays are scanned through `store.scanArray` and passed with `store.strArray`. Unique violations are detected with `pgconn.PgError`.
-  - **Verified with Go 1.26.11 and PostgreSQL 16:** build, vet, gofmt, and all 110 tests with `-race`. The binary was also run against a fresh database, against a database created before goose (it adopts it and keeps edited rows), and with `guardian migrate`.
-  - **Not verified:** the Docker image build and CI.
-  - **Deliberately not in M1:** splitting `internal/api`; it was done as part 4 of the groups and JWT work.
-- **Groups and JWT work of 0.1, in parts** (on branch `dev`; leave changes staged for the owner's review):
-  - **Part 1, groups: done, reviewed and committed (2026-11-14).**
-    - Schema: `user_group`, `group_member`, `app_group`, `app.access_rule`. Roles, permissions and the seeded `guardian` app are removed.
-    - Store: `internal/store/groups.go`. The last-administrator rule lives there: one active account must always be in `guardian-admins` through a membership without an expiry. It is enforced on member removal, on adding an expiry and on account deletion, under a row lock on the administrators group.
-    - API: `/api/groups` (REST). Administrators do everything; a group's owners (members of its owner group) may only list, add and remove its members. `/api/service` is now administrators only, with `POST /api/service/access` for the access rule and linked groups.
-    - Sign-in: `/authorize` enforces the app's access rule; refused accounts get a 403 page, or `access_denied` with `prompt=none`.
-    - **Schema revision check:** `00001_init.sql` records a fingerprint of itself (table `schema_revision`; comments and blank lines do not count) when it creates a database. `store.VerifySchemaRevision` compares it at every start and refuses a database made by another revision, with a message that says to recreate it. So after any edit to `00001_init.sql`, existing development databases must be recreated (`docker compose down -v`); tell the owner when a change needs that.
-  - **Part 2, tokens: done, reviewed and committed (2026-11-15).**
-    - Access tokens are signed JWTs (`typ: at+jwt`) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr`, `jti` and, with the `groups` scope, `groups`. No profile data. Not stored. The ID token carries profile claims and `groups`, and is issued again at every refresh.
-    - `issueTokens` (now `oidc/token.go`) is the single place that decides whether a user may (still) have tokens for an app. Every code exchange and every refresh goes through it and re-checks live data: session (idle and absolute), account, the app's access rule, groups.
-    - Refresh tokens: `refresh_mode` per app, `stable` (confidential apps; one token per sign-in, never replaced, valid while the session lives) or `none` (public apps). A refresh returns no new refresh token. `offline_access` is accepted but changes nothing.
-    - `POST /revoke` (RFC 7009) for refresh tokens, confidential apps only, always 200.
-    - `/userinfo` verifies the access token (rejects ID tokens by `typ`) and checks session, account and app live; returns current groups.
-    - Sessions: `SESSION_IDLE_TIMEOUT` (default 168h) and `SESSION_MAX_LIFETIME` (default 720h) replace `SESSION_TTL` (removed; no warning for it). Refreshes and userinfo count as use.
-    - Back-channel logout also on account deletion and on leaving a group (only apps linked to that group).
-    - Removed: `/introspect`, the `access_token` table, `INTROSPECTION_URL`, `phone_number`, `birthdate`, the `phone` scope. Token lifetime 15-86400 seconds (database CHECK), default 300.
-    - Metric `guardian_token_requests_total{grant,result}` replaces the introspection counter.
-    - `docs/INTEGRATION.md` is rewritten for the new design.
-  - **Part 3, machine API: done, reviewed and committed (2026-11-15).**
-    - `client_credentials` grant for confidential apps that have it in `grant_types`; turned on and off with `"machine_api"` on `POST /api/service/access` (checked before anything changes). Token: `at+jwt`, `sub` = `client_id` = the app's client id, `aud` = the issuer, no `sid`, lifetime `access_token_ttl_seconds`, no refresh token.
-    - `GET /api/v1/apps/self`, `/groups`, `/groups/{key}/members`, `/users/{sub}`. Read-only. Mounted outside the cookie API, so no same-origin check.
-    - Every request re-checks that the app is enabled and still has the grant, so turning access off stops existing tokens at once. User access tokens are refused (audience and `sid`).
-    - Visibility: linked groups only; accounts that are active members of a linked group, or that have signed in to the app (new table `app_user`, written when an authorization code is exchanged). Anything else is the same 404 as an unknown account. Claims follow the app's allowed scopes.
-  - **Part 4, split of `internal/api`: done, reviewed and committed (2026-11-15).**
-    - New packages `httpx`, `web`, `oidc`, `internalapi`; `api` keeps the JSON API. No change to behaviour, routes or tests (still 124, moved to the package of the code they test).
-  - **Part 5, `/api/v1` and `docs/openapi.yaml`: done and tested, left uncommitted for review (2026-11-15). Diff: `.tools/review/part5-api-v1.diff`.**
-    - Old routes removed without aliases (`/api/account/*`, `/api/service/*`, `/api/groups`).
-    - Routes: `POST /signup`; `GET/PATCH /me`, `PUT /me/password`; `/accounts` (list with `q`, `status`, `cursor`, `limit`; create; get with groups; patch incl. `email` and `status`; delete; `PUT /accounts/{id}/password`); `/groups` as before; `/apps` (list, create, get, patch, delete, `PUT /apps/{id}/access`, `POST /apps/{id}/secret`); `GET /audit`; the machine API.
-    - Conventions: snake_case; `httpx.DecodeJSON` refuses unknown fields and trailing data; lists `{"items"}` (+ `next_cursor` when paged); errors `{"error": code, "message"}` via `httpx.Error` (code from the status) or `httpx.ErrorCode` (`last_admin`, `wrong_password`, `invalid_token`); 204 for deletes and changes with nothing to return; JSON 404/405 for unknown routes.
-    - Users cannot set their own email until verification exists (0.3); an email set by an administrator counts as verified (`store.UpdateAccount`, `store.CreateAccountWithEmail`).
-    - Disabling an account (`PATCH status`) and admin-set passwords end all sessions with back-channel logout; the last admin cannot be disabled. A user's own password change ends their other sessions. Admin-set passwords set `must_change_password`; the login page does not enforce it yet (part 6).
-    - Secret rotation: `grace_seconds` (0 to 7 days) keeps older secrets working that long.
-    - Account paging orders by `lower(username) COLLATE "C"`, so it does not depend on the database locale.
-    - `store.UpdateProfile` and `store.UpdateUsername` are now only used by tests; 0.3 (email verification) replaces them.
-  - **Part 6 (after the page designs):** the sign-in pages in the approved design: login, sign-up with its notices, consent, logout, error, and the forced password change for `must_change_password`.
-  - Columns for later features (require-MFA flag, key stages, keyring tags, deletion log) are added to `00001_init.sql` when their feature is built, not before.
-- **How to build and test in the cloud workspace:**
-  - Go: stage `.tools/go1.26.11.linux-amd64.tar.gz` from the repo, check its SHA-256 (`9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`), unpack it and put its `bin` first on `PATH`. The preinstalled Go 1.24 is too old.
-  - Modules: tar `backend/vendor` in the VM and unpack it in the cloud copy. When dependencies change, the code that imports them must exist first, then the owner runs `go get`, `go mod tidy` and `go mod vendor` in `backend`.
-  - Use `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local` with `GUARDIAN_TEST_DB=1 DB_HOST=127.0.0.1 DB_USER=postgres DB_NAME=guardian_test`.
-  - Postgres in the cloud workspace is killed between turns; restart it at the start of each command that needs it.
-- `docs/ARCHITECTURE.md` was rewritten for the current design on 2026-11-15 (staged with parts 2 and 3). Its four mermaid diagrams render with `mmdc`; keep them in sync when the design changes.
-
-## Terms, users and pages
-- **Sign-in pages:** served by the backend (`internal/web`, `internal/oidc`). **Management UI:** the SvelteKit frontend, with the **account area** (`/account`) and the **admin area** (`/admin`). Do not call it the "console": the owner read that as a terminal. The **CLI** (`guardian ...` via `kubectl exec`) is only for cluster operations; admins do everyday work in the admin area.
-- `docs/USERS.md`: the roles (Visitor, User, Group owner, App admin (1.x), Guardian admin, Operator, App) with inheritance, and every requirement with a stable id (V1, U12, O3, A18, P2, M1) and release tags. Never renumber ids; add new ones.
-- `docs/PAGES.md`: every page (S sign-in, AC account area, AD admin area, E emails) with the requirement ids it serves, and the reverse table. Keep both directions in step when either file changes.
-- Design work (2026-11-15): the owner wants, in order, users and requirements (done), pages (done), the contents of each page (first version in `docs/PAGES.md`, under review), then design drafts of all pages on the design board, for one consistent look. The login page design is settled; whether other pages reuse its layout is open.
-- Design board (claude.ai Design canvas, 2026-11-15): https://claude.ai/artifact/V4Qwf5xMJg2fWKAGQm3QKJ ("Guardian page designs"). It holds S1 Sign in (settled, rebuilt from the approved mockup, with a "Create an account" link) and three directions drawn on S4 Consent, AC1 Profile and AD8 App: A glass over the landscape, B plain, C Sheikah Slate (from the owner's BotW homepage). Assets (background, logo, Sheikah masks) are uploaded to the canvas. Pick a direction before drawing more pages.
-  - 2026-11-15 feedback: D (mix) and E (D with the sign-in glass sidebar over the landscape) are the candidates. The sign-in page's blue (`#0b6f7c` light, `#4fd1e0` dark) is the main highlight; Sheikah orange (`#b8561a` / `#ff9a3c`) is a secondary highlight only. Consent: "Signed in as" on its own line, "Not you? Sign out" below it, and the permission list in a scrolling box.
-  - S4 Consent is settled (2026-11-15) as design D: fixed top (logo, app, "Signed in as", "Not you? Sign out"), a scrolling permission list in the bar, a divider, then fixed Allow/Deny. It sits next to S1 on the board; the old C consent board was removed.
-  - Account/admin areas: **F is settled for now** (2026-11-18). Every AC and AD page is drawn in F on the board (account row, then admin row); dialogs AC8/AD10 are drawn over AC1/AD8. Parts from later releases carry a dashed tag (0.3, 0.5, 1.x) for review only. D, E, A and B are in the archive section at the bottom. Since 2026-11-18 the board also has every sign-in page (S1–S16 in the S4 bar style, with error and state variants as separate boards), the emails E1–E6, and H0 Home (`/`, U19/U20, decided 2026-11-19: actions needed, connected apps, available apps, links to the areas, no personal details). AC0 was removed; the account area opens on AC1 Profile. AD11 tries a full-width glass plate behind the page title (undecided). The F pages were generated by a script in the cloud scratchpad (not in the repo); edit the board files directly from now on.
-  - Logo files (owner's set): full, mid and head, each light (white) and dark. Use the full logo when large, mid or head when small and for the favicon. A drawn logo is dark in light mode and white in dark mode, matching the text; a logo cut out of a glass panel shows the background instead.
-- The owner wants questions numbered so they can answer by number.
-- Decided 2026-11-15: personal data only where someone went to see it (admin overview with counts only, account start page without personal details, email masked on the profile until shown); single-app groups bound permanently to one app (backend in 0.1, not built yet); copying groups and hidden groups are 1.x.
-
-## Working conventions
-- Keep this file and `docs/ROADMAP.md` current; they are the hand-off between sessions.
-- Never let staleness exceed the app's configured `access_token_ttl_seconds`; every refresh must re-check session, account, app and groups.
-- No feature may depend on the number of backend replicas, or on which cluster a replica runs in.
-- Secrets and tokens are stored only as hashes or encrypted values; never log query strings on OIDC routes.
-- No warnings or refusals for legacy or removed settings before 1.0: nothing is deployed until then, so old options are simply dropped.
+0.2 needs only a minimal subset (backend, bundled or external Postgres, routing, required Secrets, startup
+migrations); the rest comes in 0.5. The chart generates no secrets (Argo CD renders without `lookup`); everything
+comes from operator-provided Secrets, which the owner fills from Bitwarden.

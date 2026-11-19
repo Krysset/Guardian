@@ -242,3 +242,62 @@ func TestE2EAPIErrorsAndUnknownRoutes(t *testing.T) {
 		t.Errorf("last admin: %v", got)
 	}
 }
+
+func TestE2ESingleAppGroupsThroughTheAPI(t *testing.T) {
+	testutil.Reset(t)
+	testutil.AdminAccount(t, "root")
+	grafana, _ := testutil.CreateApp(t, "grafana", testutil.AppOptions{})
+	wiki, _ := testutil.CreateApp(t, "wiki", testutil.AppOptions{})
+	admin := newBrowser(t)
+	admin.mustLogin("root")
+
+	g := admin.call("POST", "/api/v1/groups", map[string]any{"key": "grafana-admins", "display_name": "Grafana admins",
+		"bound_app_id": grafana.ID}, 201)
+	if g["single_app"] != true || g["bound_app_id"] != grafana.ID {
+		t.Fatalf("created group: %v", g)
+	}
+	if ids, _ := g["app_ids"].([]any); len(ids) != 1 || ids[0] != grafana.ID {
+		t.Errorf("a bound group must be linked to its app: %v", g["app_ids"])
+	}
+	resp := admin.sendJSON("PUT", "/api/v1/apps/"+wiki.ID+"/access", map[string]any{"access_rule": "groups", "group_ids": []string{str(g["id"])}})
+	wantStatus(t, resp, http.StatusConflict)
+	if body := decodeMap(t, resp); body["error"] != "group_bound" {
+		t.Errorf("linking a bound group elsewhere: %v", body)
+	}
+
+	plain := admin.call("POST", "/api/v1/groups", map[string]any{"key": "readers", "display_name": "Readers"}, 201)
+	if plain["single_app"] != false {
+		t.Errorf("a plain group: %v", plain)
+	}
+	admin.call("PUT", "/api/v1/apps/"+wiki.ID+"/access", map[string]any{"access_rule": "groups", "group_ids": []string{str(plain["id"])}}, 200)
+	resp = admin.sendJSON("POST", "/api/v1/groups/"+str(plain["id"])+"/bind", map[string]any{"app_id": grafana.ID})
+	wantStatus(t, resp, http.StatusConflict)
+	if body := decodeMap(t, resp); body["error"] != "linked_elsewhere" {
+		t.Errorf("binding a group linked elsewhere: %v", body)
+	}
+	bound := admin.call("POST", "/api/v1/groups/"+str(plain["id"])+"/bind", map[string]any{"app_id": wiki.ID}, 200)
+	if bound["bound_app_id"] != wiki.ID {
+		t.Errorf("bound group: %v", bound)
+	}
+	resp = admin.sendJSON("POST", "/api/v1/groups/"+str(plain["id"])+"/bind", map[string]any{"app_id": grafana.ID})
+	wantStatus(t, resp, http.StatusConflict)
+	if body := decodeMap(t, resp); body["error"] != "already_bound" {
+		t.Errorf("binding again: %v", body)
+	}
+
+	// group owners cannot bind; deleting the app leaves the group bound to nothing
+	user := newBrowser(t)
+	testutil.CreateAccount(t, "plainuser")
+	user.mustLogin("plainuser")
+	resp = user.sendJSON("POST", "/api/v1/groups/"+str(g["id"])+"/bind", map[string]any{"app_id": wiki.ID})
+	wantStatus(t, resp, http.StatusForbidden)
+	drain(resp)
+	admin.call("DELETE", "/api/v1/apps/"+grafana.ID, nil, 204)
+	after := admin.call("GET", "/api/v1/groups/"+str(g["id"]), nil, 200)
+	if after["single_app"] != true || after["bound_app_id"] != nil || after["bound_app_deleted_at"] == nil {
+		t.Errorf("after deleting its app: %v", after)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'group.bound'`); n != 1 {
+		t.Errorf("%d bindings audited, want 1", n)
+	}
+}

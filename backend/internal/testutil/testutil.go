@@ -273,7 +273,7 @@ func GroupID(t testing.TB, key string) string {
 // Group creates a group and returns its id. ownerGroupID may be "".
 func Group(t testing.TB, key, ownerGroupID string) string {
 	t.Helper()
-	id, err := db.CreateGroup(key, "Group "+key, "test group", ownerGroupID)
+	id, err := db.CreateGroup(key, "Group "+key, "test group", ownerGroupID, "")
 	if err != nil {
 		t.Fatalf("create group %s: %v", key, err)
 	}

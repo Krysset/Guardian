@@ -1,0 +1,295 @@
+/* Guardian's sign-in pages. The design is on the design board (S1-S9); keep the two in step.
+   The pages have no inline styles and no inline scripts, so the Content-Security-Policy can stay strict. */
+
+/* Guardian is dark only (decided 2026-11-19). */
+:root {
+  --panel: rgba(14, 26, 30, .78);
+  --ink: #e8f1f2;
+  --mute: #a9c0c4;
+  --line: #4c6a70;
+  --field: rgba(255, 255, 255, .08);
+  --accent: #4fd1e0;
+  --accent-h: #7fe0ec;
+  --on-accent: #06262b;
+  --hl: #ff9a3c;
+  --link: #7fe0ec;
+  --tile: rgba(255, 255, 255, .08);
+  --danger: #ff8a9a;
+  --ok: #6fdc9a;
+  color-scheme: dark;
+}
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  font: 16px/1.5 Figtree, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: #2c4a3a url(background.jpg) center / cover no-repeat fixed;
+}
+
+a { color: var(--link); }
+a:hover { color: var(--accent-h); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.root { min-height: 100%; display: flex; }
+
+/* The bar: translucent glass with the logo cut out of it, so the landscape shows through the logo. */
+.bar {
+  position: relative;
+  width: min(460px, 100%);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 52px 28px;
+  box-sizing: border-box;
+}
+.bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-mask-image: linear-gradient(#000 0 0), url(logo-mask.svg);
+  mask-image: linear-gradient(#000 0 0), url(logo-mask.svg);
+  -webkit-mask-size: 100% 100%, 112px auto;
+  mask-size: 100% 100%, 112px auto;
+  -webkit-mask-position: 0 0, 50% var(--logo-y, 72px);
+  mask-position: 0 0, 50% var(--logo-y, 72px);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  box-shadow: 0 0 60px rgba(10, 30, 30, .25);
+}
+.bar::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(transparent, var(--line), transparent);
+}
+.bar > * { position: relative; }
+
+/* The space the cut-out logo shows through: 112px wide at the top, or 168px on the sign-in page. */
+.logo { width: 112px; height: 115px; margin: 40px auto 24px; flex: none; }
+.bar.large::before {
+  -webkit-mask-size: 100% 100%, 168px auto;
+  mask-size: 100% 100%, 168px auto;
+  -webkit-mask-position: 0 0, 50% var(--logo-y, 80px);
+  mask-position: 0 0, 50% var(--logo-y, 80px);
+}
+.bar.large .logo { width: 168px; height: 172px; margin: 48px auto 14px; }
+
+.content { flex: 1; display: flex; flex-direction: column; }
+
+/* With JavaScript, guardian.js centres the logo and the content as one group between the top and the
+   footer, and moves the cut-out to wherever the logo ends up (--logo-y). Without it, the group stays at
+   the top, where the cut-out's default position matches. */
+.bar.centered .logo { margin-top: auto; }
+.bar.centered .content { flex: none; }
+.bar.centered footer { margin-top: auto; padding-top: 16px; }
+
+/* The consent page keeps its top and its buttons fixed and scrolls the list in between. */
+.bar.fixed { height: 100vh; min-height: 560px; }
+.bar.fixed .content { min-height: 0; }
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  margin: 22px -12px 0 0;
+  padding-right: 12px;
+}
+
+h1 { font: 600 22px/1.3 Figtree, system-ui, sans-serif; margin: 0; text-align: center; }
+.sub { margin: 8px 0 0; text-align: center; color: var(--mute); font-size: 15px; }
+.who { margin: 14px 0 0; text-align: center; font-size: 15px; color: var(--mute); overflow-wrap: anywhere; }
+.who strong, .note strong { color: var(--ink); }
+.small { margin: 18px 0 0; text-align: center; font-size: 14px; color: var(--mute); }
+.small a { font-weight: 600; }
+.hint { font-size: 13px; color: var(--mute); margin: 6px 0 0; }
+.field-error { font-size: 13px; color: var(--danger); margin: 6px 0 0; font-weight: 500; }
+
+label { display: block; font-weight: 500; font-size: 14px; margin: 18px 0 6px; }
+.label-row { display: flex; align-items: baseline; justify-content: space-between; margin: 18px 0 6px; }
+.label-row label { margin: 0; }
+.label-row a { font-size: 14px; }
+
+input.text {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+input.text:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+input.text[aria-invalid="true"] { border-color: var(--danger); }
+
+/* Password fields get a show button from guardian.js; without JavaScript they are plain fields. */
+.password { position: relative; }
+.password input.text { padding-right: 48px; }
+.reveal {
+  position: absolute;
+  right: 6px;
+  top: 7px;
+  width: 34px;
+  height: 32px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mute);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.reveal:hover { color: var(--ink); }
+.reveal[aria-pressed="true"] { color: var(--accent); }
+
+/* Hidden from people; bots that fill every field reveal themselves (sign-up honeypot). */
+.trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+
+form { margin: 0; }
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  margin-top: 24px;
+  border: 0;
+  border-radius: 6px;
+  font: 600 16px Figtree, system-ui, sans-serif;
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+.button:hover { background: var(--accent-h); color: var(--on-accent); }
+.button.alt { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.button.alt:hover { background: var(--field); }
+.button + .button, .button + form .button, form + form .button, form + .button { margin-top: 12px; }
+.buttons-top .button:first-child, .buttons-top form:first-child .button { margin-top: 28px; }
+
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--link);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.link-button:hover { color: var(--accent-h); }
+
+/* Messages above a form: errors, successes and plain notes. */
+.message {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+.message svg { flex: none; margin-top: 1px; }
+.message.error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--field)); }
+/* Every failed attempt draws the page again, so the shake plays each time and a repeated failure is noticed. */
+.message.error { animation: shake .45s cubic-bezier(.36, .07, .19, .97) both; }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-6px); }
+  40%, 60% { transform: translateX(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message.error { animation: none; }
+}
+.message.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 8%, var(--field)); }
+.message.note { display: block; }
+.message.note ul { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.message.note li { display: flex; gap: 10px; align-items: baseline; }
+.message.note li::before { content: ""; flex: none; width: 7px; height: 7px; transform: rotate(45deg) translateY(-1px); background: var(--hl); }
+
+/* A large round icon above the heading of short pages (signed out, errors). */
+.badge-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  margin: 0 auto 4px;
+  background: var(--tile);
+  color: var(--accent);
+}
+.badge-icon.warn { color: var(--hl); }
+
+/* Consent */
+.app { display: flex; align-items: center; gap: 14px; }
+.app h1 { text-align: left; font-size: 21px; }
+.app-logo {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  background: var(--tile);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font: 600 22px Figtree, system-ui, sans-serif;
+  color: var(--accent);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.app-logo img { width: 100%; height: 100%; object-fit: cover; }
+.who-left { margin: 14px 0 0; font-size: 15px; color: var(--mute); overflow-wrap: anywhere; }
+.who-left strong { color: var(--ink); }
+.who-left + form { margin-top: 2px; font-size: 15px; }
+.gets { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; }
+.gets h2 { font: 600 13px Figtree, system-ui, sans-serif; margin: 0; color: var(--hl); text-transform: uppercase; letter-spacing: .08em; }
+.gets::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--hl), transparent); opacity: .5; }
+.scopes { list-style: none; margin: 0; padding: 0; }
+.scopes li { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
+.scopes li:first-child { border-top: 0; }
+.scopes li::before { content: ""; flex: none; width: 8px; height: 8px; transform: rotate(45deg); background: var(--accent); }
+.actions { flex: none; }
+.actions hr { border: 0; height: 1px; background: var(--line); margin: 14px 0 20px; }
+.actions .button:first-child { margin-top: 0; }
+.actions .hint { margin-top: 14px; }
+
+footer { margin-top: 16px; font-size: 13px; color: var(--mute); display: flex; gap: 18px; flex-wrap: wrap; }
+footer a { color: inherit; }
+
+@media (max-width: 560px) {
+  .bar { padding: 32px 24px 24px; }
+}
+
+/* Home (H0) in 0.1: the user's apps, before the management UI brings the full Home in 0.4. */
+.section { margin-top: 26px; }
+.section .hint { margin: 0 0 6px; }
+.apps { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.app-link {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  text-decoration: none;
+}
+.app-link:hover { border-color: var(--accent); color: var(--ink); }
+.app-logo.small { width: 40px; height: 40px; border-radius: 8px; font-size: 17px; }
+.app-text { display: flex; flex-direction: column; min-width: 0; }
+.app-text strong { font-weight: 600; }
+.app-text span { font-size: 13px; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

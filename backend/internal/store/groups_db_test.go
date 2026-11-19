@@ -214,11 +214,11 @@ func TestBuiltInGroupsAreProtected(t *testing.T) {
 func TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups(t *testing.T) {
 	testutil.Reset(t)
 	a := testutil.Group(t, "alpha", "")
-	if _, err := db.CreateGroup("alpha", "Again", "", ""); !db.IsUniqueViolation(err) {
+	if _, err := db.CreateGroup("alpha", "Again", "", "", ""); !db.IsUniqueViolation(err) {
 		t.Errorf("duplicate key: %v, want a unique violation", err)
 	}
 	unknown := "00000000-0000-0000-0000-000000000000"
-	if _, err := db.CreateGroup("beta", "Beta", "", unknown); !errors.Is(err, db.ErrInvalidOwner) {
+	if _, err := db.CreateGroup("beta", "Beta", "", unknown, ""); !errors.Is(err, db.ErrInvalidOwner) {
 		t.Errorf("unknown owner at creation: %v, want ErrInvalidOwner", err)
 	}
 	if err := db.UpdateGroup(a, db.GroupUpdate{OwnerGroupID: &a}); !errors.Is(err, db.ErrInvalidOwner) {
@@ -453,5 +453,83 @@ func TestLeavingAGroupNotifiesOnlyTheAppsLinkedToIt(t *testing.T) {
 	// someone who was never signed in to anything causes no notices
 	if none, err := db.GroupChangeLogoutNotices(testutil.CreateAccount(t, "dave").ID, finance); err != nil || len(none) != 0 {
 		t.Errorf("notices for an account without sessions: %+v, %v", none, err)
+	}
+}
+
+func TestSingleAppGroupsAreBoundToOneAppForGood(t *testing.T) {
+	testutil.Reset(t)
+	grafana, _ := testutil.CreateApp(t, "grafana", testutil.AppOptions{})
+	wiki, _ := testutil.CreateApp(t, "wiki", testutil.AppOptions{})
+
+	// created bound: linked to its app, and to no other
+	bound, err := db.CreateGroup("grafana-admins", "Grafana admins", "", "", grafana.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := db.GetGroup(bound)
+	if !g.SingleApp || g.BoundAppID != grafana.ID || g.BoundAt == nil || !slices.Equal(g.AppIDs, []string{grafana.ID}) {
+		t.Fatalf("bound group = %+v", g)
+	}
+	if err := db.SetAppAccess(wiki.ID, "groups", []string{bound}); !errors.Is(err, db.ErrGroupBound) {
+		t.Errorf("linking a bound group to another app: %v", err)
+	}
+	if _, err := db.AddApp(db.App{Name: "other", PrettyName: "Other", ClientType: "public", RedirectURIs: []string{"https://o.test/cb"},
+		GroupIDs: []string{bound}}, nil, ""); !errors.Is(err, db.ErrGroupBound) {
+		t.Errorf("a new app linked to a bound group: %v", err)
+	}
+	// its own app may unlink and link it again
+	if err := db.SetAppAccess(grafana.ID, "groups", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetAppAccess(grafana.ID, "groups", []string{bound}); err != nil {
+		t.Errorf("linking a bound group to its own app: %v", err)
+	}
+	// a binding never moves
+	if err := db.BindGroup(bound, wiki.ID); !errors.Is(err, db.ErrAlreadyBound) {
+		t.Errorf("binding again: %v", err)
+	}
+
+	// an existing group can be bound only while it is linked to no other app
+	plain := testutil.Group(t, "readers", "")
+	if err := db.SetAppAccess(wiki.ID, "groups", []string{plain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.BindGroup(plain, grafana.ID); !errors.Is(err, db.ErrLinkedElsewhere) {
+		t.Errorf("binding a group linked to another app: %v", err)
+	}
+	if err := db.BindGroup(plain, wiki.ID); err != nil {
+		t.Errorf("binding a group to the app it is linked to: %v", err)
+	}
+	if err := db.BindGroup(testutil.GroupID(t, db.AdminGroupKey), grafana.ID); !errors.Is(err, db.ErrSystemGroup) {
+		t.Errorf("binding a built-in group: %v", err)
+	}
+	if err := db.BindGroup(testutil.Group(t, "x", ""), "11111111-1111-1111-1111-111111111111"); !errors.Is(err, db.ErrAppNotFound) {
+		t.Errorf("binding to an unknown app: %v", err)
+	}
+	if _, err := db.CreateGroup("y", "Y", "", "", "11111111-1111-1111-1111-111111111111"); !errors.Is(err, db.ErrAppNotFound) {
+		t.Errorf("creating a group bound to an unknown app: %v", err)
+	}
+	if testutil.Count(t, `SELECT count(*) FROM user_group WHERE key = 'y'`) != 0 {
+		t.Error("a refused bound group was created anyway")
+	}
+
+	// when the app is deleted the group stays, bound to nothing, and can never be linked again
+	member := testutil.CreateAccount(t, "eve")
+	testutil.AddMember(t, bound, member.ID)
+	if err := db.RemoveApp(grafana.ID); err != nil {
+		t.Fatal(err)
+	}
+	g, err = db.GetGroup(bound)
+	if err != nil {
+		t.Fatalf("the bound group went with its app: %v", err)
+	}
+	if !g.SingleApp || g.BoundAppID != "" || g.BoundAppDeletedAt == nil || g.MemberCount != 1 || len(g.AppIDs) != 0 {
+		t.Errorf("after deleting its app: %+v", g)
+	}
+	if err := db.SetAppAccess(wiki.ID, "groups", []string{bound}); !errors.Is(err, db.ErrGroupBound) {
+		t.Errorf("linking an orphaned single-app group: %v", err)
+	}
+	if err := db.BindGroup(bound, wiki.ID); !errors.Is(err, db.ErrAlreadyBound) {
+		t.Errorf("binding an orphaned single-app group again: %v", err)
 	}
 }

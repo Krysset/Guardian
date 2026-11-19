@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -51,6 +52,19 @@ func GetAccountByUsername(username string) (Account, string, error) {
 	a, err := scanAccount(GetDatabaseConnection().QueryRow(
 		`SELECT `+accountColumns+`, COALESCE(password_hash, '') FROM account
 		 WHERE lower(username) = lower($1) AND deleted_at IS NULL`, username), &hash)
+	return a, hash, err
+}
+
+// GetAccountForLogin finds the account to sign in by its username or its (always confirmed) email address.
+// Usernames cannot contain "@", so the two never clash.
+func GetAccountForLogin(login string) (Account, string, error) {
+	if !strings.Contains(login, "@") {
+		return GetAccountByUsername(login)
+	}
+	var hash string
+	a, err := scanAccount(GetDatabaseConnection().QueryRow(
+		`SELECT `+accountColumns+`, COALESCE(password_hash, '') FROM account
+		 WHERE lower(email) = lower($1) AND deleted_at IS NULL`, login), &hash)
 	return a, hash, err
 }
 

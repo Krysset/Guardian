@@ -30,6 +30,9 @@ The answer contains `client_id` and, once, `client_secret`. Keep both in a Kuber
   Change both later with `PUT /api/v1/apps/{id}/access` (`{"access_rule", "group_ids"}`).
 - Groups are managed under `/api/v1/groups`. A group's `key` (for example `billing-approvers`) never changes;
   that is the value your app receives.
+- A group made only for your app can be a **single-app group**: create it with `"bound_app_id": "<app id>"`, or
+  bind it later with `POST /api/v1/groups/{id}/bind`. It is then linked to your app and can never be linked to
+  any other, so it can never grant access elsewhere.
 - The secret can be rotated with `POST /api/v1/apps/{id}/secret`. Pass `{"grace_seconds": 3600}` to keep the
   old secret working for an hour while you roll out the new one.
 
@@ -141,6 +144,16 @@ It is how stale your app's view of a user can get, if your app does not implemen
 Some off-the-shelf apps read the ID token once at sign-in and then keep their own session. Group changes
 reach such an app only when its own session ends or when it receives a back-channel logout. Check how the app
 behaves when you connect it.
+
+## Off-the-shelf apps
+
+- **Email may be missing.** Email is optional in Guardian, and the `email` claim is left out when an account
+  has none. Apps that insist on an email need a fallback, for example `<sub>@guardian.invalid`.
+- **Usernames may clash** with an app's own built-in accounts (many apps have an `admin`). Rename the app's
+  local account, or match users on `sub` where the app allows it.
+- **Grafana** works with its generic OAuth provider. `docker-compose.yml` and `docs/LOCAL-GRAFANA.md` have a
+  tested configuration: PKCE, roles from the `groups` claim, the email fallback above, and sign-out through
+  Guardian. Grafana does not support back-channel logout.
 
 ## What Guardian does not decide
 

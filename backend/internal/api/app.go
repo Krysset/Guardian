@@ -151,8 +151,8 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, sql.ErrNoRows):
 		httpx.Error(w, http.StatusNotFound, "App not found")
 		return
-	case errors.Is(err, db.ErrGroupNotFound):
-		httpx.Error(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
+	case errors.Is(err, db.ErrGroupNotFound), errors.Is(err, db.ErrGroupBound):
+		appFail(w, err)
 		return
 	case err != nil:
 		httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
@@ -330,6 +330,8 @@ func appFail(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusNotFound, "App not found")
 	case errors.Is(err, db.ErrGroupNotFound):
 		httpx.Error(w, http.StatusBadRequest, "group_ids contains a group that does not exist")
+	case errors.Is(err, db.ErrGroupBound):
+		httpx.ErrorCode(w, http.StatusConflict, "group_bound", "group_ids contains a group that is bound to another app")
 	case db.IsUniqueViolation(err):
 		httpx.Error(w, http.StatusConflict, "An app with that name already exists")
 	default:

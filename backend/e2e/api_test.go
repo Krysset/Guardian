@@ -313,7 +313,7 @@ func TestE2EAppAccessRuleDecidesWhoMaySignIn(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden || resp.Header.Get("Location") != "" {
 		t.Fatalf("an account outside the linked groups: status %d, location %q; want 403 and no redirect", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if body := readBody(t, resp); !strings.Contains(body, "does not have access to App intranet") {
+	if body := readBody(t, resp); !strings.Contains(body, "have access to App intranet") {
 		t.Errorf("the refusal must say what happened, got %.300s", body)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM authorization_code WHERE account_id = $1`, outsider.ID); n != 0 {
@@ -597,7 +597,7 @@ func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 
 	// unknown user and wrong password are indistinguishable
 	known, unknown := failures("carol"), failures("no-such-user")
-	if !strings.Contains(known, "Invalid username or password.") || !strings.Contains(unknown, "Invalid username or password.") {
+	if !strings.Contains(known, "Wrong username or password.") || !strings.Contains(unknown, "Wrong username or password.") {
 		t.Error("login failure message missing")
 	}
 	for i := 0; i < 8; i++ { // carol now has 9 failures
@@ -681,7 +681,7 @@ func TestE2ELoginRedirectsCannotLeaveGuardian(t *testing.T) {
 		br := newBrowser(t)
 		resp := br.login("alice", testutil.DefaultPassword, returnTo)
 		wantStatus(t, resp, http.StatusSeeOther)
-		if loc := resp.Header.Get("Location"); loc != "/login" {
+		if loc := resp.Header.Get("Location"); loc != "/" {
 			t.Errorf("return_to %q redirected to %q", returnTo, loc)
 		}
 		drain(resp)

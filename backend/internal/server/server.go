@@ -81,6 +81,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 // called once before serving; tests that build the routers call it too.
 func Configure(cfg config.Config, keys *auth.Keys) {
 	httpx.Configure(cfg)
+	web.Configure(cfg)
 	oidc.SetKeys(keys)
 }
 
@@ -101,8 +102,9 @@ func PublicRouter() http.Handler {
 	// No request logger on purpose: it would log authorization codes found in query strings.
 	r.Use(middleware.Recoverer, httpx.Metrics("public"))
 	oidc.Mount(r) // /authorize /consent /token /revoke /userinfo /logout /jwks.json /.well-known/...
-	web.Mount(r)  // /login
+	web.Mount(r)  // / /login /signup /password /static/
 	r.Mount("/api/v1", api.Router())
+	r.NotFound(web.NotFoundHandler)
 	return r
 }
 

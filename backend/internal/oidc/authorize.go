@@ -84,7 +84,7 @@ func parseAuthRequest(q url.Values) (*authRequest, *authError) {
 func redirectWithError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {
 	u, err := url.Parse(redirectURI)
 	if err != nil {
-		web.Message(w, http.StatusBadRequest, "Authorization failed", desc)
+		web.Error(w, web.BrokenLink)
 		return
 	}
 	q := u.Query()
@@ -100,14 +100,23 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, redirectURI, stat
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
+// refuseAuthRequest answers a request that parseAuthRequest refused: back to the app when its redirect
+// address can be trusted, otherwise with the "broken sign-in link" page. The page never shows the reason,
+// so it is logged for whoever runs the app.
+func refuseAuthRequest(w http.ResponseWriter, r *http.Request, req *authRequest, aerr *authError) {
+	if aerr.Redirect {
+		redirectWithError(w, r, req.RedirectURI, req.State, aerr.Code, aerr.Description)
+		return
+	}
+	slog.Info("refused an authorization request", "error", aerr.Code, "reason", aerr.Description,
+		"client_id", r.FormValue("client_id"))
+	web.Error(w, web.BrokenLink)
+}
+
 func authorize(w http.ResponseWriter, r *http.Request) {
 	req, aerr := parseAuthRequest(r.URL.Query())
 	if aerr != nil {
-		if aerr.Redirect {
-			redirectWithError(w, r, req.RedirectURI, req.State, aerr.Code, aerr.Description)
-		} else {
-			web.Message(w, http.StatusBadRequest, "Authorization request failed", aerr.Description)
-		}
+		refuseAuthRequest(w, r, req, aerr)
 		return
 	}
 
@@ -131,6 +140,21 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	acct, err := db.GetAccount(sess.AccountID)
+	if err != nil {
+		redirectWithError(w, r, req.RedirectURI, req.State, "server_error", "")
+		return
+	}
+	// An account with a temporary password must choose its own before it may sign in to anything.
+	if acct.MustChangePassword {
+		if slices.Contains(req.Prompts, "none") {
+			redirectWithError(w, r, req.RedirectURI, req.State, "interaction_required", "")
+			return
+		}
+		http.Redirect(w, r, web.MustChangePasswordURL("/authorize?"+r.URL.RawQuery), http.StatusFound)
+		return
+	}
+
 	// The app's access rule: with "groups", only members of a group linked to the app may sign in to it.
 	// Nobody else gets a code, so the app never has to notice and refuse them itself.
 	allowed, err := db.AccountMayUseApp(sess.AccountID, req.App)
@@ -144,8 +168,10 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, req.RedirectURI, req.State, "access_denied", "The account has no access to this app")
 			return
 		}
-		web.Message(w, http.StatusForbidden, "No access to "+req.App.PrettyName,
-			"Your account does not have access to "+req.App.PrettyName+". Ask an administrator to add you to a group that does.")
+		web.Render(w, http.StatusForbidden, "noaccess", web.Page{
+			Title: "No access to " + req.App.PrettyName, App: req.App, Username: acct.Username,
+			CSRF: httpx.CSRFToken(w, r), ReturnTo: "/authorize?" + r.URL.RawQuery,
+		})
 		return
 	}
 
@@ -161,10 +187,10 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		scopes, _ := db.GetScopes(req.Scopes)
-		acct, _ := db.GetAccount(sess.AccountID)
 		web.Render(w, http.StatusOK, "consent", web.Page{
-			Title: "Authorize " + req.App.PrettyName, CSRF: httpx.CSRFToken(w, r),
-			App: req.App, Scopes: scopes, Username: acct.Username, Req: r.URL.RawQuery,
+			Title: "Allow " + req.App.PrettyName + "?", CSRF: httpx.CSRFToken(w, r),
+			App: req.App, Scopes: web.ScopeLines(req.App.PrettyName, scopes), Username: acct.Username,
+			Req: r.URL.RawQuery, ReturnTo: "/authorize?" + r.URL.RawQuery,
 		})
 		return
 	}
@@ -198,26 +224,22 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 
 func consentSubmit(w http.ResponseWriter, r *http.Request) {
 	if !httpx.CSRFValid(r) {
-		web.Message(w, http.StatusForbidden, "Request rejected", "Your form expired. Go back and try again.")
+		web.Error(w, web.FormExpired)
 		return
 	}
 	sess, ok := httpx.SessionFromRequest(r)
 	if !ok {
-		web.Message(w, http.StatusUnauthorized, "Signed out", "Your session has expired. Start again from the application.")
+		web.Error(w, web.SessionExpired)
 		return
 	}
 	q, err := url.ParseQuery(r.PostFormValue("req"))
 	if err != nil {
-		web.Message(w, http.StatusBadRequest, "Invalid request", "Malformed authorization request.")
+		web.Error(w, web.BrokenLink)
 		return
 	}
 	req, aerr := parseAuthRequest(q)
 	if aerr != nil {
-		if aerr.Redirect {
-			redirectWithError(w, r, req.RedirectURI, req.State, aerr.Code, aerr.Description)
-		} else {
-			web.Message(w, http.StatusBadRequest, "Authorization request failed", aerr.Description)
-		}
+		refuseAuthRequest(w, r, req, aerr)
 		return
 	}
 	if r.PostFormValue("decision") != "allow" {

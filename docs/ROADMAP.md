@@ -1,6 +1,6 @@
 # Guardian roadmap to 1.0
 
-Status: agreed plan, consolidated 2026-11-13 after a full design review and revised 2026-11-14 after a second review. `Agents.md` has the short version. Change this document when a decision changes, and say so in the change log at the bottom.
+Status: agreed plan, consolidated 2026-11-13 after a full design review and revised since (see the change log at the bottom). 0.1 is done; 0.2 is next. Change this document when a decision changes, and say so in the change log. `Agents.md` has working notes for agents.
 
 ## 1. What Guardian 1.0 is
 
@@ -69,11 +69,11 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
 - **Group owners (delegation):**
   - Owners add members by typing an exact username or email. There are no suggestions, and the only answers are "No user found" or "User added".
   - Owners see which apps their groups are linked to, and users see the groups they are in.
-- **Single-app groups:** a group can be bound to one named app, permanently. It can never be linked to another app; when its app is deleted it stays, bound to nothing, until the clean-up after audit retention removes it. New groups ask whether they are for one app only, with no preselected answer.
   - A group can name an owner group, whose members manage the owned group's membership.
   - Only global admins change system groups or ownership.
   - Apps, and linking groups to apps, are global-admin only in 1.0.
   - Every delegated action is audited, recording which ownership was used.
+- **Single-app groups:** a group can be bound to one named app, permanently. It can never be linked to another app; when its app is deleted it stays, bound to nothing, until the clean-up after audit retention removes it. New groups ask whether they are for one app only, with no preselected answer.
 - **Machine access for apps:**
   - The `client_credentials` grant.
   - A read-only API (`/api/v1/apps/self/...`), limited to the calling app, for its linked groups, their members, and user lookup by id.
@@ -201,7 +201,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - `golang-jwt` for tokens, `go-webauthn/webauthn` for WebAuthn, `pquerna/otp` for TOTP, `filippo.io/age` for backup encryption, and `net/smtp` behind a `Mailer` interface.
   - Everything is embedded (migrations, templates, static files).
   - The image is distroless, non-root, with a read-only root filesystem.
-- **Sign-in pages** (login, sign-up, consent, logout, reset, MFA): server-rendered Go `html/template` in the approved Guardian design. They work without JavaScript, except for the security-key prompt.
+- **Sign-in pages** (login, sign-up, consent, logout, reset, MFA) and the 0.1 Home: server-rendered Go `html/template` in the approved Guardian design (dark only), with embedded styles and scripts and a strict Content-Security-Policy. They work without JavaScript, except for the security-key prompt.
 - **Management UI** (the account area `/account` and the admin area `/admin`; called the "console" before 2026-11-15). Admins do all everyday work here; the CLI is only for cluster operations:
   - Svelte 5 + SvelteKit (`adapter-static`) + TypeScript.
   - Plain CSS with tokens shared with the sign-in pages.
@@ -226,20 +226,18 @@ guardian/
 ├── frontend/                      # SvelteKit management UI, Dockerfile, nginx.conf
 ├── charts/guardian/               # see Agents.md for the template list
 └── docs/
-    ├── ROADMAP.md, ARCHITECTURE.md, INTEGRATION.md, TESTING.md
-    ├── INSTALL.md (incl. runbooks), DATA-PROTECTION.md, openapi.yaml
-    └── design/                    # login mockup, logo, background
+    ├── ROADMAP.md, ARCHITECTURE.md, INTEGRATION.md, TESTING.md, USERS.md, PAGES.md, LOCAL-GRAFANA.md
+    └── INSTALL.md (incl. runbooks), DATA-PROTECTION.md, openapi.yaml
 ```
 
 ## 5. Release plan
 
 Everything runs in a staging environment with test data until 1.0. Guardian is not opened for public sign-up before then.
 
-### 0.1: it runs locally
+### 0.1: it runs locally (done 2026-11-19)
 - **M0: make it run. Done 2026-11-14.**
   - CI moved to the root `.github/`; the Dockerfile and `docker-compose.yml` were fixed.
   - The backend builds, and all 102 tests pass against PostgreSQL 16. One bug was found and fixed.
-  - Still to do by the owner: check `docker compose up --build`, push, and merge `oidc-refactor` into `dev`.
 - **M1: restructure. Done 2026-11-14.** No change to features.
   - Part 1: move to `cmd/` and `internal/`, add the config package with validation, structured logging with slog, and the schema embedded in the binary.
   - Part 2: goose migrations and the pgx driver, plus a `guardian migrate` command.
@@ -252,9 +250,9 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
   - **Done 2026-11-15:** the split of `internal/api` into `httpx`, `web`, `oidc`, `internalapi` and `api`. No change to behaviour.
 - **API and pages:**
   - **Done 2026-11-15:** `/api/v1` with REST routes and `docs/openapi.yaml` (kept in step with the router by a test); admin checks through `guardian-admins`; account search, disabling and admin-set passwords; app edits and secret rotation; the audit log.
-  - The sign-in pages in the approved design: login, sign-up (with its notices), consent, logout and error pages, and the forced password change after an admin-set password.
-  - Single-app groups in the backend: a group can be bound permanently to one app and then cannot be linked to any other (`docs/USERS.md` A27).
-- **Done when:** with docker-compose, a test app and Grafana sign in through OIDC and receive the right groups.
+  - **Done 2026-11-19:** the sign-in pages in the approved design (S1-S9 on the design board): login (username or email), sign-up with its notices and honeypot, consent, no access, sign out and signed out, already signed in, the error pages, and the forced password change after an admin-set password. Templates and static files are embedded; the Content-Security-Policy allows no inline styles or scripts.
+  - **Done 2026-11-19:** single-app groups in the backend (`docs/USERS.md` A27): `bound_app_id` on `POST /groups` and `POST /groups/{group}/bind`; a bound group is linked to its app and can be linked to no other (`group_bound`); a binding never moves (`already_bound`) and needs the group to be linked nowhere else (`linked_elsewhere`); deleting the app leaves the group bound to nothing, with `bound_app_deleted_at` for the clean-up in 0.5.
+- **Done when:** with docker-compose, a test app and Grafana sign in through OIDC and receive the right groups. **Done 2026-11-19:** the end-to-end tests cover the test app; the owner ran the Grafana check (`docs/LOCAL-GRAFANA.md`, Grafana behind the `grafana` profile in `docker-compose.yml`), including roles from groups, refusal without a group and sign-out.
 
 ### 0.2: it runs in the cluster
 - A minimal chart: backend, bundled or external Postgres, Ingress/HTTPRoute, required Secrets, startup migrations.
@@ -273,7 +271,8 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 
 ### 0.4: management UI
 - The SvelteKit management UI (pages in `docs/PAGES.md`):
-  - `/account`: a start page without personal details, profile (email masked until shown), security, sessions, connected apps, data export, deletion;
+  - Home (`/`): connected and available apps, actions needed, the way to both areas; no personal details. It replaces the simple 0.1 Home;
+  - `/account`: opens on the profile (email masked until shown); security, sessions, connected apps, groups, data export, deletion;
   - `/admin`: an overview of aggregated figures as the start page (no personal data on it), accounts (including signing an account out everywhere), apps, groups, audit log.
 - Group owners and their scoped admin view.
 - **Done when:** everything in the management UI list can be done without curl.
@@ -334,3 +333,5 @@ Everything runs in a staging environment with test data until 1.0. Guardian is n
 - 2026-11-15: hidden groups moved to the 1.x candidates. The admin area opens on an overview with aggregated figures only; pages with personal data are opened deliberately.
 - 2026-11-15: single-app groups decided (backend in 0.1, clean-up with audit retention in 0.5). Copying groups added to the 1.x candidates. Personal data appears only where someone went to see it: the account area also opens on a start page without personal details, and the profile masks the email until shown.
 - 2026-11-15: page contents reviewed: passwords typed twice, sign-up signs the user in, session IPs masked like emails, admin-created accounts change their password at first sign-in, temporary passwords typed by the admin (a generate button in 0.5).
+- 2026-11-19: Home (`/`, H0) replaces the account area start page; it arrives with the management UI in 0.4, and until then a simple Home in the sign-in page style lists the user's apps. The sign-in pages of 0.1 are built; optional `HELP_URL` and `PRIVACY_URL` fill their footer.
+- 2026-11-19: 0.1 done. Single-app groups built in the backend. The sign-in pages are dark only; light mode is not planned for now. The owner checked the whole flow with Grafana; `docker-compose.yml` renames Grafana's built-in user and gives accounts without an email a placeholder address for Grafana.

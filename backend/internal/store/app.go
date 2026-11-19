@@ -77,9 +77,20 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	return GetApp(id)
 }
 
+// RemoveApp deletes an app. Groups bound to it stay, bound to no app, with the time the app was deleted.
 func RemoveApp(id string) error {
-	_, err := GetDatabaseConnection().Exec(`DELETE FROM app WHERE id = $1`, id)
-	return err
+	tx, err := GetDatabaseConnection().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE user_group SET bound_app_deleted_at = now() WHERE bound_app_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM app WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func GetApp(id string) (App, error) {
@@ -163,4 +174,44 @@ func GetScopeClaims(scopes []string) ([]string, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// HomeApp is an app on a user's home page (H0).
+type HomeApp struct {
+	App       App
+	Connected bool // the user has signed in to it
+}
+
+// AppsForHome returns the enabled apps with a homepage that the account may sign in to, by name, each
+// marked connected when the account has signed in to it before. The access rule is the same as at sign-in
+// (AccountMayUseApp).
+func AppsForHome(accountID string) ([]HomeApp, error) {
+	rows, err := GetDatabaseConnection().Query(
+		`SELECT `+appColumns+`,
+		        EXISTS (SELECT 1 FROM app_user u WHERE u.app_id = app.id AND u.account_id = $1)
+		 FROM app
+		 WHERE enabled AND COALESCE(homepage_url, '') <> ''
+		   AND (access_rule = 'anyone' OR EXISTS (
+		        SELECT 1 FROM group_member m JOIN app_group ag ON ag.group_id = m.group_id
+		        WHERE ag.app_id = app.id AND m.account_id = $1 AND `+activeMember+`))
+		 ORDER BY lower(pretty_name), name`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	apps := []HomeApp{}
+	for rows.Next() {
+		var a App
+		var connected bool
+		err := rows.Scan(&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
+			&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
+			scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
+			&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
+			scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &connected)
+		if err != nil {
+			return nil, err
+		}
+		apps = append(apps, HomeApp{App: a, Connected: connected})
+	}
+	return apps, rows.Err()
 }

@@ -31,6 +31,12 @@ func groupFail(w http.ResponseWriter, err error) {
 		httpx.ErrorCode(w, http.StatusConflict, "last_admin", "Guardian must keep at least one active administrator whose membership does not expire")
 	case errors.Is(err, db.ErrInvalidOwner):
 		httpx.Error(w, http.StatusBadRequest, "owner_group_id must be another existing group")
+	case errors.Is(err, db.ErrAppNotFound):
+		httpx.Error(w, http.StatusBadRequest, "The app to bind the group to does not exist")
+	case errors.Is(err, db.ErrAlreadyBound):
+		httpx.ErrorCode(w, http.StatusConflict, "already_bound", "The group is already bound to an app; a binding cannot be changed")
+	case errors.Is(err, db.ErrLinkedElsewhere):
+		httpx.ErrorCode(w, http.StatusConflict, "linked_elsewhere", "The group is linked to another app; unlink it there first")
 	case db.IsUniqueViolation(err):
 		httpx.Error(w, http.StatusConflict, "A group with that key already exists")
 	default:
@@ -100,6 +106,7 @@ func createGroup(w http.ResponseWriter, r *http.Request) {
 		DisplayName  string `json:"display_name"`
 		Description  string `json:"description"`
 		OwnerGroupID string `json:"owner_group_id"`
+		BoundAppID   string `json:"bound_app_id"` // optional: a single-app group, bound to this app for good
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -116,18 +123,42 @@ func createGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "owner_group_id must be another existing group")
 		return
 	}
-	id, err := db.CreateGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID)
+	id, err := db.CreateGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID, req.BoundAppID)
 	if err != nil {
 		groupFail(w, err)
 		return
 	}
-	db.Audit("group.created", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"group": id, "key": req.Key, "owner_group": req.OwnerGroupID})
+	db.Audit("group.created", httpx.AccountID(r), req.BoundAppID, httpx.ClientIP(r),
+		map[string]any{"group": id, "key": req.Key, "owner_group": req.OwnerGroupID, "bound_app": req.BoundAppID})
 	group, err := db.GetGroup(id)
 	if err != nil {
 		groupFail(w, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, group)
+}
+
+// bindGroup makes a group a single-app group: bound to one app for good and linked to it. Only a group
+// linked to no other app can be bound, and a binding can never be undone or moved.
+func bindGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AppID string `json:"app_id"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	id := chi.URLParam(r, "group")
+	if err := db.BindGroup(id, req.AppID); err != nil {
+		groupFail(w, err)
+		return
+	}
+	db.Audit("group.bound", httpx.AccountID(r), req.AppID, httpx.ClientIP(r), map[string]any{"group": id})
+	group, err := db.GetGroup(id)
+	if err != nil {
+		groupFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, group)
 }
 
 // updateGroup changes the display name, description or owner. The key never changes: apps match on it.

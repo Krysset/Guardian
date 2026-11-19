@@ -32,7 +32,7 @@ Page ids: **S** sign-in pages, **H** home (`/`), **AC** account area (`/account`
 
 | Page | Purpose | Requirements | Who | Release |
 |---|---|---|---|---|
-| H0 Home | Where a signed-in user lands: their connected apps, the apps available to them, actions needed, and the way to the account and admin areas. No personal details. | U19, U20 | User | 0.4 |
+| H0 Home | Where a signed-in user lands: their connected apps, the apps available to them, actions needed, and the way to the account and admin areas. No personal details. | U19, U20 | User | 0.1 (simple), 0.4 |
 
 ## Account area (`/account`)
 
@@ -84,7 +84,7 @@ Sent only to accounts with a confirmed address (except E1, which confirms it).
 
 ## What each page contains
 
-A first version, for the design drafts. **Shows** is what the page displays, **Fields** what can be entered,
+Reviewed 2026-11-15 to 2026-11-19 and drawn on the design board. **Shows** is what the page displays, **Fields** what can be entered,
 **Actions** the buttons and links, **States** the variants a design must cover. Items marked with a release
 appear from that release; until then the page is drawn without them.
 
@@ -155,7 +155,8 @@ appear from that release; until then the page is drawn without them.
   - "You don't have access to `<app>`";
   - what to do: ask an administrator to add you to a group with access;
   - "Signed in as `<username>`".
-- Actions: Sign out to switch account; go to your account.
+- Actions: Sign out to switch account (signs out, then back to sign-in for the same app); go to your account
+  (0.4).
 
 **S6 Sign out?**
 - Shows: "Sign out of Guardian? You will also be signed out of the apps you use through Guardian."
@@ -167,7 +168,7 @@ appear from that release; until then the page is drawn without them.
 
 **S8 Already signed in**
 - Shows: "You're signed in as `<username>`."
-- Actions: Go to your account; Sign out.
+- Actions: Go to your account (0.4); Sign out.
 
 **S9 Error**
 - Shows: a plain title, what happened, and what to do. Never technical details.
@@ -233,7 +234,10 @@ appear from that release; until then the page is drawn without them.
 - Apps without a homepage, and apps the user may not sign in to, are not listed.
 - **Manage:** Your account (AC1); Admin area (AD13, admins only).
 - States: no apps at all ("No apps yet. Ask an administrator for access."); either card empty is left out.
-- Visitors who are not signed in go to S1, and come back here afterwards.
+- Visitors who are not signed in go to S1, and come back here afterwards. Signing in or up without an app
+  to return to also lands here.
+- 0.1 has a simple version in the sign-in page style (served by the backend): the username, connected and
+  available apps, and Sign out. The full Home in the management UI design replaces it in 0.4.
 
 ### Account area
 
@@ -410,10 +414,7 @@ user. It holds no other personal data.
 
 ### What the API still lacks for these pages
 
-- The sign-up page signing the new user in and continuing to the app they came from; with an email (0.3),
-  only once it is confirmed (S2, S12).
-- Accounts created by an admin must change their password at the first sign-in (AD3).
-- The apps a user may sign in to, split into connected and available, with homepages (H0).
+- With an email at sign-up (0.3), signing in only once it is confirmed (S2, S12).
 - The account area:
   - the user's own groups (AC5);
   - sessions (AC3);
@@ -424,7 +425,6 @@ user. It holds no other personal data.
 - Signing an account out everywhere (AD2).
 - The overview figures (AD13).
 - Audit entries about an account or app, as the target and not only the actor (AD2, AD8).
-- Binding a group to an app (AD5, AD6).
 
 ## Requirements without pages
 

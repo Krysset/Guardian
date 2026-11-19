@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
-	"regexp"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -16,18 +14,15 @@ import (
 	"guardian/internal/httpx"
 	"guardian/internal/oidc"
 	db "guardian/internal/store"
+	"guardian/internal/web"
 )
 
-var usernameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{3,64}$`)
-
-const usernameRule = "username must be 3-64 characters: letters, digits, '.', '_' or '-'"
-
-func validPassword(p string) bool {
-	// Upper bound protects the hasher from huge inputs.
-	return len(p) >= 10 && len(p) <= 1024
-}
-
-const passwordRule = "The password must be 10-1024 characters"
+// The username and password rules are shared with the sign-up page (package web).
+var (
+	usernameRule  = web.UsernameRule
+	passwordRule  = web.PasswordRule
+	validPassword = web.ValidPassword
+)
 
 // validEmail accepts a bare address such as alice@example.com, nothing else ("Alice <a@b>" is refused).
 func validEmail(s string) bool {
@@ -37,11 +32,6 @@ func validEmail(s string) bool {
 	a, err := mail.ParseAddress(s)
 	return err == nil && a.Address == s && a.Name == ""
 }
-
-const (
-	signupLimit  = 10 // sign-ups per IP per window
-	signupWindow = time.Hour
-)
 
 // signup is open to everyone, so it is limited per client IP (counters live in Postgres and are shared by
 // all replicas). Accounts created by administrators (POST /accounts) are not limited.
@@ -53,42 +43,21 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !usernameRe.MatchString(req.Username) {
-		httpx.Error(w, http.StatusBadRequest, usernameRule)
-		return
-	}
-	if !validPassword(req.Password) {
-		httpx.Error(w, http.StatusBadRequest, passwordRule)
-		return
-	}
-	// Counted only for valid requests, so typos in the form do not use up the limit.
-	n, err := db.RateLimitHit("register:ip:"+httpx.ClientIP(r), signupWindow)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
-		return
-	}
-	if n > signupLimit {
-		httpx.RateLimited.WithLabelValues("register").Inc()
-		w.Header().Set("Retry-After", strconv.Itoa(int(signupWindow.Seconds())))
-		httpx.Error(w, http.StatusTooManyRequests, "Too many sign-ups from this address. Try again later.")
-		return
-	}
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
-		return
-	}
-	acct, err := db.CreateAccount(req.Username, hash)
-	if db.IsUniqueViolation(err) {
-		httpx.Error(w, http.StatusConflict, "That username is already taken")
-		return
-	}
-	if err != nil {
+	acct, err := web.CreateAccount(r, req.Username, req.Password)
+	switch {
+	case errors.Is(err, web.ErrUsernameRule), errors.Is(err, web.ErrPasswordRule):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, web.ErrTooManySignups):
+		w.Header().Set("Retry-After", strconv.Itoa(int(web.SignupWindow.Seconds())))
+		httpx.Error(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, web.ErrUsernameTaken):
+		httpx.Error(w, http.StatusConflict, err.Error())
+	case err != nil:
+		slog.Error("failed to create an account", "error", err)
 		httpx.Error(w, http.StatusInternalServerError, "Failed to create the account")
-		return
+	default:
+		httpx.JSON(w, http.StatusCreated, acct)
 	}
-	db.Audit("account.signed_up", acct.ID, "", httpx.ClientIP(r), nil)
-	httpx.JSON(w, http.StatusCreated, acct)
 }
 
 // profileFields are the account fields both a user and an administrator may change.
@@ -104,7 +73,7 @@ type profileFields struct {
 
 // check returns what is wrong with the fields, or "".
 func (p profileFields) check() string {
-	if p.Username != nil && !usernameRe.MatchString(*p.Username) {
+	if p.Username != nil && !web.ValidUsername(*p.Username) {
 		return usernameRule
 	}
 	for name, v := range map[string]*string{"display_name": p.DisplayName, "given_name": p.GivenName, "family_name": p.FamilyName} {
@@ -263,7 +232,7 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !usernameRe.MatchString(req.Username) {
+	if !web.ValidUsername(req.Username) {
 		httpx.Error(w, http.StatusBadRequest, usernameRule)
 		return
 	}
