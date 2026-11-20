@@ -15,6 +15,13 @@
 	let { data }: PageProps = $props();
 	const account = $derived(data.account);
 	const name = $derived(account.username);
+
+	// What a two-factor reset removes, in words: "the authenticator app and 2 security keys".
+	function twoFactorMethods(mfa: { totp?: boolean; security_keys?: unknown[] }) {
+		const keys = mfa.security_keys?.length ?? 0;
+		const parts = [mfa.totp ? 'the authenticator app' : '', keys === 1 ? 'one security key' : keys ? `${keys} security keys` : ''].filter(Boolean);
+		return parts.join(' and ');
+	}
 	const path = $derived({ account: account.id });
 	const today = dateInput(new Date().toISOString());
 
@@ -111,7 +118,7 @@
 		event.preventDefault();
 		note = null;
 		if (reason.trim().length < 3) return say('access', false, 'Give a reason; the user is told it.');
-		if (!(await askConfirm({ title: `Reset ${name}'s two-factor?`, message: 'The authenticator app and the recovery codes are removed, and the user is emailed the reason.', confirm: 'Reset two-factor', danger: true }))) return;
+		if (!(await askConfirm({ title: `Reset ${name}'s two-factor?`, message: `${twoFactorMethods(account.mfa)[0].toUpperCase()}${twoFactorMethods(account.mfa).slice(1)} and the recovery codes are removed, and the user is emailed the reason.`, confirm: 'Reset two-factor', danger: true }))) return;
 		try {
 			await api.post('/accounts/{account}/mfa/reset', { path, body: { reason: reason.trim() } });
 			reason = '';
@@ -288,11 +295,11 @@
 			</div>
 			<div class="end wide"><button class="btn" type="submit">Set password</button></div>
 		</form>
-		{#if account.mfa.totp}
+		{#if account.mfa.totp || (account.mfa.security_keys ?? []).length}
 			<form class="row bottom" onsubmit={resetTwoFactor} novalidate>
 				<span class="grow">
 					<strong>Reset two-factor</strong>
-					<span class="hint block">{name} is emailed. A reason is required.</span>
+					<span class="hint block">Removes {twoFactorMethods(account.mfa)} and the recovery codes. {name} is emailed. A reason is required.</span>
 					<label class="visually-hidden" for="reason">Reason</label>
 					<input class="in reason" id="reason" bind:value={reason} maxlength="500" placeholder="Reason, for example: lost their phone" />
 				</span>

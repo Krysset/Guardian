@@ -71,8 +71,8 @@ personal details by accident.
 | V4 | Understand what went wrong when an app sends a broken sign-in request, an expired form, or a page that does not exist. | 0.1 | done |
 | V5 | Forgot password: ask for a reset link (the answer is the same whether or not the account exists), then set a new password from the link. Two-factor still applies afterwards. | 0.3 | done |
 | V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | done |
-| V7 | Pass the second factor at sign-in: an authenticator code or a recovery code (0.3), or a security key (0.5). | 0.3, keys 0.5 | done (keys 0.5) |
-| V8 | Sign in with a passkey, without a password. | 0.5 | planned |
+| V7 | Pass the second factor at sign-in: an authenticator code or a recovery code (0.3), or a security key (0.5). | 0.3, keys 0.5 | done |
+| V8 | Sign in with a passkey, without a password. | 0.5 | done |
 
 ## User
 
@@ -97,7 +97,7 @@ Everything a visitor has, plus:
 | U8 | Change their username. | 0.1 / 0.4 | done |
 | U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | done |
 | U10 | Change their password with the current one; their other sessions end. | 0.1 / 0.4 | done (the current password is replaced by "Confirm it's you", U16) |
-| U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | done (keys 0.5) |
+| U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | done |
 | U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | done |
 | U13 | See the apps they use and what each can see; remove an app's access. | 0.4 / 0.4 | done |
 | U14 | Download their data as JSON. | 0.3 / 0.4 | done |

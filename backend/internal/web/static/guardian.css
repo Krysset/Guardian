@@ -337,3 +337,15 @@ form.small { margin-top: 14px; }
   .bar::before, .bar::after, .logo, footer, form, .code-actions, .sub { display: none; }
   .codes { border-color: #000; background: none; }
 }
+
+/* Passkeys and security keys: "or" between the password form and the passkey button, the links to the
+   other two-factor methods, and the method choice on the setup page. */
+.or { display: flex; align-items: center; gap: 12px; margin: 22px 0 0; font-size: 13px; color: var(--mute); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.passkey .button { margin-top: 14px; }
+.others { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; }
+.others:empty { display: none; }
+.methods { display: flex; gap: 6px; margin: 18px 0 0; padding: 4px; border: 1px solid var(--line); border-radius: 8px; }
+.methods a { flex: 1; padding: 8px 10px; border-radius: 6px; text-align: center; font-size: 14px; font-weight: 600; color: var(--mute); text-decoration: none; }
+.methods a[aria-current] { background: var(--field); color: var(--ink); }
+.methods a:hover { color: var(--ink); }

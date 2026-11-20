@@ -1060,3 +1060,45 @@ func TestDeletedAccountsAreErasedAfterTheGracePeriod(t *testing.T) {
 		t.Errorf("erasing a live account: %v", err)
 	}
 }
+
+func TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention(t *testing.T) {
+	testutil.Reset(t)
+	defer func(d time.Duration) { db.AuditRetention = d }(db.AuditRetention)
+	db.AuditRetention = 30 * 24 * time.Hour
+	testutil.Exec(t, `INSERT INTO audit_log (event_type, occurred_at) SELECT 'login.failure', now() - interval '31 days' FROM generate_series(1, 5001)`)
+	testutil.Exec(t, `INSERT INTO audit_log (event_type, occurred_at) VALUES ('login.failure', now() - interval '29 days'), ('login.success', now())`)
+	testutil.Exec(t, `INSERT INTO deletion_log (account_id, erased_at) VALUES (gen_random_uuid(), now() - interval '400 days')`)
+	if n, err := db.PruneAudit(); err != nil || n != 5001 {
+		t.Fatalf("pruned %d (%v), want the 5001 old entries over two batches", n, err)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log`); n != 2 {
+		t.Errorf("%d entries left, want the 2 within retention", n)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM deletion_log`); n != 1 {
+		t.Error("the deletion log must never be pruned")
+	}
+
+	// Two apps deleted, one long ago and one recently, each with its single-app group.
+	for _, a := range []struct {
+		name string
+		ago  string
+	}{{"old", "31 days"}, {"recent", "29 days"}} {
+		app, _ := testutil.CreateApp(t, a.name, testutil.AppOptions{})
+		g := testutil.Group(t, a.name+"-users", "")
+		if err := db.BindGroup(g, app.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.RemoveApp(app.ID); err != nil {
+			t.Fatal(err)
+		}
+		testutil.Exec(t, `UPDATE user_group SET bound_app_deleted_at = now() - $2::interval WHERE id = $1`, g, a.ago)
+	}
+	testutil.Group(t, "plain", "")
+	removed, err := db.RemoveOrphanedSingleAppGroups()
+	if err != nil || len(removed) != 1 || removed[0].Key != "old-users" {
+		t.Fatalf("removed %v (%v), want only old-users", removed, err)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM user_group WHERE key IN ('recent-users', 'plain')`); n != 2 {
+		t.Error("a group within retention or a plain group was removed")
+	}
+}

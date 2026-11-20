@@ -156,7 +156,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// An app that requires two-factor gets a session that passed it, now or earlier.
-	if req.App.RequireMFA && !slices.Contains(sess.AMR, "otp") {
+	if req.App.RequireMFA && !httpx.TwoFactor(sess.AMR) {
 		if slices.Contains(req.Prompts, "none") {
 			redirectWithError(w, r, req.RedirectURI, req.State, "interaction_required", "")
 			return

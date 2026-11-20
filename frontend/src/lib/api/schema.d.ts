@@ -89,6 +89,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/reauth/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start confirming who the user is with a security key
+         * @description Returns the options for navigator.credentials.get (with the account's keys allowed) and a token; send the answer to POST /me/reauth as key.
+         */
+        post: operations["startKeyReauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/mfa/totp": {
         parameters: {
             query?: never;
@@ -104,8 +124,8 @@ export interface paths {
          */
         post: operations["startTOTPSetup"];
         /**
-         * Remove the authenticator app and the recovery codes
-         * @description A protected change. Refused for accounts that must use two-factor (administrators and group owners). The account is told by email.
+         * Remove the authenticator app
+         * @description A protected change. The recovery codes go too when it was the last two-factor method. An account that must use two-factor (administrators and group owners) keeps at least one method. The account is told by email.
          */
         delete: operations["removeTOTP"];
         options?: never;
@@ -133,7 +153,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/me/mfa/totp/finish": {
+    "/me/mfa/finish": {
         parameters: {
             query?: never;
             header?: never;
@@ -143,14 +163,77 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Finish the setup by typing back one recovery code
-         * @description Saves the app and the recovery codes, replacing any earlier ones, and emails the account. The session counts as signed in with two-factor from now on.
+         * Finish setting up the authenticator app, or a first security key, by typing back one recovery code
+         * @description Saves the app or the key with the recovery codes, replacing any earlier codes, and emails the account. The session counts as signed in with two-factor from now on.
          */
-        post: operations["finishTOTPSetup"];
+        post: operations["finishSetup"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/me/mfa/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start adding a security key or passkey
+         * @description A protected change. Returns the options for navigator.credentials.create (the account's keys are excluded) and a setup_token; continue with POST /me/mfa/keys/finish within 5 minutes.
+         */
+        post: operations["startKeySetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/mfa/keys/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add the security key from the browser's answer
+         * @description An account that has a two-factor method gets the key saved at once (201). For the first method, the answer is the recovery codes to show and a setup_token (200); nothing is saved until one code is typed back to POST /me/mfa/finish.
+         */
+        post: operations["finishKeySetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/mfa/keys/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a security key
+         * @description A protected change, with the same rules as removing the authenticator app. The account is told by email.
+         */
+        delete: operations["removeKey"];
+        options?: never;
+        head?: never;
+        /** Rename a security key */
+        patch: operations["renameKey"];
         trace?: never;
     };
     "/me/mfa/recovery-codes": {
@@ -1017,6 +1100,7 @@ export interface components {
                 /** Format: date-time */
                 totp_added_at?: string;
                 recovery_codes_left?: number;
+                security_keys?: components["schemas"]["SecurityKey"][];
                 /** @description Administrators and group owners must use two-factor; they cannot remove it. */
                 required?: boolean;
                 /** @description Why two-factor is required */
@@ -1037,6 +1121,8 @@ export interface components {
             };
         };
         Overview: {
+            /** @description How many days the audit log keeps entries (AUDIT_RETENTION). */
+            audit_retention_days: number;
             accounts: {
                 active: number;
                 disabled: number;
@@ -1116,8 +1202,30 @@ export interface components {
                 /** Format: date-time */
                 totp_added_at?: string;
                 recovery_codes_left?: number;
+                security_keys?: components["schemas"]["SecurityKey"][];
             };
             groups: components["schemas"]["Membership"][];
+        };
+        SecurityKey: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description A synced passkey (backup eligible): usable on the user's other devices too. */
+            passkey: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            last_used_at?: string;
+        };
+        /** @description What navigator.credentials.create or .get takes, as JSON: binary values are base64url strings. */
+        WebAuthnOptions: {
+            publicKey: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description The browser's answer (a PublicKeyCredential) as JSON, binary values in base64url: what PublicKeyCredential.toJSON() returns. */
+        WebAuthnCredential: {
+            [key: string]: unknown;
         };
         Membership: {
             /** Format: uuid */
@@ -1505,6 +1613,11 @@ export interface operations {
                     password?: string;
                     /** @description A 6-digit code from the authenticator app. */
                     code?: string;
+                    /** @description The answer to the options from POST /me/reauth/key. */
+                    key?: {
+                        token: string;
+                        credential: components["schemas"]["WebAuthnCredential"];
+                    };
                 };
             };
         };
@@ -1523,7 +1636,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description The password or code is wrong (error wrong_password or wrong_code), or a cross-origin request. */
+            /** @description The password, code or key is wrong (error wrong_password, wrong_code or key_not_recognised), or a cross-origin request. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1536,6 +1649,39 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startKeyReauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ceremony. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        options: components["schemas"]["WebAuthnOptions"];
+                        token: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The account has no security keys (error no_keys). */
+            409: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -1591,7 +1737,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ProtectedChange"];
-            /** @description Two-factor is required for this account (error mfa_required), or there is none (error no_totp). */
+            /** @description It is the last method of an account that must use two-factor (error mfa_required), or there is no app (error no_totp). */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1640,7 +1786,7 @@ export interface operations {
             403: components["responses"]["ProtectedChange"];
         };
     };
-    finishTOTPSetup: {
+    finishSetup: {
         parameters: {
             query?: never;
             header?: never;
@@ -1673,6 +1819,154 @@ export interface operations {
             403: components["responses"]["ProtectedChange"];
         };
     };
+    startKeySetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ceremony. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        options: components["schemas"]["WebAuthnOptions"];
+                        setup_token: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+        };
+    };
+    finishKeySetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    setup_token: string;
+                    credential: components["schemas"]["WebAuthnCredential"];
+                    /** @description So the user can tell keys apart; "Security key" when empty. */
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The first two-factor method: the recovery codes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Saved. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key: components["schemas"]["SecurityKey"];
+                    };
+                };
+            };
+            /** @description The answer could not be checked (error key_not_recognised), the setup expired (error setup_expired), or the name is too long. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+            /** @description The key is already registered (error key_registered). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+            404: components["responses"]["NotFound"];
+            /** @description It is the last method of an account that must use two-factor (error mfa_required). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    renameKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityKey"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     renewRecoveryCodes: {
         parameters: {
             query?: never;
@@ -1693,7 +1987,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ProtectedChange"];
-            /** @description The account has no authenticator app (error no_totp). */
+            /** @description The account has no two-factor method (error no_second_factor). */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1735,7 +2029,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ProtectedChange"];
-            /** @description The account has no authenticator app (error no_totp). */
+            /** @description The account has no two-factor method (error no_second_factor). */
             409: {
                 headers: {
                     [name: string]: unknown;

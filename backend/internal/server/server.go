@@ -21,6 +21,7 @@ import (
 	"guardian/internal/internalapi"
 	"guardian/internal/mail"
 	"guardian/internal/oidc"
+	"guardian/internal/passkey"
 	db "guardian/internal/store"
 	"guardian/internal/web"
 )
@@ -108,7 +109,11 @@ func UseKeyring(cfg config.Config) error {
 func Configure(cfg config.Config, keys *auth.Keys) {
 	httpx.Configure(cfg)
 	web.Configure(cfg)
+	if err := passkey.Configure(cfg.IssuerURL, cfg.AllowedOrigins, "Guardian"); err != nil {
+		slog.Error("security keys and passkeys are off", "error", err)
+	}
 	db.DeletionGrace = cfg.DeletionGrace
+	db.AuditRetention = cfg.AuditRetention
 	oidc.SetKeys(keys)
 	web.SendLogoutNotices = oidc.SendLogoutNotices
 }

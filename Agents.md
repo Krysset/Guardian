@@ -80,10 +80,33 @@ current: they are the hand-off between sessions.
     `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
   - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
     (including the email settings) wait until the owner's cluster is.
-- **0.4 built** (part 5 uncommitted; the nginx image and the chart's frontend wait for the cluster), in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
+- **0.5 in progress**, in four parts (`docs/ROADMAP.md`): (1) audit retention and single-app group clean-up,
+  (2) security keys and passkeys (`github.com/go-webauthn/webauthn` v0.18.2, vendored 2026-11-20), (3) release
+  workflow and SonarQube, (4) the cluster parts. Then 0.6: a review of the tests, and every requirement
+  implemented with at least one test (owner's request, 2026-11-20).
+  - **Passkeys (decided 2026-11-20):** a passkey signs in on its own, with no further step, and counts as
+    two-factor (apps with `require_mfa` and administrators' rights accept it).
+  - **Part 2, security keys and passkeys: built, uncommitted.** `internal/passkey` (relying party = issuer host,
+    origins = issuer + `ALLOWED_ORIGINS`; ceremonies sealed in tokens with kind and account; `used_challenge`
+    makes each answer count once; clone warning refused). `store/webauthn.go` (`account_mfa` type `webauthn`
+    with `credential_id` + `credential` JSONB; `RemoveFactor` keeps the last method when required and drops
+    the codes with the last one). Web: `/login/passkey`, `/mfa?key` (S14), `/mfa/setup?method=key`; the pages
+    post forms, `guardian.js` runs the dialogs (`data-webauthn` = create, get, passkey). amr: passkey
+    `hwk,user`, password+key `pwd,hwk`; `httpx.TwoFactor(amr)` replaces checks for "otp". API: `/me/mfa/keys`,
+    `/me/mfa/keys/finish`, `PATCH|DELETE /me/mfa/keys/{key}`, `/me/mfa/finish` (was `/me/mfa/totp/finish`),
+    `/me/reauth/key` + `key` in `POST /me/reauth`. Tests: `testutil.Authenticator` (software key, own CBOR),
+    `e2e/passkey_test.go`; browser check `scratchpad/ui04/passkeys.js` uses Chromium's CDP virtual
+    authenticator (it answers conditional mediation at once, so the script turns suggestions off for the
+    button and S14 paths). **Schema changed** (`credential` column, `used_challenge`): recreate local databases.
+  - **Part 1, retention: built, uncommitted** (staged together with part 2). `AUDIT_RETENTION` (config `AuditRetention`, `store.AuditRetention`,
+    chart `config.auditRetention`); `store.PruneAudit` (batches of 5000) and `RemoveOrphanedSingleAppGroups`
+    run in the hourly `cleanup`. `GET /overview` has `audit_retention_days`.
+- Go modules cannot be fetched in the cloud: `proxy.golang.org` is refused by the agent proxy (npm works with
+  `NO_PROXY=` cleared). New modules always come from the owner's `go mod vendor`.
+- **0.4 built** (committed `d0e64af`; the nginx image and the chart's frontend wait for the cluster), in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
   (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
   two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
-  - **Part 5, audit log and the browser pass: built, uncommitted.** `/admin/audit` (AD11): filters in the address
+  - **Part 5, audit log and the browser pass: committed (`d0e64af`).** `/admin/audit` (AD11): filters in the address
     (`event`, `username`, `app`, `cursor`), 50 a page, Previous via a stack of cursors, a row opens its details
     (links to the account, app and group, the raw metadata). On a phone the rows become stacked cards. API:
     AuditEntry gains `target_username`, `app_name`, `group_name` (joined through `uuidOrNull`, so metadata that

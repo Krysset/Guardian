@@ -57,6 +57,10 @@ type Page struct {
 	Sent   bool   // the forgot-password page: the link was (or would have been) sent
 
 	Recovery     bool         // S13: asking for a recovery code instead of an authenticator code
+	Key          bool         // S14 / S15: a security key instead of a code
+	KeyOptions   string       // S1, S14, S15: the WebAuthn options (JSON) for the page's script
+	HasTOTP      bool         // S13: the account has an authenticator app (offer it)
+	HasKeys      bool         // S13: the account has security keys (offer them)
 	QRCode       template.URL // S15: the QR code, a data: URI that html/template would otherwise refuse
 	SecretGroups string       // S15: the secret in groups of four
 	Codes        []string     // S16: the recovery codes, shown once

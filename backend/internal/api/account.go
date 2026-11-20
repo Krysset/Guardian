@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"guardian/internal/httpx"
 	"guardian/internal/mail"
 	"guardian/internal/oidc"
+	"guardian/internal/passkey"
 	db "guardian/internal/store"
 	"guardian/internal/web"
 )
@@ -250,6 +252,10 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 		Code     string `json:"code"`
+		Key      *struct {
+			Token      string          `json:"token"`
+			Credential json.RawMessage `json:"credential"`
+		} `json:"key"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -265,12 +271,33 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 		httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many wrong passwords. Try again in 15 minutes.")
 		return
 	}
-	if (req.Password == "") == (req.Code == "") {
-		httpx.Error(w, http.StatusBadRequest, "Send either password or code")
+	given := 0
+	for _, set := range []bool{req.Password != "", req.Code != "", req.Key != nil} {
+		if set {
+			given++
+		}
+	}
+	if given != 1 {
+		httpx.Error(w, http.StatusBadRequest, "Send one of password, code or key")
 		return
 	}
 	var ok bool
-	if req.Code != "" {
+	if req.Key != nil {
+		_, err := web.VerifyKey(id, req.Key.Token, req.Key.Credential)
+		switch {
+		case errors.Is(err, web.ErrTooManyAttempts):
+			w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
+			httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many failed attempts. Try again in 15 minutes.")
+			return
+		case errors.Is(err, passkey.ErrExpired):
+			httpx.ErrorCode(w, http.StatusBadRequest, "setup_expired", "That took too long; try again")
+			return
+		case err != nil && !errors.Is(err, passkey.ErrNotRecognised):
+			accountFail(w, err)
+			return
+		}
+		ok = err == nil
+	} else if req.Code != "" {
 		var err error
 		if ok, _, _, err = web.VerifySecondFactor(id, req.Code, false); errors.Is(err, web.ErrTooManyAttempts) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
@@ -291,7 +318,9 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		db.RateLimitHit(key, reauthWindow)
 		db.Audit("reauth.failure", id, "", ip, nil)
-		if req.Code != "" {
+		if req.Key != nil {
+			httpx.ErrorCode(w, http.StatusForbidden, "key_not_recognised", "That security key is not one of yours")
+		} else if req.Code != "" {
 			httpx.ErrorCode(w, http.StatusForbidden, "wrong_code", "The code is not correct")
 		} else {
 			httpx.ErrorCode(w, http.StatusForbidden, "wrong_password", "The password is not correct")
@@ -525,4 +554,15 @@ func setAccountPassword(w http.ResponseWriter, r *http.Request) {
 	oidc.SendLogoutNotices(notices)
 	db.Audit("password.set_by_admin", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"target": id})
 	httpx.NoContent(w)
+}
+
+// startKeyReauth begins confirming it's you with a security key: the options for
+// navigator.credentials.get and the token to send back to POST /me/reauth as {key: {token, credential}}.
+func startKeyReauth(w http.ResponseWriter, r *http.Request) {
+	opts, token, err := passkey.BeginLogin(httpx.AccountID(r))
+	if err != nil {
+		mfaFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"options": opts, "token": token})
 }

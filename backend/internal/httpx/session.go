@@ -142,7 +142,13 @@ func RequireReauth(w http.ResponseWriter, r *http.Request) bool {
 // PassedMFA reports whether the request's session signed in, or stepped up, with two-factor.
 func PassedMFA(r *http.Request) bool {
 	amr, _ := r.Context().Value(ctxAMR).([]string)
-	return slices.Contains(amr, "otp")
+	return TwoFactor(amr)
+}
+
+// TwoFactor reports whether a session's amr shows two-factor: a code ("otp"), or a security key or
+// passkey ("hwk").
+func TwoFactor(amr []string) bool {
+	return slices.ContainsFunc(amr, func(m string) bool { return slices.Contains(db.TwoFactorAMR, m) })
 }
 
 // RequireMFASession answers 403 mfa_required, and returns false, unless the session passed two-factor.

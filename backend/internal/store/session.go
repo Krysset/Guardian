@@ -14,7 +14,8 @@ const touchInterval = 5 * time.Minute
 
 // CreateSession stores a new SSO session. sessionHash is the hash of the cookie value. The session ends
 // maxLifetime from now at the latest, whatever the activity.
-// amr says how the user signed in (RFC 8176): "pwd", and "otp" after two-factor. Without it, {"pwd"}.
+// amr says how the user signed in (RFC 8176): "pwd", and "otp" or "hwk" after two-factor; a passkey is
+// {"hwk", "user"}. Without it, {"pwd"}.
 func CreateSession(accountID, sessionHash, ip, userAgent string, maxLifetime time.Duration, amr ...string) (Session, error) {
 	s := Session{AccountID: accountID}
 	if len(amr) == 0 {

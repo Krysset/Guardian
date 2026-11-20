@@ -19,6 +19,9 @@ data:
   {{- with .Values.config.sessionMaxLifetime }}
   SESSION_MAX_LIFETIME: {{ . | quote }}
   {{- end }}
+  {{- with .Values.config.auditRetention }}
+  AUDIT_RETENTION: {{ . | quote }}
+  {{- end }}
   {{- with .Values.config.loginLimits.window }}
   LOGIN_FAILURE_WINDOW: {{ . | quote }}
   {{- end }}

@@ -15,7 +15,8 @@
 		check: '<path d="M5 12l5 5 9-10"/>',
 		shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/>',
 		plus: '<path d="M12 5v14M5 12h14"/>',
-		list: '<path d="M8 4h12M8 12h12M8 20h12M3.5 4h.01M3.5 12h.01M3.5 20h.01"/>'
+		list: '<path d="M8 4h12M8 12h12M8 20h12M3.5 4h.01M3.5 12h.01M3.5 20h.01"/>',
+		key: '<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14 9l2 2"/>'
 	} as const;
 	export type IconName = keyof typeof paths;
 </script>

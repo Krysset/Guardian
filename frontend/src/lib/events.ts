@@ -24,8 +24,11 @@ const words: Record<string, string> = {
 	'email.change_cancelled': 'Email change cancelled',
 	'email.confirmed': 'Email address confirmed',
 	'email.removed': 'Email address removed',
-	'mfa.totp_added': 'Two-factor turned on',
-	'mfa.totp_removed': 'Two-factor turned off',
+	'mfa.totp_added': 'Authenticator app added',
+	'mfa.totp_removed': 'Authenticator app removed',
+	'mfa.key_added': 'Security key added',
+	'mfa.key_renamed': 'Security key renamed',
+	'mfa.key_removed': 'Security key removed',
 	'mfa.recovery_codes_renewed': 'New recovery codes',
 	'mfa.reset': 'Two-factor reset by an administrator',
 	'mfa.failure': 'Wrong two-factor code',
@@ -101,7 +104,16 @@ export function summary(e: Schema<'AuditEntry'>): string {
 			parts.push([account, group && `from ${group}`].filter(Boolean).join(' '));
 			break;
 		case 'login.failure':
-			parts.push(text(m.username) && `as ${text(m.username)}`);
+			parts.push(text(m.username) && `as ${text(m.username)}`, m.method === 'passkey' ? 'with a passkey' : '');
+			break;
+		case 'login.success':
+		case 'mfa.step_up':
+			parts.push(m.method === 'passkey' ? 'with a passkey' : m.method === 'security_key' ? `with ${text(m.key) ? `“${text(m.key)}”` : 'a security key'}` : m.method === 'recovery_code' ? 'with a recovery code' : '');
+			break;
+		case 'mfa.key_added':
+		case 'mfa.key_renamed':
+		case 'mfa.key_removed':
+			parts.push(text(m.key) && `“${text(m.key)}”`);
 			break;
 		case 'mfa.reset':
 			parts.push(account, text(m.reason) && `“${text(m.reason)}”`);

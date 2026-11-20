@@ -71,6 +71,9 @@ config:
   # Go durations. Empty keeps Guardian's defaults (168h idle, 720h maximum).
   sessionIdleTimeout: ""
   sessionMaxLifetime: ""
+  # How long audit entries are kept, as a Go duration (at least 24h). Single-app groups whose app was deleted
+  # are removed after this too. Empty keeps Guardian's default (4392h, about 6 months).
+  auditRetention: ""
   # Failed sign-ins allowed within the window, for one account from one address and from one address in
   # total. Accounts are never locked; only the address is refused. Empty keeps the defaults (15m, 5, 50).
   loginLimits:

@@ -19,6 +19,7 @@ ingress:
 config:
   helpURL: https://example.com/help
   sessionIdleTimeout: 24h
+  auditRetention: 8760h
   loginLimits:
     window: 30m
     perIP: 200

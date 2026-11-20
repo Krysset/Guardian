@@ -293,6 +293,9 @@ Built in parts, in this order: (1) foundation (the project, the frame, the API c
 - **Done when:** everything in the management UI list can be done without curl.
 
 ### 0.5: complete
+Built in parts: (1) audit retention and the clean-up of single-app groups, (2) security keys and passkeys, (3) the release workflow and SonarQube, (4) the parts that need the cluster: the full chart with the frontend, scheduled backups and migration job mode.
+- **Built 2026-11-20 (part 1):** audit entries older than `AUDIT_RETENTION` (default 4392h, about 6 months; chart `config.auditRetention`) are deleted every hour in batches; single-app groups whose app was deleted longer ago go too, audited as `group.deleted` by the schedule. The deletion log is never pruned. The audit log page says how long entries are kept (`audit_retention_days` in `GET /overview`).
+- **Built 2026-11-20 (part 2):** security keys and passkeys with `go-webauthn/webauthn` (v0.18.2). A key is a second factor after the password (S14), a passkey signs in on its own from "Sign in with a passkey" or the browser's suggestions in the username field (the authenticator must verify the user, and the session counts as two-factor: amr `hwk`, `user`), and a key confirms it's you (AC8). Keys are added in the account area or in the required setup (S15), listed, renamed and removed; the first two-factor method of either kind brings the recovery codes, typed back before anything is saved; the recovery codes go with the last method; an account that must use two-factor keeps one. The relying party is the issuer's host name; the management UI's origin counts when it is served elsewhere (`ALLOWED_ORIGINS`). Each challenge travels sealed and is answered once (`used_challenge`); a key whose counter goes backwards is refused. No attestation is asked for. Passwordless accounts (no password at all) are not offered: the password stays.
 - WebAuthn and passkeys, including passwordless sign-in.
 - Scheduled backups, audit retention, and migration job mode (Helm hooks and Argo CD waves).
 - Clean-up of single-app groups whose app was deleted longer ago than the audit retention period.
@@ -300,6 +303,11 @@ Built in parts, in this order: (1) foundation (the project, the frame, the API c
 - Release workflow (images to GHCR, chart as OCI).
 - SonarQube integrated and its staleness behaviour documented.
 - **Done when:** every 1.0 feature is in place and a clean `helm install` works with both bundled and external Postgres.
+
+### 0.6: test and requirement review
+- Every requirement in `docs/USERS.md` is implemented and named by at least one test; a table maps each requirement to its tests, and gaps are filled.
+- The tests are reviewed: slow or overlapping tests are made faster or merged, flaky ones fixed, and missing cases added (error paths, permissions, limits).
+- **Done when:** the requirement table has no gaps and the suite runs green and reasonably fast.
 
 ### 1.0: release
 - **M7 hardening:**
@@ -357,3 +365,5 @@ Built in parts, in this order: (1) foundation (the project, the frame, the API c
 - 2026-11-20: account deletion built (0.3 part 4). A deleted account keeps its group memberships aside and gets them back on restore. "Erase now" also works on an account that is not deleted yet. Audit retention moves to 0.5, with the clean-up of single-app groups that depends on it.
 - 2026-11-20: signing keys and the keyring built (0.3 part 5). The first keyring key encrypts and every key decrypts, so adding a key at the end and promoting it later is a reorder of the Secret. `KEY_ENCRYPTION_KEYS` (inline) is kept beside the file for local development and tests. The chart mounts the keyring as a file, so a rotation needs no restart.
 - 2026-11-20: management UI built (0.4). The audit log filters by an exact username on the server (`?username=`), which also finds an account in its deletion grace period; entries name the account, app and group they are about. Disabling or enabling an app or account shows as such in activity lists, from the recorded details.
+- 2026-11-20: 0.5 split into four parts. A 0.6 step added before 1.0 (owner's request): review the tests and make sure every requirement is implemented and has at least one test. A passkey signs in on its own, with no further step, and counts as two-factor.
+- 2026-11-20: security keys and passkeys built (0.5 part 2). The sign-in pages run the key dialogs with plain form posts (the options in the page, the answer in a form field), so their CSP stays without `connect-src`. Removing the password from an account is not part of 0.5.

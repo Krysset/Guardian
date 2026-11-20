@@ -62,11 +62,16 @@ trustedProxyHops: 1                      # one proxy (the gateway) appends to X-
 ```
 
 - `issuerURL` must be `https://` outside local development: it turns on secure cookies.
+- Security keys and passkeys belong to the issuer's host name: moving Guardian to another host name means
+  everyone adds their keys again (the authenticator app and recovery codes keep working).
 - `trustedProxyHops` must match the number of proxies in front of Guardian, or rate limits see the proxy's
   address instead of the user's.
 - `config.loginLimits` adjusts the sign-in limits: `window` (default `15m`), `perAccountAndIP` (failures for one
   account from one address, default 5) and `perIP` (failures from one address in total, default 50). Raise
   `perIP` if many people share one address, such as an office behind NAT. Accounts are never locked.
+- `config.auditRetention` is how long audit entries are kept (default `4392h`, about 6 months; at least `24h`).
+  Older entries are deleted every hour, and so are single-app groups whose app was deleted longer ago than this.
+  The deletion log is never pruned: restores need it to keep erased accounts erased.
 - For a standard Ingress instead, set `ingress.enabled: true` and `ingress.className` (for example `traefik`).
 - For an external Postgres, set `database.mode: external` and `database.external.host` (and `port`, `user`,
   `name`, `sslMode`).

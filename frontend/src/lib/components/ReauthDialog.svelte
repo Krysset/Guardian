@@ -5,13 +5,15 @@
 	import { tick } from 'svelte';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { reauth } from '#lib/reauth.svelte.ts';
+	import { keyError, keysSupported, useKey } from '#lib/webauthn.ts';
 	import Icon from './Icon.svelte';
 
-	let { hasTotp }: { hasTotp: boolean } = $props();
+	let { hasTotp, hasKeys }: { hasTotp: boolean; hasKeys: boolean } = $props();
 
 	let dialog: HTMLDialogElement | undefined = $state();
 	let input: HTMLInputElement | undefined = $state();
-	let useCode = $state(false);
+	let method = $state<'password' | 'code' | 'key'>('password');
+	const useCode = $derived(method === 'code');
 	let value = $state('');
 	let show = $state(false);
 	let error = $state('');
@@ -21,7 +23,7 @@
 
 	$effect(() => {
 		if (pending && dialog && !dialog.open) {
-			useCode = false;
+			method = 'password';
 			value = '';
 			error = '';
 			show = false;
@@ -35,6 +37,7 @@
 	async function confirm(event: SubmitEvent) {
 		event.preventDefault();
 		if (!pending || busy) return;
+		if (method === 'key') return confirmWithKey();
 		if (!value.trim()) {
 			error = useCode ? 'Enter the 6-digit code from your authenticator app.' : 'Enter your password.';
 			return;
@@ -53,16 +56,39 @@
 		}
 	}
 
+	async function confirmWithKey() {
+		if (!pending) return;
+		busy = true;
+		error = '';
+		try {
+			const begun = await api.post('/me/reauth/key', {});
+			const credential = await useKey(begun.options);
+			await api.post('/me/reauth', { body: { key: { token: begun.token, credential } } });
+			pending.done(true);
+		} catch (e) {
+			error = keyError(e) ?? (e instanceof ApiError ? e.message + (e.message.endsWith('.') ? '' : '.') : 'Something went wrong. Try again.');
+		} finally {
+			busy = false;
+		}
+	}
+
 	function cancel() {
 		pending?.done(false);
 	}
 
-	function switchMethod() {
-		useCode = !useCode;
+	function switchTo(next: typeof method) {
+		method = next;
 		value = '';
 		error = '';
 		tick().then(() => input?.focus());
 	}
+
+	const choices = [
+		['password', 'Use your password'],
+		['code', 'Use a two-factor code'],
+		['key', 'Use a security key']
+	] as const;
+	const others = $derived(choices.filter(([m]) => m !== method && (m !== 'code' || hasTotp) && (m !== 'key' || (hasKeys && keysSupported()))));
 </script>
 
 <!-- Escape fires "cancel"; the change is then not made. -->
@@ -71,7 +97,9 @@
 		<form onsubmit={confirm} novalidate>
 			<h2 id="reauth-h">Confirm it's you</h2>
 			<p class="what">Confirm it's you to {pending.reason}.</p>
-			{#if useCode}
+			{#if method === 'key'}
+				<p class="key"><Icon name="key" />When your browser asks, touch your key or unlock your passkey.</p>
+			{:else if useCode}
 				<label class="lbl" for="reauth-code">Code from your authenticator app</label>
 				<input
 					bind:this={input}
@@ -107,16 +135,14 @@
 				</div>
 			{/if}
 			{#if error}<p class="err-t" id="reauth-err" role="alert">{error}</p>{/if}
-			{#if hasTotp}
-				<p class="hint">
-					<button class="link-btn" type="button" onclick={switchMethod}
-						>{useCode ? 'Use your password instead' : 'Use a two-factor code instead'}</button
-					>
+			{#if others.length}
+				<p class="hint others">
+					{#each others as [m, label] (m)}<button class="link-btn" type="button" onclick={() => switchTo(m)}>{label}</button>{/each}
 				</p>
 			{/if}
 			<div class="actions">
 				<button class="btn alt" type="button" onclick={cancel}>Cancel</button>
-				<button class="btn" type="submit" disabled={busy}>Confirm</button>
+				<button class="btn" type="submit" disabled={busy}>{method === 'key' ? 'Use security key' : 'Confirm'}</button>
 			</div>
 			<p class="hint">You won't be asked again for 5 minutes.</p>
 		</form>
@@ -170,6 +196,20 @@
 		font: 500 18px ui-monospace, Menlo, Consolas, monospace;
 		letter-spacing: 0.2em;
 		max-width: 12em;
+	}
+	.key {
+		display: flex;
+		gap: 10px;
+		align-items: center;
+		margin: 0;
+		padding: 12px 14px;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+	}
+	.others {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 18px;
 	}
 	.actions {
 		display: flex;

@@ -8,5 +8,5 @@
 </script>
 
 {@render children()}
-<ReauthDialog hasTotp={data.me.mfa.totp ?? false} />
+<ReauthDialog hasTotp={data.me.mfa.totp ?? false} hasKeys={(data.me.mfa.security_keys ?? []).length > 0} />
 <ConfirmDialog />

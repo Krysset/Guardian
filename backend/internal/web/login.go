@@ -4,6 +4,8 @@
 package web
 
 import (
+	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -16,6 +18,7 @@ import (
 	"guardian/internal/auth"
 	"guardian/internal/config"
 	"guardian/internal/httpx"
+	"guardian/internal/passkey"
 	db "guardian/internal/store"
 )
 
@@ -23,6 +26,7 @@ import (
 func Mount(r chi.Router) {
 	r.Get("/", homePage)
 	r.Get("/login", loginPage)
+	r.Post("/login/passkey", passkeySubmit)
 	r.Post("/login", loginSubmit)
 	r.Get("/signup", signupPage)
 	r.Post("/signup", signupSubmit)
@@ -98,11 +102,74 @@ func loginPage(w http.ResponseWriter, r *http.Request) {
 		signedInPage(w, r, sess)
 		return
 	}
-	page := Page{Title: "Sign in", CSRF: httpx.CSRFToken(w, r), ReturnTo: returnTo}
+	page := Page{ReturnTo: returnTo}
 	if r.URL.Query().Get("reset") == "done" {
 		page.Notice = "Your password was changed, and every session was signed out. Sign in with the new one."
 	}
-	Render(w, http.StatusOK, "login", page)
+	renderLogin(w, r, page, http.StatusOK)
+}
+
+// passkeyCookie holds the sign-in page's passkey challenge, so the answer must come from this browser.
+const passkeyCookie = "guardian_passkey"
+
+// renderLogin shows S1. Every view carries a fresh passkey challenge for "Sign in with a passkey" and the
+// browser's passkey suggestions in the username field; without JavaScript they are simply not offered.
+func renderLogin(w http.ResponseWriter, r *http.Request, page Page, status int) {
+	page.Title, page.CSRF = "Sign in", httpx.CSRFToken(w, r)
+	if opts, token, err := passkey.BeginPasskeyLogin(); err != nil {
+		if !errors.Is(err, passkey.ErrOff) {
+			slog.Error("failed to start a passkey sign-in", "error", err)
+		}
+	} else {
+		page.KeyOptions = string(opts)
+		httpx.SetFlowCookie(w, passkeyCookie, token, passkey.Timeout)
+	}
+	Render(w, status, "login", page)
+}
+
+// passkeySubmit is "Sign in with a passkey" (V8): the passkey is both factors, so the session counts as
+// having passed two-factor. Failures count against the address like wrong passwords.
+func passkeySubmit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	returnTo := httpx.SafeReturnTo(r.PostFormValue("return_to"))
+	showError := func(status int, msg string) {
+		renderLogin(w, r, Page{Error: msg, ReturnTo: returnTo}, status)
+	}
+	if !httpx.CSRFValid(r) {
+		showError(http.StatusForbidden, "The form had expired. Sign in again.")
+		return
+	}
+	token := httpx.FlowCookie(r, passkeyCookie)
+	httpx.ClearFlowCookie(w, passkeyCookie)
+	ip := httpx.ClientIP(r)
+	ipKey := "login:ip:" + ip
+	if fails, _ := db.RateLimitCount(ipKey, loginLimits.Window); fails >= loginLimits.PerIP {
+		httpx.CountRefused("login")
+		showError(http.StatusTooManyRequests, "Too many failed attempts. Try again in a few minutes.")
+		return
+	}
+	accountID, name, err := passkey.FinishPasskeyLogin(token, []byte(r.PostFormValue("credential")))
+	var acct db.Account
+	if err == nil {
+		if acct, err = db.GetAccount(accountID); err == nil && acct.Status != "active" {
+			err = passkey.ErrNotRecognised
+		}
+	}
+	switch {
+	case errors.Is(err, passkey.ErrExpired):
+		showError(http.StatusBadRequest, "That took too long. Try again.")
+		return
+	case err != nil:
+		if !errors.Is(err, passkey.ErrNotRecognised) && !errors.Is(err, sql.ErrNoRows) {
+			slog.Error("failed to check a passkey", "error", err)
+		}
+		db.RateLimitHit(ipKey, loginLimits.Window)
+		loginsTotal.WithLabelValues("failure").Inc()
+		db.Audit("login.failure", accountID, "", ip, map[string]any{"method": "passkey"})
+		showError(http.StatusUnauthorized, "That passkey isn't registered here. Sign in with your password instead.")
+		return
+	}
+	finishSignIn(w, r, acct, map[string]any{"method": "passkey", "key": name}, returnTo, "hwk", "user")
 }
 
 func loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +181,7 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		if len(login) > 256 {
 			login = ""
 		}
-		Render(w, status, "login", Page{Title: "Sign in", Error: msg, CSRF: httpx.CSRFToken(w, r), ReturnTo: returnTo, Login: login})
+		renderLogin(w, r, Page{Error: msg, ReturnTo: returnTo, Login: login}, status)
 	}
 	if !httpx.CSRFValid(r) {
 		showError(http.StatusForbidden, "The form had expired. Sign in again.")
@@ -180,18 +247,5 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		startMFAFlow(w, r, mfaFlow{Account: acct.ID, Purpose: "signin", Setup: next == "setup", Reason: reason, ReturnTo: returnTo})
 		return
 	}
-	loginsTotal.WithLabelValues("success").Inc()
-	if _, err := httpx.StartSession(w, r, acct.ID); err != nil {
-		slog.Error("failed to start a session", "error", err)
-		Error(w, ServerError)
-		return
-	}
-	db.TouchLogin(acct.ID)
-	db.Audit("login.success", acct.ID, "", ip, nil)
-
-	if acct.MustChangePassword {
-		http.Redirect(w, r, MustChangePasswordURL(returnTo), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, continueTo(returnTo), http.StatusSeeOther)
+	finishSignIn(w, r, acct, nil, returnTo, "pwd")
 }

@@ -38,6 +38,9 @@ type Config struct {
 	// DeletionGrace is how long a deleted account waits before it is erased; an administrator can restore
 	// it until then.
 	DeletionGrace time.Duration
+	// AuditRetention is how long audit entries are kept. A single-app group whose app was deleted is removed
+	// once this has passed too, since its history is gone by then.
+	AuditRetention time.Duration
 	// LoginLimits are the failed sign-ins allowed before Guardian refuses more.
 	LoginLimits LoginLimits
 
@@ -127,6 +130,9 @@ type LoginLimits struct {
 // DefaultLoginLimits: 5 failures for one account from one address, or 50 from one address, in 15 minutes.
 var DefaultLoginLimits = LoginLimits{Window: 15 * time.Minute, PerAccountAndIP: 5, PerIP: 50}
 
+// DefaultAuditRetention is about six months (183 days).
+const DefaultAuditRetention = 183 * 24 * time.Hour
+
 // Load reads and validates the whole configuration. On failure the error lists every problem found.
 // The returned Config always has usable Log settings, so the caller can report the error in the right format.
 func Load() (Config, error) {
@@ -140,6 +146,7 @@ func Load() (Config, error) {
 		SessionIdleTimeout:   7 * 24 * time.Hour,
 		SessionMaxLifetime:   30 * 24 * time.Hour,
 		DeletionGrace:        30 * 24 * time.Hour,
+		AuditRetention:       DefaultAuditRetention,
 		SigningKeyLifetime:   90 * 24 * time.Hour,
 		LoginLimits:          DefaultLoginLimits,
 	}
@@ -197,6 +204,10 @@ func Load() (Config, error) {
 	duration("SESSION_IDLE_TIMEOUT", &cfg.SessionIdleTimeout)
 	duration("SESSION_MAX_LIFETIME", &cfg.SessionMaxLifetime)
 	duration("DELETION_GRACE_PERIOD", &cfg.DeletionGrace)
+	duration("AUDIT_RETENTION", &cfg.AuditRetention)
+	if cfg.AuditRetention < 24*time.Hour {
+		fail("AUDIT_RETENTION must be at least 24h, got %s", cfg.AuditRetention)
+	}
 	duration("SIGNING_KEY_LIFETIME", &cfg.SigningKeyLifetime)
 	duration("LOGIN_FAILURE_WINDOW", &cfg.LoginLimits.Window)
 	if cfg.SigningKeyLifetime < 24*time.Hour {

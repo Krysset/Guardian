@@ -21,7 +21,7 @@ func setValid(t *testing.T) {
 		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEYS": "k1:" + validKey,
 		"KEY_ENCRYPTION_KEYS_FILE": "", "KEY_ENCRYPTION_KEY": "", "SIGNING_KEY_LIFETIME": "",
 		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "",
-		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "", "DELETION_GRACE_PERIOD": "",
+		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "", "DELETION_GRACE_PERIOD": "", "AUDIT_RETENTION": "",
 		"TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
 		"LOGIN_FAILURE_WINDOW": "", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP": "", "LOGIN_MAX_FAILURES_PER_IP": "",
 		"LOG_FORMAT": "", "LOG_LEVEL": "",
@@ -53,6 +53,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.LoginLimits != DefaultLoginLimits || cfg.LoginLimits.PerAccountAndIP != 5 || cfg.LoginLimits.PerIP != 50 {
 		t.Errorf("login limits = %+v", cfg.LoginLimits)
 	}
+	if cfg.AuditRetention != 183*24*time.Hour {
+		t.Errorf("audit retention = %s", cfg.AuditRetention)
+	}
 	if cfg.Keyring != "k1:"+validKey || cfg.KeyringFile != "" || cfg.SigningKeyLifetime != 90*24*time.Hour {
 		t.Errorf("keyring = %q, file %q, signing key lifetime %s", cfg.Keyring, cfg.KeyringFile, cfg.SigningKeyLifetime)
 	}
@@ -65,7 +68,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"ALLOWED_ORIGINS":      " https://a.example/ , ,https://b.example",
 		"SESSION_IDLE_TIMEOUT": "2h", "SESSION_MAX_LIFETIME": "12h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
 		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret",
-		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug", "DELETION_GRACE_PERIOD": "168h",
+		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug", "DELETION_GRACE_PERIOD": "168h", "AUDIT_RETENTION": "8760h",
 		"LOGIN_FAILURE_WINDOW": "1h", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP": "10", "LOGIN_MAX_FAILURES_PER_IP": "200",
 		"HELP_URL": "https://example.com/help", "PRIVACY_URL": " https://example.com/privacy ",
 	} {
@@ -78,8 +81,8 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 	if cfg.LoginLimits != (LoginLimits{Window: time.Hour, PerAccountAndIP: 10, PerIP: 200}) {
 		t.Errorf("login limits = %+v", cfg.LoginLimits)
 	}
-	if cfg.DeletionGrace != 7*24*time.Hour {
-		t.Errorf("deletion grace = %s", cfg.DeletionGrace)
+	if cfg.DeletionGrace != 7*24*time.Hour || cfg.AuditRetention != 365*24*time.Hour {
+		t.Errorf("deletion grace = %s, audit retention = %s", cfg.DeletionGrace, cfg.AuditRetention)
 	}
 	if cfg.IssuerURL != "https://auth.example.com" {
 		t.Errorf("issuer = %q, the trailing slash must be removed", cfg.IssuerURL)
@@ -110,6 +113,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 		"TRUSTED_PROXY_HOPS": "-1", "LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
 		"HELP_URL": "javascript:alert(1)", "PRIVACY_URL": "/privacy",
 		"LOGIN_FAILURE_WINDOW": "0s", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP": "0", "LOGIN_MAX_FAILURES_PER_IP": "many",
+		"AUDIT_RETENTION": "12h",
 	} {
 		t.Setenv(k, v)
 	}
@@ -120,7 +124,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "ISSUER_URL",
 		"KEY_ENCRYPTION_KEYS", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
 		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL", "HELP_URL", "PRIVACY_URL",
-		"LOGIN_FAILURE_WINDOW", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP", "LOGIN_MAX_FAILURES_PER_IP"} {
+		"LOGIN_FAILURE_WINDOW", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP", "LOGIN_MAX_FAILURES_PER_IP", "AUDIT_RETENTION"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("the error does not mention %s:\n%v", name, err)
 		}

@@ -219,6 +219,8 @@ appear from that release; until then the page is drawn without them.
 - Shows: "Use your security key or passkey", with what to do and a waiting state.
 - Actions: Try again; use another method.
 - States: cancelled; not recognised; this browser doesn't support security keys; JavaScript is off.
+- Built in 0.5: it is `/mfa?key`, and `/mfa` itself for an account with keys but no authenticator app. S1 also
+  has "Sign in with a passkey" and the browser's passkey suggestions in the username field.
 
 **S15 Set up two-factor** (0.3)
 - Shows: why it is required ("Administrators must use two-factor", or "`<app>` requires two-factor").
@@ -228,7 +230,8 @@ appear from that release; until then the page is drawn without them.
 - States: wrong code.
 - Built in 0.3: a wrong code shows a new QR code and secret (the first may have been scanned wrongly). The
   method choice is left out until security keys exist (0.5). Voluntary setup is the API's until the account
-  area (0.4).
+  area (0.4). Built in 0.5: the choice is two tabs, "Authenticator app" and "Security key or passkey" (a name,
+  then the browser's dialog, then S16).
 
 **S16 Recovery codes** (0.3)
 - Shows:

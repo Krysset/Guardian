@@ -278,6 +278,13 @@ CREATE UNLOGGED TABLE IF NOT EXISTS rate_limit (
 	PRIMARY KEY (key, window_start)
 );
 
+-- WebAuthn challenges already answered, so an answer cannot be sent twice. Kept until the challenge
+-- expires; maintenance removes them after.
+CREATE TABLE IF NOT EXISTS used_challenge (
+	challenge   TEXT PRIMARY KEY,
+	expires_at  TIMESTAMPTZ NOT NULL
+);
+
 -- Accounts that have signed in to an app at least once. The machine API lets an app look up these
 -- accounts, and members of its linked groups, but nobody else.
 CREATE TABLE IF NOT EXISTS app_user (
@@ -341,8 +348,8 @@ CREATE TABLE IF NOT EXISTS account_mfa (
 	type           TEXT NOT NULL CHECK (type IN ('totp', 'webauthn', 'recovery_code')),
 	name           TEXT,                                -- "YubiKey", "Phone"
 	secret         TEXT,                                -- encrypted TOTP secret, or hashed recovery code
-	credential_id  BYTEA,                               -- webauthn
-	public_key     BYTEA,                               -- webauthn
+	credential_id  BYTEA,                               -- webauthn: the credential's id
+	credential     JSONB,                               -- webauthn: the stored credential (public key, flags, transports)
 	sign_count     BIGINT,                              -- webauthn counter, or the last TOTP time step used
 	created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	last_used_at   TIMESTAMPTZ
@@ -350,6 +357,8 @@ CREATE TABLE IF NOT EXISTS account_mfa (
 CREATE INDEX IF NOT EXISTS ix_account_mfa_account ON account_mfa (account_id);
 -- One authenticator app per account.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_account_mfa_totp ON account_mfa (account_id) WHERE type = 'totp';
+-- A security key or passkey belongs to one account; a passkey sign-in finds it by its id.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_mfa_credential ON account_mfa (credential_id) WHERE type = 'webauthn';
 
 -- -----------------------------------------------------------------------------
 -- AUDIT LOG (append-only)

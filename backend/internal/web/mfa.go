@@ -10,17 +10,22 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"rsc.io/qr"
 
 	"guardian/internal/auth"
 	"guardian/internal/httpx"
 	"guardian/internal/mail"
+	"guardian/internal/passkey"
 	db "guardian/internal/store"
 )
 
-// Two-factor at sign-in (S13), the required setup (S15, S16), and the setup logic the API shares.
+// Two-factor at sign-in (S13, and S14 for a security key), the required setup (S15, S16), and the setup
+// logic the API shares.
 //
 // Between the password and the second factor the browser holds no session, only a sealed flow cookie
 // (encrypted with the key encryption key) that names the account and where sign-in continues. The setup
@@ -92,7 +97,7 @@ func readMFAFlow(r *http.Request) (mfaFlow, bool) {
 // mfaAfterPassword decides what follows a correct password: the second factor if the account has one,
 // the setup if it must have one, or nothing ("") to sign in straight away.
 func mfaAfterPassword(accountID string) (next, reason string, err error) {
-	has, err := db.HasTOTP(accountID)
+	has, err := db.HasSecondFactor(accountID)
 	if err != nil || has {
 		return "challenge", "", err
 	}
@@ -103,10 +108,10 @@ func mfaAfterPassword(accountID string) (next, reason string, err error) {
 	return "setup", reason, nil
 }
 
-// StepUp sends a signed-in user through two-factor before continuing to returnTo: the code if they have
-// an authenticator app, otherwise its setup. appName says who requires it.
+// StepUp sends a signed-in user through two-factor before continuing to returnTo: a code or a security key
+// if they have one, otherwise the setup. appName says who requires it.
 func StepUp(w http.ResponseWriter, r *http.Request, accountID, returnTo, appName string) {
-	has, err := db.HasTOTP(accountID)
+	has, err := db.HasSecondFactor(accountID)
 	if err != nil {
 		Error(w, ServerError)
 		return
@@ -130,7 +135,7 @@ func stepUpPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
-	if slices.Contains(sess.AMR, "otp") {
+	if httpx.TwoFactor(sess.AMR) {
 		http.Redirect(w, r, continueTo(returnTo), http.StatusFound)
 		return
 	}
@@ -170,6 +175,30 @@ func VerifySecondFactor(accountID, code string, recovery bool) (ok bool, method 
 	return true, method, left, nil
 }
 
+// VerifyKey checks a security key's answer (see passkey.BeginLogin) for the account, under the same limit
+// as wrong codes, and returns the key's name. A key that is not recognised is passkey.ErrNotRecognised; a
+// stale or reused token passkey.ErrExpired.
+func VerifyKey(accountID, token string, response []byte) (string, error) {
+	key := "mfa:account:" + accountID
+	n, err := db.RateLimitCount(key, mfaWindow)
+	if err != nil {
+		return "", err
+	}
+	if n >= mfaAttempts {
+		httpx.CountRefused("mfa")
+		return "", ErrTooManyAttempts
+	}
+	name, err := passkey.FinishLogin(accountID, token, response)
+	if errors.Is(err, passkey.ErrNotRecognised) {
+		db.RateLimitHit(key, mfaWindow)
+		return "", err
+	}
+	if err == nil {
+		db.RateLimitReset(key, mfaWindow)
+	}
+	return name, err
+}
+
 func verifyTOTP(accountID, code string) (bool, error) {
 	f, err := db.GetTOTP(accountID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -194,14 +223,24 @@ func TOTPSecretAAD(accountID string) string { return auth.AAD("account_mfa", "se
 
 // ---- Setting up an authenticator app (shared with the API) ------------------------
 
-// totpSetup is the state of a setup between its steps, sealed into a token.
+// totpSetup is the state of a setup between its steps, sealed into a token. A security key added as the
+// first second factor waits here too, checked but not saved, while its recovery codes are shown.
 type totpSetup struct {
-	Account string   `json:"a"`
-	Secret  string   `json:"s,omitempty"`
-	Codes   []string `json:"c,omitempty"` // the recovery codes shown, once the app is confirmed
-	Step    int64    `json:"n,omitempty"` // the time step of the confirming code
-	Stage   string   `json:"g"`           // "scan", "codes" (app confirmed, codes shown) or "renew" (new codes only)
-	Expires int64    `json:"e"`
+	Account string      `json:"a"`
+	Secret  string      `json:"s,omitempty"`
+	Codes   []string    `json:"c,omitempty"` // the recovery codes shown, once the app or key is confirmed
+	Step    int64       `json:"n,omitempty"` // the time step of the confirming code
+	Stage   string      `json:"g"`           // "scan", "codes" (app or key confirmed, codes shown) or "renew" (new codes only)
+	Key     *pendingKey `json:"k,omitempty"`
+	Expires int64       `json:"e"`
+}
+
+// pendingKey is a checked security key waiting for its recovery codes to be saved.
+type pendingKey struct {
+	Name      string `json:"n"`
+	ID        []byte `json:"i"`
+	Cred      []byte `json:"c"`
+	SignCount uint32 `json:"s"`
 }
 
 // TOTPSetupView is what the first step shows: the QR code, the secret for typing in by hand, and the token
@@ -279,28 +318,77 @@ func SetupCodes(accountID, token string) []string {
 	return nil
 }
 
-// FinishTOTPSetup checks that one recovery code was saved (typed back), then saves the app and the codes,
-// replacing any earlier ones, and tells the account by email (E4).
-func FinishTOTPSetup(acct db.Account, token, typed, ip string) error {
+// FinishSetup checks that one recovery code was saved (typed back), then saves the authenticator app or the
+// security key with the codes, replacing any earlier codes, and tells the account by email (E4). It returns
+// the amr value the new method stands for ("otp" or "hwk").
+func FinishSetup(acct db.Account, token, typed, ip string) (string, error) {
 	s, err := openSetup(token, acct.ID, "codes")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !typedOneOf(typed, s.Codes, acct.ID) {
-		return ErrWrongCode
+		return "", ErrWrongCode
+	}
+	if s.Key != nil {
+		_, err := saveKey(acct, s.Key, hashCodes(acct.ID, s.Codes), ip)
+		return "hwk", err
 	}
 	sealed, err := auth.Encrypt([]byte(s.Secret), TOTPSecretAAD(acct.ID))
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := db.SaveTOTP(acct.ID, sealed, hashCodes(acct.ID, s.Codes), s.Step); err != nil {
-		return err
+		return "", err
 	}
 	db.Audit("mfa.totp_added", acct.ID, "", ip, nil)
 	if acct.Email != "" {
 		mail.Enqueue(mail.TwoFactorChanged(acct.Email, true, "Authenticator app", time.Now(), acct.Zoneinfo))
 	}
-	return nil
+	return "otp", nil
+}
+
+// KeyMethod names a security key in emails.
+func KeyMethod(name string) string { return "Security key or passkey “" + name + "”" }
+
+func saveKey(acct db.Account, k *pendingKey, codeHashes []string, ip string) (db.SecurityKey, error) {
+	saved, err := db.AddSecurityKey(acct.ID, k.Name, k.ID, k.Cred, k.SignCount, codeHashes)
+	if err != nil {
+		return db.SecurityKey{}, err
+	}
+	db.Audit("mfa.key_added", acct.ID, "", ip, map[string]any{"key": k.Name, "passkey": saved.Passkey})
+	if acct.Email != "" {
+		mail.Enqueue(mail.TwoFactorChanged(acct.Email, true, KeyMethod(k.Name), time.Now(), acct.Zoneinfo))
+	}
+	return saved, nil
+}
+
+// AddKey stores a security key checked by passkey.FinishRegistration. An account that already has a second
+// factor gets it saved at once (saved). For the first one, the recovery codes come first: AddKey returns
+// them with a token for FinishSetup, and nothing is saved until one code is typed back.
+func AddKey(acct db.Account, name string, k passkey.NewKey, ip string) (saved *db.SecurityKey, codes []string, token string, err error) {
+	pk := &pendingKey{Name: name, ID: k.ID, Cred: k.Credential, SignCount: k.SignCount}
+	has, err := db.HasSecondFactor(acct.ID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if has {
+		s, err := saveKey(acct, pk, nil, ip)
+		return &s, nil, "", err
+	}
+	if codes, err = auth.NewRecoveryCodes(); err != nil {
+		return nil, nil, "", err
+	}
+	token, err = sealSetup(totpSetup{Account: acct.ID, Codes: codes, Stage: "codes", Key: pk})
+	return nil, codes, token, err
+}
+
+// KeyName checks the name a user gives a security key: 1-64 characters, "Security key" when left empty.
+func KeyName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Security key", true
+	}
+	return name, utf8.RuneCountInString(name) <= 64 && !strings.ContainsFunc(name, unicode.IsControl)
 }
 
 // NewRecoveryCodeSet makes new recovery codes to show; they replace the old ones only when one is typed
@@ -342,7 +430,46 @@ func hashCodes(accountID string, codes []string) []string {
 	return out
 }
 
-// ---- S13: the second factor -------------------------------------------------------
+// ---- S13, S14: the second factor ---------------------------------------------------
+
+// mfaMode picks what S13 asks for: ?recovery, ?key or ?code, else the authenticator code if the account has
+// the app and the security key if it has only keys.
+func mfaMode(r *http.Request, st db.MFAStatus) string {
+	q := r.URL.Query()
+	switch {
+	case q.Has("recovery"):
+		return "recovery"
+	case q.Has("key") && len(st.SecurityKeys) > 0, !st.TOTP && len(st.SecurityKeys) > 0 && !q.Has("code"):
+		return "key"
+	}
+	return "code"
+}
+
+// renderMFA shows S13 (a code), or S14 (a security key: the page carries a fresh challenge).
+func renderMFA(w http.ResponseWriter, r *http.Request, f mfaFlow, mode string, page Page, status int) {
+	st, err := db.GetMFAStatus(f.Account)
+	if err != nil {
+		Error(w, ServerError)
+		return
+	}
+	if mode == "" {
+		mode = mfaMode(r, st)
+	}
+	page.Title = "Two-factor"
+	page.Recovery, page.Key = mode == "recovery", mode == "key"
+	page.HasTOTP, page.HasKeys = st.TOTP, len(st.SecurityKeys) > 0
+	if page.Key {
+		opts, token, err := passkey.BeginLogin(f.Account)
+		if err != nil {
+			slog.Error("failed to start a security key check", "error", err)
+			Error(w, ServerError)
+			return
+		}
+		page.KeyOptions, page.Token = string(opts), token
+	}
+	page.CSRF = httpx.CSRFToken(w, r)
+	Render(w, status, "mfa", page)
+}
 
 func mfaPage(w http.ResponseWriter, r *http.Request) {
 	f, ok := readMFAFlow(r)
@@ -350,33 +477,49 @@ func mfaPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	Render(w, http.StatusOK, "mfa", Page{Title: "Two-factor", CSRF: httpx.CSRFToken(w, r), Recovery: r.URL.Query().Has("recovery")})
+	renderMFA(w, r, f, "", Page{}, http.StatusOK)
 }
 
 func mfaSubmit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<14)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	f, ok := readMFAFlow(r)
 	if !ok || f.Setup {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	recovery := r.PostFormValue("method") == "recovery"
-	page := Page{Title: "Two-factor", Recovery: recovery, FieldErrors: map[string]string{}}
-	show := func(status int) {
-		page.CSRF = httpx.CSRFToken(w, r)
-		Render(w, status, "mfa", page)
+	mode := r.PostFormValue("method")
+	if mode != "recovery" && mode != "key" {
+		mode = "code"
 	}
+	fail := func(status int, page Page) { renderMFA(w, r, f, mode, page, status) }
 	if !httpx.CSRFValid(r) {
-		page.Error = "The form had expired. Try again."
-		show(http.StatusForbidden)
+		fail(http.StatusForbidden, Page{Error: "The form had expired. Try again."})
 		return
 	}
-	ok, method, left, err := VerifySecondFactor(f.Account, r.PostFormValue("code"), recovery)
 	ip := httpx.ClientIP(r)
+	if mode == "key" {
+		name, err := VerifyKey(f.Account, r.PostFormValue("token"), []byte(r.PostFormValue("credential")))
+		switch {
+		case errors.Is(err, ErrTooManyAttempts):
+			fail(http.StatusTooManyRequests, Page{Error: "Too many failed attempts. Wait 15 minutes, then try again."})
+		case errors.Is(err, passkey.ErrExpired):
+			fail(http.StatusBadRequest, Page{Error: "That took too long. Try again."})
+		case errors.Is(err, passkey.ErrNotRecognised):
+			db.Audit("mfa.failure", f.Account, "", ip, map[string]any{"method": "security_key"})
+			fail(http.StatusUnauthorized, Page{Error: "That security key isn't one of yours. Try another, or use another method."})
+		case err != nil:
+			slog.Error("failed to check a security key", "error", err)
+			Error(w, ServerError)
+		default:
+			completeMFAFlow(w, r, f, "hwk", map[string]any{"method": "security_key", "key": name})
+		}
+		return
+	}
+	recovery := mode == "recovery"
+	ok, method, left, err := VerifySecondFactor(f.Account, r.PostFormValue("code"), recovery)
 	switch {
 	case errors.Is(err, ErrTooManyAttempts):
-		page.Error = "Too many wrong codes. Wait 15 minutes, then try again."
-		show(http.StatusTooManyRequests)
+		fail(http.StatusTooManyRequests, Page{Error: "Too many wrong codes. Wait 15 minutes, then try again."})
 		return
 	case err != nil:
 		slog.Error("failed to check a second factor", "error", err)
@@ -384,23 +527,23 @@ func mfaSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	case !ok:
 		db.Audit("mfa.failure", f.Account, "", ip, map[string]any{"method": method})
+		msg := "That code is wrong. Codes change every 30 seconds."
 		if recovery {
-			page.FieldErrors["code"] = "That recovery code is wrong or was used already."
-		} else {
-			page.FieldErrors["code"] = "That code is wrong. Codes change every 30 seconds."
+			msg = "That recovery code is wrong or was used already."
 		}
-		show(http.StatusUnauthorized)
+		fail(http.StatusUnauthorized, Page{FieldErrors: map[string]string{"code": msg}})
 		return
 	}
 	detail := map[string]any{"method": method}
 	if method == "recovery_code" {
 		detail["recovery_codes_left"] = left
 	}
-	completeMFAFlow(w, r, f, detail)
+	completeMFAFlow(w, r, f, "otp", detail)
 }
 
-// completeMFAFlow signs in, or steps the session up, once the second factor is passed.
-func completeMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow, detail map[string]any) {
+// completeMFAFlow signs in, or steps the session up, once the second factor is passed. amr is the method:
+// "otp" for a code, "hwk" for a security key.
+func completeMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow, amr string, detail map[string]any) {
 	httpx.ClearFlowCookie(w, mfaCookie)
 	ip := httpx.ClientIP(r)
 	if f.Purpose == "stepup" {
@@ -409,7 +552,7 @@ func completeMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow, detail m
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if err := db.StepUpSession(sess.ID); err != nil {
+		if err := db.StepUpSession(sess.ID, amr); err != nil {
 			Error(w, ServerError)
 			return
 		}
@@ -422,15 +565,20 @@ func completeMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow, detail m
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if _, err := httpx.StartSession(w, r, acct.ID, "pwd", "otp"); err != nil {
+	finishSignIn(w, r, acct, detail, httpx.SafeReturnTo(f.ReturnTo), "pwd", amr)
+}
+
+// finishSignIn starts the session and continues: to the new-password page first if the account has a
+// temporary password, else back into the app's sign-in, or Home.
+func finishSignIn(w http.ResponseWriter, r *http.Request, acct db.Account, detail map[string]any, returnTo string, amr ...string) {
+	if _, err := httpx.StartSession(w, r, acct.ID, amr...); err != nil {
 		slog.Error("failed to start a session", "error", err)
 		Error(w, ServerError)
 		return
 	}
 	loginsTotal.WithLabelValues("success").Inc()
 	db.TouchLogin(acct.ID)
-	db.Audit("login.success", acct.ID, "", ip, detail)
-	returnTo := httpx.SafeReturnTo(f.ReturnTo)
+	db.Audit("login.success", acct.ID, "", httpx.ClientIP(r), detail)
 	if acct.MustChangePassword {
 		http.Redirect(w, r, MustChangePasswordURL(returnTo), http.StatusSeeOther)
 		return
@@ -471,11 +619,29 @@ func setupAccount(r *http.Request) (mfaFlow, db.Account, bool) {
 	return f, acct, err == nil
 }
 
-func setupPage(w http.ResponseWriter, r *http.Request, f mfaFlow, view TOTPSetupView, errs map[string]string) Page {
-	return Page{Title: "Set up two-factor", CSRF: httpx.CSRFToken(w, r), Message: f.Reason,
+// renderSetup shows S15: the authenticator app (a QR code), or a security key (?method=key).
+func renderSetup(w http.ResponseWriter, r *http.Request, f mfaFlow, acct db.Account, key bool, page Page, status int) {
+	page.Title, page.Message, page.Key = "Set up two-factor", f.Reason, key
+	if key {
+		opts, token, err := passkey.BeginRegistration(acct.ID)
+		if err != nil {
+			slog.Error("failed to start adding a security key", "error", err)
+			Error(w, ServerError)
+			return
+		}
+		page.KeyOptions, page.Token = string(opts), token
+	} else {
+		view, err := NewTOTPSetup(acct)
+		if err != nil {
+			slog.Error("failed to start a two-factor setup", "error", err)
+			Error(w, ServerError)
+			return
+		}
 		// The QR code is a PNG that Guardian made itself, so it is safe as a data: URI.
-		QRCode:       template.URL(view.QRCode),
-		SecretGroups: auth.GroupSecret(view.Secret), Token: view.SetupToken, FieldErrors: errs}
+		page.QRCode, page.SecretGroups, page.Token = template.URL(view.QRCode), auth.GroupSecret(view.Secret), view.SetupToken
+	}
+	page.CSRF = httpx.CSRFToken(w, r)
+	Render(w, status, "mfasetup", page)
 }
 
 func mfaSetupPage(w http.ResponseWriter, r *http.Request) {
@@ -484,13 +650,12 @@ func mfaSetupPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	view, err := NewTOTPSetup(acct)
-	if err != nil {
-		slog.Error("failed to start a two-factor setup", "error", err)
-		Error(w, ServerError)
-		return
-	}
-	Render(w, http.StatusOK, "mfasetup", setupPage(w, r, f, view, nil))
+	renderSetup(w, r, f, acct, r.URL.Query().Get("method") == "key", Page{}, http.StatusOK)
+}
+
+func showCodes(w http.ResponseWriter, r *http.Request, codes []string, token string, errs map[string]string, status int) {
+	Render(w, status, "recoverycodes", Page{Title: "Recovery codes", CSRF: httpx.CSRFToken(w, r),
+		Codes: codes, Token: token, FieldErrors: errs})
 }
 
 func mfaSetupSubmit(w http.ResponseWriter, r *http.Request) {
@@ -509,32 +674,54 @@ func mfaSetupSubmit(w http.ResponseWriter, r *http.Request) {
 		codes, next, err := ConfirmTOTPSetup(acct.ID, r.PostFormValue("token"), r.PostFormValue("code"))
 		switch {
 		case errors.Is(err, ErrWrongCode):
-			view, err := NewTOTPSetup(acct)
-			if err != nil {
-				Error(w, ServerError)
-				return
-			}
 			// A wrong code shows a new secret: the old one may have been scanned wrongly.
-			Render(w, http.StatusBadRequest, "mfasetup", setupPage(w, r, f, view,
-				map[string]string{"code": "That code is wrong. Scan this new QR code and try again."}))
+			renderSetup(w, r, f, acct, false, Page{FieldErrors: map[string]string{"code": "That code is wrong. Scan this new QR code and try again."}}, http.StatusBadRequest)
 		case err != nil:
 			http.Redirect(w, r, "/mfa/setup", http.StatusSeeOther)
 		default:
-			Render(w, http.StatusOK, "recoverycodes", Page{Title: "Recovery codes", CSRF: httpx.CSRFToken(w, r),
-				Codes: codes, Token: next})
+			showCodes(w, r, codes, next, nil, http.StatusOK)
+		}
+	case "key":
+		name, valid := KeyName(r.PostFormValue("name"))
+		if !valid {
+			renderSetup(w, r, f, acct, true, Page{FieldErrors: map[string]string{"name": "Use at most 64 characters."}}, http.StatusBadRequest)
+			return
+		}
+		k, err := passkey.FinishRegistration(acct.ID, r.PostFormValue("token"), []byte(r.PostFormValue("credential")))
+		if errors.Is(err, passkey.ErrExpired) || errors.Is(err, passkey.ErrNotRecognised) {
+			renderSetup(w, r, f, acct, true, Page{Error: "The security key could not be added. Try again."}, http.StatusBadRequest)
+			return
+		} else if err != nil {
+			slog.Error("failed to add a security key", "error", err)
+			Error(w, ServerError)
+			return
+		}
+		saved, codes, next, err := AddKey(acct, name, k, httpx.ClientIP(r))
+		switch {
+		case errors.Is(err, db.ErrCredentialInUse):
+			renderSetup(w, r, f, acct, true, Page{Error: "That security key is already registered. Use another one."}, http.StatusConflict)
+		case err != nil:
+			slog.Error("failed to add a security key", "error", err)
+			Error(w, ServerError)
+		case saved != nil:
+			completeMFAFlow(w, r, f, "hwk", map[string]any{"method": "security_key", "set_up": true})
+		default:
+			showCodes(w, r, codes, next, nil, http.StatusOK)
 		}
 	case "codes":
 		token := r.PostFormValue("token")
-		err := FinishTOTPSetup(acct, token, r.PostFormValue("code"), httpx.ClientIP(r))
+		amr, err := FinishSetup(acct, token, r.PostFormValue("code"), httpx.ClientIP(r))
 		switch {
 		case errors.Is(err, ErrWrongCode):
-			Render(w, http.StatusBadRequest, "recoverycodes", Page{Title: "Recovery codes", CSRF: httpx.CSRFToken(w, r),
-				Codes: SetupCodes(acct.ID, token), Token: token,
-				FieldErrors: map[string]string{"code": "That is not one of the codes above."}})
+			showCodes(w, r, SetupCodes(acct.ID, token), token, map[string]string{"code": "That is not one of the codes above."}, http.StatusBadRequest)
 		case err != nil:
 			http.Redirect(w, r, "/mfa/setup", http.StatusSeeOther)
 		default:
-			completeMFAFlow(w, r, f, map[string]any{"method": "totp", "set_up": true})
+			method := "totp"
+			if amr == "hwk" {
+				method = "security_key"
+			}
+			completeMFAFlow(w, r, f, amr, map[string]any{"method": method, "set_up": true})
 		}
 	default:
 		http.Redirect(w, r, "/mfa/setup", http.StatusSeeOther)

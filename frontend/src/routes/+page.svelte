@@ -17,7 +17,7 @@
 			return url;
 		}
 	};
-	const needsTwoFactor = $derived(me.mfa.required && !me.mfa.totp);
+	const needsTwoFactor = $derived(me.mfa.required && !me.mfa.totp && !(me.mfa.security_keys ?? []).length);
 	const pendingEmail = $derived(!!me.email_settings.pending);
 </script>
 

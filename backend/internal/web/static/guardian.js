@@ -82,3 +82,121 @@
   });
   document.querySelectorAll('.code-actions').forEach(function (row) { row.hidden = false; });
 })();
+
+// Security keys and passkeys: a form with data-webauthn runs the browser's key dialog, puts the answer in
+// its "credential" field and submits. The options come from the server in data-options; the challenge in
+// them is checked when the form comes back. "create" adds a key (S15), "get" asks for one (S14), and
+// "passkey" signs in without a password (S1), also from the browser's suggestions in the username field.
+(function () {
+  var forms = document.querySelectorAll('form[data-webauthn]');
+  if (!forms.length) return;
+
+  function toBytes(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    var bin = atob(s + '==='.slice((s.length + 3) % 4));
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  function toText(buf) {
+    var bytes = new Uint8Array(buf), bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function withIds(list) {
+    return (list || []).map(function (c) { return Object.assign({}, c, { id: toBytes(c.id) }); });
+  }
+  function creation(o) {
+    var pk = Object.assign({}, o.publicKey);
+    pk.challenge = toBytes(pk.challenge);
+    pk.user = Object.assign({}, pk.user, { id: toBytes(pk.user.id) });
+    pk.excludeCredentials = withIds(pk.excludeCredentials);
+    return { publicKey: pk };
+  }
+  function request(o) {
+    var pk = Object.assign({}, o.publicKey);
+    pk.challenge = toBytes(pk.challenge);
+    pk.allowCredentials = withIds(pk.allowCredentials);
+    return { publicKey: pk };
+  }
+  function answer(c) {
+    var r = c.response, out = {
+      id: c.id, rawId: toText(c.rawId), type: c.type,
+      authenticatorAttachment: c.authenticatorAttachment || undefined,
+      clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {},
+      response: { clientDataJSON: toText(r.clientDataJSON) }
+    };
+    if (r.attestationObject) {
+      out.response.attestationObject = toText(r.attestationObject);
+      if (r.getTransports) out.response.transports = r.getTransports();
+    } else {
+      out.response.authenticatorData = toText(r.authenticatorData);
+      out.response.signature = toText(r.signature);
+      if (r.userHandle) out.response.userHandle = toText(r.userHandle);
+    }
+    return JSON.stringify(out);
+  }
+  function why(e, kind) {
+    if (e && e.name === 'NotAllowedError') return 'The request was cancelled or timed out. Try again.';
+    if (e && e.name === 'InvalidStateError' && kind === 'create') return 'That key is already registered. Use another one.';
+    return 'This browser could not use the key. Try again, or use another way.';
+  }
+
+  forms.forEach(function (form) {
+    var kind = form.getAttribute('data-webauthn');
+    var error = form.querySelector('[data-webauthn-error]');
+    var button = form.querySelector('button[type=submit]');
+    function say(text) {
+      if (!error) return;
+      error.textContent = text;
+      error.hidden = !text;
+    }
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      if (kind === 'passkey') return; // the form stays hidden
+      say('This browser can\'t use security keys. Use another way.');
+      if (button) button.disabled = true;
+      return;
+    }
+    var options = JSON.parse(form.getAttribute('data-options'));
+    var busy = false;
+    function finish(c) {
+      form.querySelector('input[name=credential]').value = answer(c);
+      HTMLFormElement.prototype.submit.call(form);
+    }
+
+    // The browser's own passkey suggestions in the username field (conditional mediation).
+    var waiting = null;
+    function suggest() {
+      if (kind !== 'passkey' || !PublicKeyCredential.isConditionalMediationAvailable) return;
+      PublicKeyCredential.isConditionalMediationAvailable().then(function (ok) {
+        if (!ok) return;
+        waiting = new AbortController();
+        var o = request(options);
+        o.mediation = 'conditional';
+        o.signal = waiting.signal;
+        navigator.credentials.get(o).then(function (c) { if (c) finish(c); }, function () {});
+      });
+    }
+    if (kind === 'passkey') {
+      form.hidden = false;
+      suggest();
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (busy) return;
+      busy = true;
+      say('');
+      if (waiting) waiting.abort();
+      var run = kind === 'create' ? navigator.credentials.create(creation(options)) : navigator.credentials.get(request(options));
+      run.then(function (c) {
+        if (!c) throw new Error('no credential');
+        finish(c);
+      }).catch(function (err) {
+        busy = false;
+        say(why(err, kind));
+        suggest();
+      });
+    });
+  });
+})();

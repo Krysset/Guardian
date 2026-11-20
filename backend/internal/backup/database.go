@@ -40,7 +40,7 @@ const auditLog = "audit_log"
 // notBackedUp are the tables a backup leaves out: sign-in state that is worthless after a restore
 // (everyone signs in again), one-time tokens and rate-limit counters. A restore empties them. schema_revision and goose's own
 // table belong to the schema, not to the data, and are neither backed up nor touched.
-var notBackedUp = []string{"session", "authorization_code", "refresh_token", "session_app", "account_token", "rate_limit"}
+var notBackedUp = []string{"session", "authorization_code", "refresh_token", "session_app", "account_token", "rate_limit", "used_challenge"}
 
 var schemaTables = []string{"schema_revision", "goose_db_version"}
 

@@ -1,5 +1,5 @@
-<!-- AC2 Security: the password, the authenticator app and the recovery codes. Every change here is protected
-     (AC8). Security keys and passkeys come in 0.5. -->
+<!-- AC2 Security: the password, the authenticator app, security keys and passkeys, and the recovery codes.
+     Every change here is protected (AC8), except renaming a key. -->
 <script lang="ts">
 	import { refreshAll } from '$app/navigation';
 	import { tick } from 'svelte';
@@ -8,11 +8,17 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import PasswordField from '#lib/components/PasswordField.svelte';
 	import RecoveryCodes from '#lib/components/RecoveryCodes.svelte';
-	import { formatDate, messageOf } from '#lib/format.ts';
+	import { formatDate, formatWhen, messageOf } from '#lib/format.ts';
+	import { createKey, keyError, keysSupported } from '#lib/webauthn.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	const mfa = $derived(data.me.mfa);
+	const keys = $derived(mfa.security_keys ?? []);
+	// How many two-factor methods there are: an account that must use two-factor keeps at least one.
+	const methods = $derived((mfa.totp ? 1 : 0) + keys.length);
+	const isOn = $derived(methods > 0);
+	const lastRequired = $derived(Boolean(mfa.required) && methods === 1);
 
 	const cancelled = (e: unknown) => e instanceof ApiError && e.code === 'cancelled';
 
@@ -46,7 +52,8 @@
 	// Authenticator app: start (secret and QR code), confirm a code, then save the recovery codes.
 	type Setup =
 		| { step: 'scan'; token: string; secret: string; qr: string }
-		| { step: 'codes'; token: string; codes: string[]; kind: 'totp' | 'renew' };
+		| { step: 'codes'; token: string; codes: string[]; kind: 'totp' | 'key' | 'renew' }
+		| { step: 'name' };
 	let setup = $state<Setup | null>(null);
 	let code = $state('');
 	let mfaError = $state('');
@@ -108,25 +115,95 @@
 	async function finishCodes(answer: string) {
 		if (setup?.step !== 'codes') return;
 		const body = { setup_token: setup.token, recovery_code: answer };
-		if (setup.kind === 'totp') await api.post('/me/mfa/totp/finish', { body });
-		else await api.post('/me/mfa/recovery-codes/finish', { body });
-		mfaDone = setup.kind === 'totp' ? 'Two-factor is on.' : 'Your new recovery codes are in place. The old ones no longer work.';
+		if (setup.kind === 'renew') await api.post('/me/mfa/recovery-codes/finish', { body });
+		else await api.post('/me/mfa/finish', { body });
+		mfaDone = setup.kind === 'renew' ? 'Your new recovery codes are in place. The old ones no longer work.' : 'Two-factor is on.';
 		setup = null;
 		await refreshAll();
 	}
 
+	// Removing the last method turns two-factor off and takes the recovery codes with it: say so plainly.
+	function removalWarning(what: string) {
+		return methods === 1
+			? { title: 'Turn off two-factor?', message: `This removes ${what} and your recovery codes, your last way back in without your password. Signing in then needs only your password.`, confirm: 'Turn off', danger: true }
+			: { title: `Remove ${what}?`, message: 'Your other two-factor methods and your recovery codes stay.', confirm: 'Remove', danger: true };
+	}
+
 	async function removeApp() {
 		mfaError = mfaDone = '';
-		const ok = await askConfirm({
-			title: 'Turn off two-factor?',
-			message: 'This removes your authenticator app and your recovery codes. Signing in then needs only your password.',
-			confirm: 'Turn off',
-			danger: true
-		});
-		if (!ok) return;
+		if (!(await askConfirm(removalWarning('your authenticator app')))) return;
 		try {
-			await api.delete('/me/mfa/totp', { reason: 'turn off two-factor' });
-			mfaDone = 'Two-factor is off.';
+			await api.delete('/me/mfa/totp', { reason: 'remove your authenticator app' });
+			mfaDone = methods === 1 ? 'Two-factor is off.' : 'The authenticator app is removed.';
+			await refreshAll();
+		} catch (e) {
+			if (!cancelled(e)) mfaError = messageOf(e);
+		}
+	}
+
+	// Security keys and passkeys: name it, the browser's dialog, then (for the first method) the recovery codes.
+	let keyName = $state('');
+	let nameInput: HTMLInputElement | undefined = $state();
+
+	async function askName() {
+		mfaError = mfaDone = '';
+		keyName = '';
+		setup = { step: 'name' };
+		await tick();
+		nameInput?.focus();
+	}
+
+	async function addKey(event: SubmitEvent) {
+		event.preventDefault();
+		mfaError = '';
+		if (keyName.trim().length > 64) {
+			mfaError = 'Use at most 64 characters.';
+			return;
+		}
+		mfaBusy = true;
+		try {
+			const begun = await api.post('/me/mfa/keys', { reason: 'add a security key' });
+			const credential = await createKey(begun.options);
+			const r = await api.post('/me/mfa/keys/finish', { body: { setup_token: begun.setup_token, credential, name: keyName.trim() } });
+			if ('recovery_codes' in r && r.recovery_codes) {
+				setup = { step: 'codes', token: r.setup_token ?? '', codes: r.recovery_codes, kind: 'key' };
+			} else {
+				setup = null;
+				mfaDone = 'Security key added.';
+				await refreshAll();
+			}
+		} catch (e) {
+			if (!cancelled(e)) mfaError = keyError(e) ?? messageOf(e);
+		} finally {
+			mfaBusy = false;
+		}
+	}
+
+	let renaming = $state<string | null>(null);
+	let newName = $state('');
+
+	async function rename(event: SubmitEvent, id: string) {
+		event.preventDefault();
+		mfaError = mfaDone = '';
+		if (!newName.trim() || newName.trim().length > 64) {
+			mfaError = 'Give the key a name of at most 64 characters.';
+			return;
+		}
+		try {
+			await api.patch('/me/mfa/keys/{key}', { path: { key: id }, body: { name: newName.trim() } });
+			renaming = null;
+			await refreshAll();
+		} catch (e) {
+			mfaError = messageOf(e);
+		}
+	}
+
+	async function removeKey(id: string, name: string) {
+		mfaError = mfaDone = '';
+		if (!(await askConfirm(removalWarning(`“${name}”`)))) return;
+		try {
+			await api.delete('/me/mfa/keys/{key}', { path: { key: id }, reason: 'remove a security key' });
+			mfaDone = methods === 1 ? 'Two-factor is off.' : `“${name}” is removed.`;
 			await refreshAll();
 		} catch (e) {
 			if (!cancelled(e)) mfaError = messageOf(e);
@@ -179,8 +256,19 @@
 		</form>
 	{:else if setup?.step === 'codes'}
 		<RecoveryCodes codes={setup.codes} finish={finishCodes} cancel={() => (setup = null)} />
+	{:else if setup?.step === 'name'}
+		<form class="setup" onsubmit={addKey} novalidate>
+			<label class="lbl" for="key-name">Name it, so you can tell your keys apart</label>
+			<div class="answer">
+				<input bind:this={nameInput} bind:value={keyName} class="in name" id="key-name" maxlength="64" placeholder="Security key" autocomplete="off" aria-invalid={mfaError ? 'true' : undefined} aria-describedby={mfaError ? 'key-err' : 'key-hint'} />
+				<button class="btn" type="submit" disabled={mfaBusy}><Icon name="key" />Add</button>
+				<button class="btn alt" type="button" onclick={() => ((setup = null), (mfaError = ''))}>Cancel</button>
+			</div>
+			{#if mfaError}<p class="err-t" id="key-err" role="alert">{mfaError}</p>
+			{:else}<p class="hint" id="key-hint">Your browser then asks you to touch the key, or to save a passkey on this device or your phone.</p>{/if}
+		</form>
 	{:else}
-		{#if mfa.totp}
+		{#if isOn}
 			<div class="note">
 				<strong>Two-factor is on.</strong>
 				{#if mfa.required}{mfa.required_reason}{/if}
@@ -201,13 +289,47 @@
 			{#if mfa.totp}
 				<span class="buttons">
 					<button class="btn alt" type="button" onclick={startSetup} disabled={mfaBusy}>Replace</button>
-					<button class="btn alt" type="button" onclick={removeApp} disabled={mfa.required} title={mfa.required ? 'Two-factor is required for you' : undefined}>Remove</button>
+					<button class="btn alt" type="button" onclick={removeApp} disabled={lastRequired} title={lastRequired ? 'You must keep one two-factor method' : undefined}>Remove</button>
 				</span>
 			{:else}
-				<button class="btn" type="button" onclick={startSetup} disabled={mfaBusy}>Set up</button>
+				<button class="btn alt" type="button" onclick={startSetup} disabled={mfaBusy}>Set up</button>
 			{/if}
 		</div>
-		{#if mfa.totp}
+		{#each keys as k (k.id)}
+			<div class="row">
+				{#if renaming === k.id}
+					<form class="rename" onsubmit={(e) => rename(e, k.id)} novalidate>
+						<label class="visually-hidden" for="rn-{k.id}">New name</label>
+						<input class="in" id="rn-{k.id}" bind:value={newName} maxlength="64" autocomplete="off" />
+						<button class="btn" type="submit">Save</button>
+						<button class="btn alt" type="button" onclick={() => (renaming = null)}>Cancel</button>
+					</form>
+				{:else}
+					<span class="what">
+						<span class="logo-t"><Icon name="key" /></span>
+						<span>
+							<strong>{k.name}</strong>
+							<span class="hint block">{k.passkey ? 'Passkey' : 'Security key'} · added {formatDate(k.created_at)}{k.last_used_at ? ` · last used ${formatWhen(k.last_used_at)}` : ''}</span>
+						</span>
+					</span>
+					<span class="buttons">
+						<button class="btn alt" type="button" onclick={() => ((renaming = k.id), (newName = k.name))}>Rename</button>
+						<button class="btn alt" type="button" onclick={() => removeKey(k.id, k.name)} disabled={lastRequired} title={lastRequired ? 'You must keep one two-factor method' : undefined}>Remove</button>
+					</span>
+				{/if}
+			</div>
+		{/each}
+		<div class="row">
+			<span class="what">
+				<span class="logo-t"><Icon name="key" /></span>
+				<span>
+					<strong>{keys.length ? 'Add another security key or passkey' : 'Security keys and passkeys'}</strong>
+					<span class="hint block">{keysSupported() ? 'A passkey also signs you in without your password.' : "This browser can't use security keys."}</span>
+				</span>
+			</span>
+			<button class="btn alt" type="button" onclick={askName} disabled={mfaBusy || !keysSupported()}><Icon name="plus" />Add</button>
+		</div>
+		{#if isOn}
 			<div class="row">
 				<span class="what">
 					<span class="logo-t"><Icon name="list" /></span>
@@ -298,5 +420,19 @@
 		font: 500 18px ui-monospace, Menlo, Consolas, monospace;
 		letter-spacing: 0.2em;
 		max-width: 10em;
+	}
+	.name {
+		flex: 1 1 220px;
+		max-width: 320px;
+	}
+	.rename {
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		width: 100%;
+	}
+	.rename .in {
+		flex: 1 1 200px;
+		max-width: 320px;
 	}
 </style>

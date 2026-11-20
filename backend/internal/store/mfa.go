@@ -6,16 +6,20 @@ import (
 	"time"
 )
 
-// Two-factor: one authenticator app (TOTP) per account and its recovery codes, in account_mfa. The TOTP
-// secret is stored encrypted with the key encryption key; recovery codes only as hashes, and a used code is
-// deleted.
+// Two-factor: one authenticator app (TOTP) per account, security keys and passkeys (webauthn.go), and the
+// recovery codes that come with the first of them, in account_mfa. The TOTP secret is stored encrypted with
+// the key encryption key; recovery codes only as hashes, and a used code is deleted.
 
 // MFAStatus is what an account has set up.
 type MFAStatus struct {
-	TOTP              bool       `json:"totp"`
-	TOTPAddedAt       *time.Time `json:"totp_added_at,omitempty"`
-	RecoveryCodesLeft int        `json:"recovery_codes_left"`
+	TOTP              bool          `json:"totp"`
+	TOTPAddedAt       *time.Time    `json:"totp_added_at,omitempty"`
+	RecoveryCodesLeft int           `json:"recovery_codes_left"`
+	SecurityKeys      []SecurityKey `json:"security_keys"`
 }
+
+// Any reports whether the account has a second factor: the authenticator app or a security key.
+func (s MFAStatus) Any() bool { return s.TOTP || len(s.SecurityKeys) > 0 }
 
 // GetMFAStatus returns the account's two-factor methods.
 func GetMFAStatus(accountID string) (MFAStatus, error) {
@@ -25,8 +29,16 @@ func GetMFAStatus(accountID string) (MFAStatus, error) {
 		(SELECT min(created_at) FROM account_mfa WHERE account_id = $1 AND type = 'totp'),
 		(SELECT count(*) FROM account_mfa WHERE account_id = $1 AND type = 'recovery_code')`, accountID).
 		Scan(&added, &s.RecoveryCodesLeft)
+	if err != nil {
+		return s, err
+	}
 	if added.Valid {
 		s.TOTP, s.TOTPAddedAt = true, &added.Time
+	}
+	keys, err := ListSecurityKeys(accountID)
+	s.SecurityKeys = make([]SecurityKey, len(keys))
+	for i, k := range keys {
+		s.SecurityKeys[i] = k.SecurityKey
 	}
 	return s, err
 }
@@ -35,6 +47,14 @@ func GetMFAStatus(accountID string) (MFAStatus, error) {
 func HasTOTP(accountID string) (bool, error) {
 	s, err := GetMFAStatus(accountID)
 	return s.TOTP, err
+}
+
+// HasSecondFactor reports whether the account has an authenticator app or a security key.
+func HasSecondFactor(accountID string) (bool, error) {
+	var has bool
+	err := GetDatabaseConnection().QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM account_mfa WHERE account_id = $1 AND type IN ('totp', 'webauthn'))`, accountID).Scan(&has)
+	return has, err
 }
 
 // MFARequirement says why an account must use two-factor, or "" if it need not: members of
@@ -120,7 +140,10 @@ func insertRecoveryCodes(tx *sql.Tx, accountID string, hashes []string) error {
 // ErrNoTOTP means the account has no authenticator app.
 var ErrNoTOTP = errors.New("the account has no authenticator app")
 
-// ReplaceRecoveryCodes gives an account with an authenticator app a new set of recovery codes.
+// ErrNoSecondFactor means the account has no two-factor method, so recovery codes have nothing to recover.
+var ErrNoSecondFactor = errors.New("the account has no two-factor method")
+
+// ReplaceRecoveryCodes gives an account with a second factor a new set of recovery codes.
 func ReplaceRecoveryCodes(accountID string, codeHashes []string) error {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
@@ -128,12 +151,12 @@ func ReplaceRecoveryCodes(accountID string, codeHashes []string) error {
 	}
 	defer tx.Rollback()
 	var has bool
-	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM account_mfa WHERE account_id = $1 AND type = 'totp' FOR UPDATE)`,
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM account_mfa WHERE account_id = $1 AND type IN ('totp', 'webauthn') FOR UPDATE)`,
 		accountID).Scan(&has); err != nil {
 		return err
 	}
 	if !has {
-		return ErrNoTOTP
+		return ErrNoSecondFactor
 	}
 	if _, err := tx.Exec(`DELETE FROM account_mfa WHERE account_id = $1 AND type = 'recovery_code'`, accountID); err != nil {
 		return err
@@ -171,11 +194,15 @@ func RemoveMFA(accountID string) (int, error) {
 	return int(n), nil
 }
 
-// StepUpSession records that the session's user has just passed two-factor: "otp" joins the session's
-// amr, and auth_time moves to now.
-func StepUpSession(sessionID string) error {
+// StepUpSession records that the session's user has just passed two-factor: method ("otp" for a code,
+// "hwk" for a security key) joins the session's amr, and auth_time moves to now.
+func StepUpSession(sessionID, method string) error {
 	_, err := GetDatabaseConnection().Exec(
-		`UPDATE session SET amr = ARRAY(SELECT DISTINCT unnest(amr || ARRAY['otp']) ORDER BY 1), auth_time = now()
-		 WHERE id = $1 AND revoked_at IS NULL`, sessionID)
+		`UPDATE session SET amr = ARRAY(SELECT DISTINCT unnest(amr || ARRAY[$2]) ORDER BY 1), auth_time = now()
+		 WHERE id = $1 AND revoked_at IS NULL`, sessionID, method)
 	return err
 }
+
+// TwoFactorAMR are the amr values that show a session passed two-factor: a code from the authenticator app
+// or a recovery code ("otp"), or a security key or passkey ("hwk").
+var TwoFactorAMR = []string{"otp", "hwk"}

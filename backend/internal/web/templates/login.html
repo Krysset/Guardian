@@ -6,11 +6,17 @@
       <form method="post" action="/login">
         {{template "hidden-flow" .}}
         <label for="username">Username or email</label>
-        <input class="text" id="username" name="username" type="text" autocomplete="username" value="{{.Login}}" required{{if not .Login}} autofocus{{end}}>
+        <input class="text" id="username" name="username" type="text" autocomplete="username{{if .KeyOptions}} webauthn{{end}}" value="{{.Login}}" required{{if not .Login}} autofocus{{end}}>
         {{if mail}}<div class="label-row"><label for="password">Password</label><a href="/forgot">Forgot password?</a></div>
         {{else}}<label for="password">Password</label>
         {{end}}<div class="password"><input class="text" id="password" name="password" type="password" autocomplete="current-password" required{{if .Login}} autofocus{{end}}></div>
         <button class="button" type="submit">Sign in</button>
       </form>
+      {{if .KeyOptions}}<form class="passkey" method="post" action="/login/passkey" data-webauthn="passkey" data-options="{{.KeyOptions}}" hidden>
+        {{template "hidden-flow" .}}<input type="hidden" name="credential">
+        <p class="or"><span>or</span></p>
+        <button class="button alt" type="submit">{{template "icon-key"}}Sign in with a passkey</button>
+        <p class="field-error center" data-webauthn-error role="alert" hidden></p>
+      </form>{{end}}
       <p class="small">New to Guardian? <a href="/signup{{if .ReturnTo}}?return_to={{.ReturnTo}}{{end}}">Create an account</a></p>
 {{end}}

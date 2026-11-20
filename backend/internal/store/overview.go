@@ -32,6 +32,8 @@ type Overview struct {
 		Permanent  int `json:"permanent"` // whose membership does not expire: the ones the last-administrator rule counts
 		LastSignIn int `json:"signed_in_last_day"`
 	} `json:"admins"`
+	// AuditRetentionDays is how long the audit log keeps entries (AUDIT_RETENTION).
+	AuditRetentionDays int `json:"audit_retention_days"`
 }
 
 // GetOverview computes the figures in one round trip.
@@ -54,7 +56,7 @@ func GetOverview() (Overview, error) {
 		   JOIN account a ON a.id = m.account_id
 		  WHERE g.key = $3 AND `+activeMember+` AND a.status = 'active' AND a.deleted_at IS NULL),
 		(SELECT count(DISTINCT m.account_id) FROM group_member m JOIN user_group g ON g.id = m.group_id
-		   JOIN account a ON a.id = m.account_id JOIN account_mfa f ON f.account_id = a.id AND f.type = 'totp'
+		   JOIN account a ON a.id = m.account_id JOIN account_mfa f ON f.account_id = a.id AND f.type IN ('totp', 'webauthn')
 		  WHERE g.key = $3 AND `+activeMember+` AND a.status = 'active' AND a.deleted_at IS NULL),
 		(SELECT count(DISTINCT m.account_id) FROM group_member m JOIN user_group g ON g.id = m.group_id
 		   JOIN account a ON a.id = m.account_id
@@ -67,5 +69,6 @@ func GetOverview() (Overview, error) {
 		&o.Groups, &o.Apps.Enabled, &o.Apps.Disabled,
 		&o.LastDay.SignIns, &o.LastDay.FailedSignIns, &o.LastDay.RateLimited, &o.LastDay.HoneypotCaught,
 		&o.Admins.Total, &o.Admins.WithTOTP, &o.Admins.Permanent, &o.Admins.LastSignIn)
+	o.AuditRetentionDays = int(AuditRetention.Hours() / 24)
 	return o, err
 }

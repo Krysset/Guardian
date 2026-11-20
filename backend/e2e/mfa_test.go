@@ -55,12 +55,12 @@ func setUpTOTPByAPI(t *testing.T, br *browser) (secret string, codes []string, u
 	if len(codes) != 10 {
 		t.Fatalf("%d recovery codes", len(codes))
 	}
-	if m := br.call("POST", "/api/v1/me/mfa/totp/finish", map[string]any{"setup_token": conf["setup_token"], "recovery_code": "abcd-efgh"}, 400); m["error"] != "wrong_code" {
+	if m := br.call("POST", "/api/v1/me/mfa/finish", map[string]any{"setup_token": conf["setup_token"], "recovery_code": "abcd-efgh"}, 400); m["error"] != "wrong_code" {
 		t.Errorf("a code that was not shown: %v", m)
 	}
 	// The token of the first step cannot finish.
-	br.call("POST", "/api/v1/me/mfa/totp/finish", map[string]any{"setup_token": view["setup_token"], "recovery_code": codes[0]}, 400)
-	br.call("POST", "/api/v1/me/mfa/totp/finish", map[string]any{"setup_token": conf["setup_token"], "recovery_code": strings.ToUpper(codes[3])}, 204)
+	br.call("POST", "/api/v1/me/mfa/finish", map[string]any{"setup_token": view["setup_token"], "recovery_code": codes[0]}, 400)
+	br.call("POST", "/api/v1/me/mfa/finish", map[string]any{"setup_token": conf["setup_token"], "recovery_code": strings.ToUpper(codes[3])}, 204)
 	return secret, codes, used
 }
 

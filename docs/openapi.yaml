@@ -198,10 +198,17 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              description: Either the password or a code from the authenticator app.
+              description: One of the password, a code from the authenticator app, or a security key's answer.
               properties:
                 password: { type: string }
                 code: { type: string, description: 'A 6-digit code from the authenticator app.' }
+                key:
+                  type: object
+                  description: The answer to the options from POST /me/reauth/key.
+                  required: [token, credential]
+                  properties:
+                    token: { type: string }
+                    credential: { $ref: '#/components/schemas/WebAuthnCredential' }
       responses:
         '200':
           description: Confirmed; protected changes are allowed until reauthenticated_until.
@@ -214,7 +221,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: The password or code is wrong (error wrong_password or wrong_code), or a cross-origin request.
+          description: The password, code or key is wrong (error wrong_password, wrong_code or key_not_recognised), or a cross-origin request.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -223,6 +230,30 @@ paths:
           headers:
             Retry-After:
               schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/reauth/key:
+    post:
+      tags: [me]
+      summary: Start confirming who the user is with a security key
+      description: Returns the options for navigator.credentials.get (with the account's keys allowed) and a token; send the answer to POST /me/reauth as key.
+      operationId: startKeyReauth
+      responses:
+        '200':
+          description: The ceremony.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [options, token]
+                properties:
+                  options: { $ref: '#/components/schemas/WebAuthnOptions' }
+                  token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account has no security keys (error no_keys).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -252,15 +283,15 @@ paths:
         '403': { $ref: '#/components/responses/ProtectedChange' }
     delete:
       tags: [me]
-      summary: Remove the authenticator app and the recovery codes
-      description: A protected change. Refused for accounts that must use two-factor (administrators and group owners). The account is told by email.
+      summary: Remove the authenticator app
+      description: A protected change. The recovery codes go too when it was the last two-factor method. An account that must use two-factor (administrators and group owners) keeps at least one method. The account is told by email.
       operationId: removeTOTP
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
         '409':
-          description: Two-factor is required for this account (error mfa_required), or there is none (error no_totp).
+          description: It is the last method of an account that must use two-factor (error mfa_required), or there is no app (error no_totp).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -296,12 +327,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
 
-  /me/mfa/totp/finish:
+  /me/mfa/finish:
     post:
       tags: [me]
-      summary: Finish the setup by typing back one recovery code
-      description: Saves the app and the recovery codes, replacing any earlier ones, and emails the account. The session counts as signed in with two-factor from now on.
-      operationId: finishTOTPSetup
+      summary: Finish setting up the authenticator app, or a first security key, by typing back one recovery code
+      description: Saves the app or the key with the recovery codes, replacing any earlier codes, and emails the account. The session counts as signed in with two-factor from now on.
+      operationId: finishSetup
       requestBody:
         required: true
         content:
@@ -316,6 +347,122 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/keys:
+    post:
+      tags: [me]
+      summary: Start adding a security key or passkey
+      description: >-
+        A protected change. Returns the options for navigator.credentials.create (the account's keys are
+        excluded) and a setup_token; continue with POST /me/mfa/keys/finish within 5 minutes.
+      operationId: startKeySetup
+      responses:
+        '200':
+          description: The ceremony.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [options, setup_token]
+                properties:
+                  options: { $ref: '#/components/schemas/WebAuthnOptions' }
+                  setup_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/keys/finish:
+    post:
+      tags: [me]
+      summary: Add the security key from the browser's answer
+      description: >-
+        An account that has a two-factor method gets the key saved at once (201). For the first method, the
+        answer is the recovery codes to show and a setup_token (200); nothing is saved until one code is typed
+        back to POST /me/mfa/finish.
+      operationId: finishKeySetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup_token, credential]
+              properties:
+                setup_token: { type: string }
+                credential: { $ref: '#/components/schemas/WebAuthnCredential' }
+                name: { type: string, maxLength: 64, description: 'So the user can tell keys apart; "Security key" when empty.' }
+      responses:
+        '200':
+          description: 'The first two-factor method: the recovery codes.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key]
+                properties:
+                  key: { $ref: '#/components/schemas/SecurityKey' }
+        '400':
+          description: The answer could not be checked (error key_not_recognised), the setup expired (error setup_expired), or the name is too long.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The key is already registered (error key_registered).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/keys/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [me]
+      summary: Rename a security key
+      operationId: renameKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '200':
+          description: Renamed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [me]
+      summary: Remove a security key
+      description: A protected change, with the same rules as removing the authenticator app. The account is told by email.
+      operationId: removeKey
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: It is the last method of an account that must use two-factor (error mfa_required).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /me/mfa/recovery-codes:
     post:
@@ -332,7 +479,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
         '409':
-          description: The account has no authenticator app (error no_totp).
+          description: The account has no two-factor method (error no_second_factor).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -357,7 +504,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
         '409':
-          description: The account has no authenticator app (error no_totp).
+          description: The account has no two-factor method (error no_second_factor).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1658,6 +1805,7 @@ components:
                 totp: { type: boolean, description: The account has an authenticator app. }
                 totp_added_at: { type: string, format: date-time }
                 recovery_codes_left: { type: integer }
+                security_keys: { type: array, items: { $ref: '#/components/schemas/SecurityKey' } }
                 required: { type: boolean, description: 'Administrators and group owners must use two-factor; they cannot remove it.' }
                 required_reason: { type: string, description: Why two-factor is required, in a sentence. }
             email_settings:
@@ -1670,8 +1818,9 @@ components:
                 pending_until: { type: string, format: date-time, description: When that link expires. }
     Overview:
       type: object
-      required: [accounts, groups, apps, last_day, admins]
+      required: [accounts, groups, apps, last_day, admins, audit_retention_days]
       properties:
+        audit_retention_days: { type: integer, description: How many days the audit log keeps entries (AUDIT_RETENTION). }
         accounts:
           type: object
           required: [active, disabled, must_change_password, waiting_for_erasure]
@@ -1751,9 +1900,29 @@ components:
                 totp: { type: boolean }
                 totp_added_at: { type: string, format: date-time }
                 recovery_codes_left: { type: integer }
+                security_keys: { type: array, items: { $ref: '#/components/schemas/SecurityKey' } }
             groups:
               type: array
               items: { $ref: '#/components/schemas/Membership' }
+    SecurityKey:
+      type: object
+      required: [id, name, passkey, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        passkey: { type: boolean, description: 'A synced passkey (backup eligible): usable on the user''s other devices too.' }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+    WebAuthnOptions:
+      type: object
+      description: 'What navigator.credentials.create or .get takes, as JSON: binary values are base64url strings.'
+      required: [publicKey]
+      properties:
+        publicKey: { type: object, additionalProperties: true }
+    WebAuthnCredential:
+      type: object
+      description: 'The browser''s answer (a PublicKeyCredential) as JSON, binary values in base64url: what PublicKeyCredential.toJSON() returns.'
+      additionalProperties: true
     Membership:
       type: object
       required: [group_id, key, display_name]
