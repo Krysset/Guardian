@@ -240,6 +240,12 @@ func forgotSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := httpx.ClientIP(r)
+	if r.PostFormValue("website") != "" {
+		// The honeypot: answer as if the link was sent, and send nothing.
+		honeypotHit(r, "forgot")
+		Render(w, http.StatusOK, "forgot", Page{Title: "Forgot password", Sent: true})
+		return
+	}
 	n, err := db.RateLimitHit("forgot:ip:"+ip, mailWindow)
 	if err != nil {
 		Error(w, ServerError)

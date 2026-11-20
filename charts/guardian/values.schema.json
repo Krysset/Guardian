@@ -64,7 +64,15 @@
       "properties": {
         "logFormat": { "enum": ["json", "text"] },
         "logLevel": { "enum": ["debug", "info", "warn", "error"] },
-        "extraEnv": { "type": "object", "additionalProperties": { "type": "string" } }
+        "extraEnv": { "type": "object", "additionalProperties": { "type": "string" } },
+        "loginLimits": {
+          "type": "object",
+          "properties": {
+            "window": { "type": "string", "pattern": "^$|^[0-9]+(\\.[0-9]+)?(s|m|h)([0-9]+(s|m))?$" },
+            "perAccountAndIP": { "oneOf": [{ "const": "" }, { "type": "integer", "minimum": 1 }] },
+            "perIP": { "oneOf": [{ "const": "" }, { "type": "integer", "minimum": 1 }] }
+          }
+        }
       }
     },
     "httpRoute": {

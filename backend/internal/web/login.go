@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"guardian/internal/auth"
+	"guardian/internal/config"
 	"guardian/internal/httpx"
 	db "guardian/internal/store"
 )
@@ -48,12 +48,12 @@ var loginsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "guardian", Name: "logins_total", Help: "Interactive login attempts by result.",
 }, []string{"result"}) // success | failure
 
-// Login throttling uses Postgres counters (shared by all replicas): failed attempts per username and per IP.
-const (
-	loginWindow     = 15 * time.Minute
-	maxLoginPerUser = 10
-	maxLoginPerIP   = 50
-)
+// Login throttling uses Postgres counters (shared by all replicas). Failures are counted per account and
+// IP address together: by default 5 in 15 minutes block that address for that account, and nobody else. A
+// separate limit counts every failure from one address, whatever the account. Accounts are never locked,
+// so nobody can lock someone else out by guessing their password. The limits are settings
+// (config.LoginLimits), set by Configure.
+var loginLimits = config.DefaultLoginLimits
 
 const wrongLogin = "Wrong username or password."
 
@@ -120,22 +120,29 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := httpx.ClientIP(r)
-	userKey := "login:user:" + strings.ToLower(login)
 	ipKey := "login:ip:" + ip
 
 	if len(login) == 0 || len(login) > 256 || len(password) == 0 || len(password) > 1024 {
 		showError(http.StatusUnauthorized, wrongLogin)
 		return
 	}
-	userFails, _ := db.RateLimitCount(userKey, loginWindow)
-	ipFails, _ := db.RateLimitCount(ipKey, loginWindow)
-	if userFails >= maxLoginPerUser || ipFails >= maxLoginPerIP {
+	acct, hash, err := db.GetAccountForLogin(login)
+	// The account's id when it exists, so its username and its email share one counter; otherwise what was
+	// typed, so an unknown name is limited the same way and the limit does not reveal which names exist.
+	subject := strings.ToLower(login)
+	if err == nil {
+		subject = acct.ID
+	}
+	userKey := "login:account:" + subject + ":ip:" + ip
+	userFails, _ := db.RateLimitCount(userKey, loginLimits.Window)
+	ipFails, _ := db.RateLimitCount(ipKey, loginLimits.Window)
+	if userFails >= loginLimits.PerAccountAndIP || ipFails >= loginLimits.PerIP {
 		httpx.RateLimited.WithLabelValues("login").Inc()
+		auth.DummyVerify(password) // a refusal takes as long as a check
 		showError(http.StatusTooManyRequests, "Too many failed attempts. Try again in a few minutes.")
 		return
 	}
 
-	acct, hash, err := db.GetAccountForLogin(login)
 	valid := false
 	if err == nil && hash != "" && (acct.Status == "active" || acct.Status == "pending") {
 		valid = auth.VerifyPassword(password, hash)
@@ -143,15 +150,15 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		auth.DummyVerify(password) // same cost whether or not the account exists
 	}
 	if !valid {
-		db.RateLimitHit(userKey, loginWindow)
-		db.RateLimitHit(ipKey, loginWindow)
+		db.RateLimitHit(userKey, loginLimits.Window)
+		db.RateLimitHit(ipKey, loginLimits.Window)
 		loginsTotal.WithLabelValues("failure").Inc()
 		db.Audit("login.failure", acct.ID, "", ip, map[string]any{"username": login})
 		showError(http.StatusUnauthorized, wrongLogin)
 		return
 	}
 
-	db.RateLimitReset(userKey, loginWindow)
+	db.RateLimitReset(userKey, loginLimits.Window)
 	if acct.Status == "pending" {
 		// The right password, but the sign-up waits for its email confirmation.
 		msg := "Confirm your email address first: open the link we sent you."

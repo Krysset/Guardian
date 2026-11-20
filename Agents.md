@@ -81,7 +81,14 @@ current: they are the hand-off between sessions.
 - **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
   - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
-  - **Part 5, keys: built, uncommitted.** `auth/crypto.go` is the keyring (`ParseKeyring`, `SetKeyring`,
+  - **Part 6, abuse protection: built, uncommitted.** `web/login.go`: the account is looked up first;
+    failures count under `login:account:<id or lowercased login>:ip:<ip>` (5 per 15 minutes) and `login:ip:<ip>`
+    (50); a refusal runs `auth.DummyVerify`. The numbers are `config.LoginLimits` (`LOGIN_FAILURE_WINDOW`,
+    `LOGIN_MAX_FAILURES_PER_ACCOUNT_IP`, `LOGIN_MAX_FAILURES_PER_IP`; chart `config.loginLimits`), applied by
+    `web.Configure`; a zero value keeps `config.DefaultLoginLimits`. `honeypotHit(r, form)` in `web/signup.go` (audit `honeypot`, metric
+    label `honeypot`), used by sign-up and `/forgot`. e2e: `TRUSTED_PROXY_HOPS=1`, and `browser.ip` is sent as
+    `X-Forwarded-For` to act from another address. **0.3 is then built; only the cluster check remains.**
+  - **Part 5, keys: committed (`c453ea7`).** `auth/crypto.go` is the keyring (`ParseKeyring`, `SetKeyring`,
     `Encrypt`/`Decrypt` with `AAD(table, column, row)`, `Seal`/`Open` for browser-held tokens). `auth/keys.go`:
     `Keys` reloads (`Reload`, `ActiveKID`). `auth/maintenance.go`: `MaintainKeys` (reread the keyring file,
     `db.AdvanceSigningKeys`, reload keys, `Reencrypt`, metric) every minute. `store/signingkeys.go`: the stages
@@ -103,7 +110,7 @@ current: they are the hand-off between sessions.
     password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
     today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
     change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
-- Tests: 197, all passing with `-race` (`docs/TESTING.md`).
+- Tests: 198, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.

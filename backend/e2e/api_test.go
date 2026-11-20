@@ -605,18 +605,23 @@ func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 	if !strings.Contains(known, "Wrong username or password.") || !strings.Contains(unknown, "Wrong username or password.") {
 		t.Error("login failure message missing")
 	}
-	for i := 0; i < 8; i++ { // carol now has 9 failures
+	carol := testutil.AccountID(t, "carol")
+	for i := 0; i < 3; i++ { // carol now has 4 failures from this address
 		failures("carol")
 	}
-	failures("carol") // the 10th
+	failures("CAROL") // the 5th, typed differently
 
-	// from now on even the correct password is refused for that username
+	// from now on even the correct password is refused for that account from this address
 	resp := br.login("carol", testutil.DefaultPassword, "")
 	wantStatus(t, resp, http.StatusTooManyRequests)
 	drain(resp)
-	if testutil.Count(t, `SELECT hits FROM rate_limit WHERE key = 'login:user:carol'`) != 10 {
-		t.Error("failed attempts were not counted per username")
+	if testutil.Count(t, `SELECT hits FROM rate_limit WHERE key = $1`, "login:account:"+carol+":ip:127.0.0.1") != 5 {
+		t.Error("failed attempts were not counted per account and address")
 	}
+	// ...but not from another address: the account is not locked
+	elsewhere := newBrowser(t)
+	elsewhere.ip = "203.0.113.9"
+	elsewhere.mustLogin("carol")
 	// other users are unaffected (the IP budget is larger)
 	br2 := newBrowser(t)
 	br2.mustLogin("dave")
@@ -627,10 +632,10 @@ func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 	failures("erin")
 	br3 := newBrowser(t)
 	br3.mustLogin("erin")
-	if testutil.Count(t, `SELECT count(*) FROM rate_limit WHERE key = 'login:user:erin'`) != 0 {
+	if testutil.Count(t, `SELECT count(*) FROM rate_limit WHERE key LIKE 'login:account:%' AND key LIKE '%' || $1 || '%'`, testutil.AccountID(t, "erin")) != 0 {
 		t.Error("a successful login must reset the failure counter")
 	}
-	if testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'login.failure'`) < 12 {
+	if testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'login.failure'`) < 7 {
 		t.Error("failed logins must be audited")
 	}
 }

@@ -54,6 +54,7 @@ func signupSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The honeypot: people never see this field; bots that fill in every field do.
 	if r.PostFormValue("website") != "" {
+		honeypotHit(r, "signup")
 		page.Error = "We couldn't create the account. Try again."
 		show(http.StatusBadRequest)
 		return
@@ -119,4 +120,10 @@ func signupSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	db.TouchLogin(acct.ID)
 	http.Redirect(w, r, continueTo(returnTo), http.StatusSeeOther)
+}
+
+// honeypotHit records a form whose hidden honeypot field was filled in: a bot, since people never see it.
+func honeypotHit(r *http.Request, form string) {
+	httpx.RateLimited.WithLabelValues("honeypot").Inc()
+	db.Audit("honeypot", "", "", httpx.ClientIP(r), map[string]any{"form": form})
 }

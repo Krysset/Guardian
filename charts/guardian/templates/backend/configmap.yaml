@@ -19,6 +19,15 @@ data:
   {{- with .Values.config.sessionMaxLifetime }}
   SESSION_MAX_LIFETIME: {{ . | quote }}
   {{- end }}
+  {{- with .Values.config.loginLimits.window }}
+  LOGIN_FAILURE_WINDOW: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.loginLimits.perAccountAndIP }}
+  LOGIN_MAX_FAILURES_PER_ACCOUNT_IP: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.loginLimits.perIP }}
+  LOGIN_MAX_FAILURES_PER_IP: {{ . | quote }}
+  {{- end }}
   {{- with .Values.config.helpURL }}
   HELP_URL: {{ . | quote }}
   {{- end }}

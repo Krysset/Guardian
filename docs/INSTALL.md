@@ -64,6 +64,9 @@ trustedProxyHops: 1                      # one proxy (the gateway) appends to X-
 - `issuerURL` must be `https://` outside local development: it turns on secure cookies.
 - `trustedProxyHops` must match the number of proxies in front of Guardian, or rate limits see the proxy's
   address instead of the user's.
+- `config.loginLimits` adjusts the sign-in limits: `window` (default `15m`), `perAccountAndIP` (failures for one
+  account from one address, default 5) and `perIP` (failures from one address in total, default 50). Raise
+  `perIP` if many people share one address, such as an office behind NAT. Accounts are never locked.
 - For a standard Ingress instead, set `ingress.enabled: true` and `ingress.className` (for example `traefik`).
 - For an external Postgres, set `database.mode: external` and `database.external.host` (and `port`, `user`,
   `name`, `sslMode`).

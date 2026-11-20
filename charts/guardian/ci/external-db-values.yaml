@@ -19,5 +19,8 @@ ingress:
 config:
   helpURL: https://example.com/help
   sessionIdleTimeout: 24h
+  loginLimits:
+    window: 30m
+    perIP: 200
   extraEnv:
     FOO: bar

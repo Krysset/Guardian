@@ -82,6 +82,10 @@ func Configure(cfg config.Config) {
 	footerLinks.HelpURL = cfg.HelpURL
 	footerLinks.PrivacyURL = cfg.PrivacyURL
 	requireEmail = cfg.Mail.RequireEmail
+	loginLimits = config.DefaultLoginLimits
+	if l := cfg.LoginLimits; l.Window > 0 && l.PerAccountAndIP > 0 && l.PerIP > 0 {
+		loginLimits = l
+	}
 }
 
 // RequireEmail reports whether sign-up needs an email address.

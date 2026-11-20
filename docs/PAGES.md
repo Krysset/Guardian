@@ -120,7 +120,8 @@ appear from that release; until then the page is drawn without them.
 - Actions: Sign in. "Forgot password?" (0.3). "Use a security key" (0.5). **"Create an account"** (new, leads to
   S2).
 - States: wrong username or password (the same message whether or not the account exists); too many
-  attempts, try again later; form expired, reload. The username is kept after an error.
+  attempts, try again in a few minutes (by default 5 failures for one account from one address, or 50 from one
+  address, in 15 minutes; the account itself is never locked); form expired, reload. The username is kept after an error.
 
 **S2 Sign up**
 - Fields: username (with its rule: 3–64 letters, digits, `.`, `_`, `-`); password, twice; email (0.3:
@@ -185,7 +186,8 @@ appear from that release; until then the page is drawn without them.
   - something went wrong on Guardian's side: try again later.
 
 **S10 Forgot password** (0.3)
-- Fields: username or email.
+- Fields: username or email; a honeypot field that people never see (a filled one gets the usual answer and no
+  email).
 - Actions: Send reset link; back to sign in.
 - States: afterwards always the same message: "If the account has a confirmed email address, we have sent
   a link." Accounts without one are told, on this page, to contact an administrator.

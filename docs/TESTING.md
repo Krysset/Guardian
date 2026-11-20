@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-19):** 197 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-20):** 198 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -50,7 +50,7 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | Account deletion / app disabling stop refreshes and userinfo at once | `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EDisablingAnAppStopsItsRefreshesAndLogins`, `TestSoftDeleteLocksTheAccountOutEverywhere` |
 | Access tokens are lean signed JWTs that apps verify themselves | `TestE2ELoginIssuesSignedAccessAndIDTokens`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens` |
 | Introspection is gone; internal endpoints are not public | `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens`, `TestInternalRouterBasics` |
-| Open sign-up with rate limiting | `TestE2ESignUpIsOpenButRateLimited`, `TestE2ELoginThrottlingAndNoUserEnumeration`, `TestRateLimit*` |
+| Open sign-up with rate limiting | `TestE2ESignUpIsOpenButRateLimited`, `TestE2ELoginThrottlingAndNoUserEnumeration`, `TestE2EAbuseProtection`, `TestRateLimit*` |
 | Secrets never stored in plaintext | cookie, token, code, secret and password assertions in the e2e and database tests |
 | A database from another schema revision is refused, not half-used | `TestADatabaseFromAnotherSchemaRevisionIsRefused`, `TestInitMigrationCarriesItsFingerprint` |
 | Startup script safe for several replicas | `TestSchemaScriptSurvivesConcurrentStartups`, `TestSchemaScriptIsIdempotentAndNeverOverwrites` |

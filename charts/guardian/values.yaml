@@ -71,6 +71,12 @@ config:
   # Go durations. Empty keeps Guardian's defaults (168h idle, 720h maximum).
   sessionIdleTimeout: ""
   sessionMaxLifetime: ""
+  # Failed sign-ins allowed within the window, for one account from one address and from one address in
+  # total. Accounts are never locked; only the address is refused. Empty keeps the defaults (15m, 5, 50).
+  loginLimits:
+    window: ""
+    perAccountAndIP: ""
+    perIP: ""
   # Help and Privacy links in the footer of the sign-in pages; left out when empty.
   helpURL: ""
   privacyURL: ""

@@ -29,7 +29,7 @@ var (
 	// RateLimited counts requests rejected by a rate limiter, by endpoint.
 	RateLimited = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "guardian", Name: "rate_limited_total", Help: "Requests rejected by the rate limiter.",
-	}, []string{"endpoint"}) // login | register
+	}, []string{"endpoint"}) // login, register, reauth, mfa, mail, forgot, honeypot
 )
 
 // RegisterDBMetrics exposes connection-pool stats (open, in use, idle, wait count/duration) and the time of

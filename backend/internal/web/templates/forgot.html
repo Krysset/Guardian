@@ -11,6 +11,7 @@
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <label for="username">Username or email</label>
         <input class="text" id="username" name="username" type="text" autocomplete="username" value="{{.Login}}" required autofocus>
+        <div class="trap" aria-hidden="true"><label for="website">Leave this empty</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
         <button class="button" type="submit">Send reset link</button>
       </form>
       <p class="small"><a href="/login">Back to sign in</a></p>

@@ -30,6 +30,7 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | **No Redis, no cache** | Each refresh is a handful of indexed queries. Load scales with signed-in users times apps divided by the token lifetime, not with request rate. One component fewer to run and keep consistent. |
 | **Two listeners**: public `:3001`, internal `:3002` | Metrics and probes are never reachable through the ingress, even if an ingress rule is wrong. |
 | Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login and sign-up volumes (1). |
+| Sign-in failures count per **account and address**, never per account alone | By default 5 failures for one account from one address in 15 minutes refuse that pair, and 50 from one address refuse it for all accounts (both settings). Accounts are never locked, so nobody can lock out an owner by guessing from elsewhere. Honeypot fields on sign-up and forgot-password catch form-filling bots without a CAPTCHA. |
 | Client IP from `X-Forwarded-For` only with `TRUSTED_PROXY_HOPS` | Behind an ingress the TCP peer is the proxy; trusting the header blindly lets attackers dodge limits. |
 | Origin check on `/api`, SameSite=Lax cookies, CSRF tokens on HTML forms | CSRF defence for the browser API and sign-in pages. |
 | The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |

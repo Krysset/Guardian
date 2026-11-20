@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 		os.Setenv("ISSUER_URL", testIssuer)
 		os.Setenv("SESSION_IDLE_TIMEOUT", "30m")
 		os.Setenv("SESSION_MAX_LIFETIME", "1h")
+		os.Setenv("TRUSTED_PROXY_HOPS", "1") // requests without X-Forwarded-For still use their own address
 		os.Setenv("KEY_ENCRYPTION_KEYS", "k1:"+base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
 		testutil.DeleteSigningKeys()
 		cfg, err := config.Load()
@@ -119,8 +120,9 @@ func str(v any) string { s, _ := v.(string); return s }
 
 // browser is an HTTP client with a cookie jar that does NOT follow redirects, so tests can inspect each hop.
 type browser struct {
-	t *testing.T
-	c *http.Client
+	t  *testing.T
+	c  *http.Client
+	ip string // sent as X-Forwarded-For when set: the servers trust one proxy hop, like behind an ingress
 }
 
 func newBrowser(t *testing.T) *browser {
@@ -141,6 +143,9 @@ func (b *browser) abs(p string) string {
 
 func (b *browser) do(req *http.Request) *http.Response {
 	b.t.Helper()
+	if b.ip != "" {
+		req.Header.Set("X-Forwarded-For", b.ip)
+	}
 	resp, err := b.c.Do(req)
 	if err != nil {
 		b.t.Fatal(err)

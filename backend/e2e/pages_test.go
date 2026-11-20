@@ -1,12 +1,14 @@
 package e2e
 
 import (
+	"fmt"
 	"html"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"guardian/internal/testutil"
 )
@@ -381,5 +383,48 @@ func TestE2EHomeListsTheAppsTheAccountMayUse(t *testing.T) {
 	drain(resp)
 	if loc := resp.Header.Get("Location"); loc != "/login" {
 		t.Errorf("Home without a session: location %q", loc)
+	}
+}
+
+// The per-address limit counts failures across accounts; the honeypot catches form-filling bots.
+func TestE2EAbuseProtection(t *testing.T) {
+	newTestEnv(t)
+	testutil.CreateAccount(t, "kass")
+	bot := newBrowser(t)
+	bot.ip = "198.51.100.7"
+	for i := 0; i < 50; i++ {
+		resp := bot.login(fmt.Sprintf("guess%d", i), "wrong-password-1", "")
+		drain(resp)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i, resp.StatusCode)
+		}
+	}
+	resp := bot.login("kass", testutil.DefaultPassword, "")
+	wantStatus(t, resp, http.StatusTooManyRequests)
+	drain(resp)
+	// A neighbour behind another address is not affected.
+	other := newBrowser(t)
+	other.ip = "198.51.100.8"
+	other.mustLogin("kass")
+
+	// Honeypots: the forms answer as usual, nothing happens, and it is counted.
+	trap := newBrowser(t)
+	resp = trap.postForm("/signup", url.Values{"csrf": {trap.csrf()}, "username": {"botty"}, "password": {"long-enough-pw-1"},
+		"password2": {"long-enough-pw-1"}, "website": {"http://spam.example"}})
+	wantStatus(t, resp, http.StatusBadRequest)
+	drain(resp)
+	testutil.CreateAccount(t, "urbosa")
+	setEmail(t, "urbosa", "urbosa@gerudo.example")
+	resp = trap.postForm("/forgot", url.Values{"csrf": {trap.csrf()}, "username": {"urbosa"}, "website": {"x"}})
+	wantStatus(t, resp, http.StatusOK)
+	if body := readBody(t, resp); !strings.Contains(body, "we have sent a link") {
+		t.Error("the trapped reset form must answer as usual")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(mailbox.Messages()) != 0 || testutil.Count(t, `SELECT count(*) FROM account WHERE username = 'botty'`) != 0 {
+		t.Error("a trapped form did something")
+	}
+	if testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'honeypot'`) != 2 {
+		t.Error("honeypot hits are not audited")
 	}
 }

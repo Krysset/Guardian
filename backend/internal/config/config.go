@@ -38,6 +38,8 @@ type Config struct {
 	// DeletionGrace is how long a deleted account waits before it is erased; an administrator can restore
 	// it until then.
 	DeletionGrace time.Duration
+	// LoginLimits are the failed sign-ins allowed before Guardian refuses more.
+	LoginLimits LoginLimits
 
 	// HelpURL and PrivacyURL are the Help and Privacy links in the footer of the sign-in pages.
 	// Each link is left out when its address is empty.
@@ -114,6 +116,17 @@ func quoteDSN(v string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
+// LoginLimits are the failed sign-ins allowed within Window: per account and address together, and per
+// address across all accounts. Accounts are never locked; only the address is refused, for the rest of the window.
+type LoginLimits struct {
+	Window          time.Duration // LOGIN_FAILURE_WINDOW
+	PerAccountAndIP int           // LOGIN_MAX_FAILURES_PER_ACCOUNT_IP
+	PerIP           int           // LOGIN_MAX_FAILURES_PER_IP
+}
+
+// DefaultLoginLimits: 5 failures for one account from one address, or 50 from one address, in 15 minutes.
+var DefaultLoginLimits = LoginLimits{Window: 15 * time.Minute, PerAccountAndIP: 5, PerIP: 50}
+
 // Load reads and validates the whole configuration. On failure the error lists every problem found.
 // The returned Config always has usable Log settings, so the caller can report the error in the right format.
 func Load() (Config, error) {
@@ -128,6 +141,7 @@ func Load() (Config, error) {
 		SessionMaxLifetime:   30 * 24 * time.Hour,
 		DeletionGrace:        30 * 24 * time.Hour,
 		SigningKeyLifetime:   90 * 24 * time.Hour,
+		LoginLimits:          DefaultLoginLimits,
 	}
 
 	var err error
@@ -184,11 +198,25 @@ func Load() (Config, error) {
 	duration("SESSION_MAX_LIFETIME", &cfg.SessionMaxLifetime)
 	duration("DELETION_GRACE_PERIOD", &cfg.DeletionGrace)
 	duration("SIGNING_KEY_LIFETIME", &cfg.SigningKeyLifetime)
+	duration("LOGIN_FAILURE_WINDOW", &cfg.LoginLimits.Window)
 	if cfg.SigningKeyLifetime < 24*time.Hour {
 		fail("SIGNING_KEY_LIFETIME must be at least 24h, got %s", cfg.SigningKeyLifetime)
 	}
 	if cfg.SessionIdleTimeout > cfg.SessionMaxLifetime {
 		fail("SESSION_IDLE_TIMEOUT (%s) must not be longer than SESSION_MAX_LIFETIME (%s)", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime)
+	}
+
+	for _, s := range []struct {
+		key  string
+		into *int
+	}{{"LOGIN_MAX_FAILURES_PER_ACCOUNT_IP", &cfg.LoginLimits.PerAccountAndIP}, {"LOGIN_MAX_FAILURES_PER_IP", &cfg.LoginLimits.PerIP}} {
+		if v := os.Getenv(s.key); v != "" {
+			if n, err := strconv.Atoi(v); err != nil || n < 1 {
+				fail("%s must be a whole number of at least 1, got %q", s.key, v)
+			} else {
+				*s.into = n
+			}
+		}
 	}
 
 	if v := os.Getenv("TRUSTED_PROXY_HOPS"); v != "" {
