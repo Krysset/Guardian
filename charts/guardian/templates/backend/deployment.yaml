@@ -6,7 +6,9 @@ metadata:
     {{- include "guardian.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "guardian.backendSelector" . | nindent 6 }}
@@ -15,6 +17,7 @@ spec:
       labels:
         {{- include "guardian.labels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+        guardian.dev/database-client: "true"
       annotations:
         # Roll the pods when the non-secret settings change.
         checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
@@ -52,13 +55,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "guardian.dbPasswordSecret" . }}
                   key: {{ .Values.database.passwordKey }}
+            {{- if and .Values.config.mail.host .Values.config.mail.username }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.keys.smtpPassword }}
+            {{- end }}
           ports:
             - name: public
               containerPort: 3001
             - name: internal
               containerPort: 3002
-          # The listeners start once the database is reachable and migrated, which can take a while on a
-          # first install with the bundled Postgres.
+          # The listeners start once the database is reachable and migrated (by the pod itself, or by the
+          # migration Job), which can take a while on a first install with the bundled Postgres.
           startupProbe:
             httpGet: { path: /healthz, port: internal }
             periodSeconds: 5
@@ -82,13 +92,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: keyring
-          secret:
-            secretName: {{ .Values.secrets.existingSecret }}
-            defaultMode: 0440   # readable by the pod's fsGroup (podSecurityContext)
-            items:
-              - key: {{ .Values.secrets.keys.keyEncryptionKeys }}
-                path: keys
+        {{- include "guardian.keyringVolume" . | nindent 8 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

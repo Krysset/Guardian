@@ -22,8 +22,19 @@ spec:
     - {{ include "guardian.host" . | quote }}
     {{- end }}
   rules:
-    # Everything goes to the backend until the management UI arrives (0.4), when /account, /admin and /_app
-    # go to the frontend.
+    {{- if .Values.frontend.enabled }}
+    # The management UI: exactly /, and /account, /admin and /_app with everything under them. The most
+    # specific match wins, so the rest goes to the backend.
+    - matches:
+        - path: { type: Exact, value: / }
+        - path: { type: PathPrefix, value: /account }
+        - path: { type: PathPrefix, value: /admin }
+        - path: { type: PathPrefix, value: /_app }
+      backendRefs:
+        - name: {{ include "guardian.frontendName" . }}
+          port: 8080
+    {{- end }}
+    # Sign-in pages, OIDC, /api/v1 and the backend's static files.
     - matches:
         - path: { type: PathPrefix, value: / }
       backendRefs:

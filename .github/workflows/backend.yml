@@ -4,6 +4,8 @@ on:
     paths: ["backend/**", ".github/workflows/backend.yml"]
   pull_request:
     paths: ["backend/**", ".github/workflows/backend.yml"]
+  # The release workflow runs these same checks before publishing.
+  workflow_call:
 
 jobs:
   test:

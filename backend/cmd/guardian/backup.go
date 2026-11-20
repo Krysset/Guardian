@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,7 +21,8 @@ import (
 // `kubectl exec ... -- guardian backup ... > file` captures only the backup.
 
 const backupUsage = `usage:
-  guardian backup [--execute --reason TEXT] (--recipient KEY ... | --recipients-file FILE) [--without-audit] [--out FILE]
+  guardian backup [--execute --reason TEXT] (--recipient KEY ... | --recipients-file FILE) [--without-audit]
+                  [--out FILE | --out-dir DIR [--keep N]]
   guardian backup verify [--identity-file FILE] [FILE|-]
   guardian backup decrypt --identity-file FILE [--out FILE] [FILE|-]
   guardian restore [--execute --reason TEXT --confirm HOST] [--identity-file FILE] [--allow-other-issuer]
@@ -61,9 +64,10 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	fs.SetOutput(io.Discard)
 	var (
 		execute, withoutAudit, otherIssuer   bool
-		reason, recipientsFile, out          string
+		reason, recipientsFile, out, outDir  string
 		identityFile, confirm, deletionsFile string
 		recipients                           listFlag
+		keep                                 int
 	)
 	switch command {
 	case "backup":
@@ -73,6 +77,8 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		fs.StringVar(&recipientsFile, "recipients-file", "", "")
 		fs.BoolVar(&withoutAudit, "without-audit", false, "")
 		fs.StringVar(&out, "out", "", "")
+		fs.StringVar(&outDir, "out-dir", "", "")
+		fs.IntVar(&keep, "keep", 0, "")
 	case "backup verify":
 		fs.StringVar(&identityFile, "identity-file", "", "")
 	case "backup decrypt":
@@ -92,6 +98,12 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		return usage(err.Error())
 	}
 	rest := fs.Args()
+	if outDir != "" && (out != "" || !execute) {
+		return usage("--out-dir needs --execute, and not --out")
+	}
+	if keep < 0 || (keep > 0 && outDir == "") {
+		return usage("--keep needs --out-dir and a number of backups to keep")
+	}
 	wantsFile := command != "backup" && command != "deletions export"
 	if (!wantsFile && len(rest) > 0) || len(rest) > 1 {
 		return usage("unexpected arguments: " + strings.Join(rest, " "))
@@ -197,6 +209,10 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		}
 		list += "\n" + string(b)
 	}
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	if outDir != "" {
+		out = filepath.Join(outDir, "guardian-"+stamp+".gbk")
+	}
 	w, finish := io.Writer(io.Discard), func(err error) error { return err }
 	if execute {
 		if w, finish, err = output(out, stdout); err != nil {
@@ -206,7 +222,52 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	if err := finish(backup.Backup(ctx, conn, backup.BackupOptions{Options: opt, Recipients: list, WithAudit: !withoutAudit}, w, stderr)); err != nil {
 		return fail(err)
 	}
+	if outDir == "" {
+		return 0
+	}
+	// A scheduled backup (the chart's CronJob): the deletion log goes next to it, and old ones are removed.
+	dw, finishDeletions, err := output(filepath.Join(outDir, "deletions-"+stamp+".log"), stdout)
+	if err != nil {
+		return fail(err)
+	}
+	n, err := backup.ExportDeletions(ctx, conn, dw)
+	if err := finishDeletions(err); err != nil {
+		return fail(err)
+	}
+	fmt.Fprintf(stderr, "Wrote %s and its deletion log (%d entries).\n", out, n)
+	removed, err := pruneBackups(outDir, keep)
+	for _, name := range removed {
+		fmt.Fprintf(stderr, "Removed the old backup %s.\n", name)
+	}
+	if err != nil {
+		return fail(err)
+	}
 	return 0
+}
+
+// pruneBackups keeps the newest keep backups in dir (guardian-<time>.gbk, with their deletions-<time>.log)
+// and removes the rest. keep 0 keeps everything. The names sort by time.
+func pruneBackups(dir string, keep int) ([]string, error) {
+	if keep == 0 {
+		return nil, nil
+	}
+	backups, err := filepath.Glob(filepath.Join(dir, "guardian-*.gbk"))
+	if err != nil || len(backups) <= keep {
+		return nil, err
+	}
+	sort.Strings(backups)
+	var removed []string
+	for _, b := range backups[:len(backups)-keep] {
+		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(b), "guardian-"), ".gbk")
+		if err := os.Remove(b); err != nil {
+			return removed, err
+		}
+		if err := os.Remove(filepath.Join(dir, "deletions-"+stamp+".log")); err != nil && !os.IsNotExist(err) {
+			return removed, err
+		}
+		removed = append(removed, filepath.Base(b))
+	}
+	return removed, nil
 }
 
 // output opens the file to write to, or stdout. finish closes the file, and removes it when the command

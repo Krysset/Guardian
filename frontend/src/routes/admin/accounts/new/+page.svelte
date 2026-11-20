@@ -4,12 +4,22 @@
 	import { goto, refreshAll } from '$app/navigation';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import PasswordField from '#lib/components/PasswordField.svelte';
+	import { copyText, generatePassword } from '#lib/password.ts';
 	import { messageOf } from '#lib/format.ts';
 
 	let username = $state('');
 	let email = $state('');
 	let password = $state('');
 	let password2 = $state('');
+	let showPassword = $state(false);
+	let generated = $state('');
+
+	// Fills both fields with a random password, shows it and copies it, so it can be handed over.
+	async function generate() {
+		password = password2 = generatePassword();
+		showPassword = true;
+		generated = (await copyText(password)) ? 'Generated and copied.' : 'Generated. Copy it from the field.';
+	}
 	let errors = $state<{ username?: string; email?: string; password?: string; password2?: string; form?: string }>({});
 	let busy = $state(false);
 
@@ -62,10 +72,13 @@
 			{#if errors.email}<p class="err-t" id="ne-hint">{errors.email}</p>
 			{:else}<p class="hint" id="ne-hint">Counts as confirmed.</p>{/if}
 		</div>
-		<PasswordField id="p1" label="Password" bind:value={password} error={errors.password} />
+		<PasswordField id="p1" label="Password" bind:value={password} bind:show={showPassword} error={errors.password} />
 		<PasswordField id="p2" label="Password again" bind:value={password2} error={errors.password2} />
 	</div>
-	<p class="hint">At least 10 characters. Give it to the person yourself.</p>
+	<div class="gen">
+		<button class="btn alt sm" type="button" onclick={generate}>Generate</button>
+		<p class="hint" role="status">{generated || 'At least 10 characters.'} Give it to the person yourself; they choose their own at the first sign-in.</p>
+	</div>
 	{#if errors.form}<p class="err-msg msg" role="alert">{errors.form}</p>{/if}
 	<div class="actions">
 		<a class="btn alt" href="/admin/accounts">Cancel</a>
@@ -74,6 +87,16 @@
 </form>
 
 <style>
+	.gen {
+		display: flex;
+		gap: 12px;
+		align-items: center;
+		flex-wrap: wrap;
+		margin-top: 12px;
+	}
+	.gen .hint {
+		margin: 0;
+	}
 	.fields {
 		margin-top: 14px;
 	}

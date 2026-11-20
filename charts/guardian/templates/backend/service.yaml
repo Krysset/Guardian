@@ -23,6 +23,7 @@ metadata:
   labels:
     {{- include "guardian.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
+    guardian.dev/service: internal
 spec:
   type: ClusterIP
   selector:

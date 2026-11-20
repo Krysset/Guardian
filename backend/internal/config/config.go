@@ -95,6 +95,9 @@ type Database struct {
 	// MaxConns bounds the connection pool of this process. Replicas times MaxConns must stay below
 	// Postgres max_connections.
 	MaxConns int
+	// Migrate is "startup" (default): apply pending migrations when connecting; or "wait": leave them to
+	// `guardian migrate` (the chart's migration Job) and wait until the schema is the one this binary needs.
+	Migrate string
 }
 
 // Log controls log output.
@@ -279,6 +282,7 @@ func LoadDatabase() (Database, error) {
 		Name:     os.Getenv("DB_NAME"),
 		SSLMode:  envOr("DB_SSLMODE", "disable"),
 		MaxConns: 20,
+		Migrate:  envOr("DB_MIGRATE", "startup"),
 	}
 	for key, value := range map[string]string{"DB_HOST": d.Host, "DB_USER": d.User, "DB_NAME": d.Name} {
 		if value == "" {
@@ -297,6 +301,9 @@ func LoadDatabase() (Database, error) {
 	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
 	default:
 		fail("DB_SSLMODE must be one of disable, allow, prefer, require, verify-ca or verify-full, got %q", d.SSLMode)
+	}
+	if d.Migrate != "startup" && d.Migrate != "wait" {
+		fail("DB_MIGRATE must be startup or wait, got %q", d.Migrate)
 	}
 	if v := os.Getenv("DB_MAX_CONNS"); v != "" {
 		n, err := strconv.Atoi(v)

@@ -19,6 +19,22 @@ data:
   {{- with .Values.config.sessionMaxLifetime }}
   SESSION_MAX_LIFETIME: {{ . | quote }}
   {{- end }}
+  {{- with .Values.config.deletionGracePeriod }}
+  DELETION_GRACE_PERIOD: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.signingKeyLifetime }}
+  SIGNING_KEY_LIFETIME: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.mail }}
+  {{- if .host }}
+  SMTP_HOST: {{ .host | quote }}
+  SMTP_PORT: {{ .port | quote }}
+  SMTP_SECURITY: {{ .security | quote }}
+  SMTP_USERNAME: {{ .username | quote }}
+  MAIL_FROM: {{ .from | quote }}
+  REQUIRE_EMAIL: {{ .requireEmail | quote }}
+  {{- end }}
+  {{- end }}
   {{- with .Values.config.auditRetention }}
   AUDIT_RETENTION: {{ . | quote }}
   {{- end }}
@@ -38,6 +54,8 @@ data:
   PRIVACY_URL: {{ . | quote }}
   {{- end }}
   DB_MAX_CONNS: {{ .Values.database.maxConns | quote }}
+  # "wait": the migration Job applies the schema (migrations.mode job); the pods wait for it.
+  DB_MIGRATE: {{ ternary "wait" "startup" (eq .Values.migrations.mode "job") | quote }}
   {{- if $bundled }}
   DB_HOST: {{ include "guardian.postgresName" . | quote }}
   DB_PORT: "5432"

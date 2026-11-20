@@ -7,6 +7,7 @@
 	import { askConfirm } from '#lib/confirm.svelte.ts';
 	import Icon from '#lib/components/Icon.svelte';
 	import PasswordField from '#lib/components/PasswordField.svelte';
+	import { copyText, generatePassword } from '#lib/password.ts';
 	import { eventWords } from '#lib/events.ts';
 	import { dateInput, endOfDay, formatDate, formatWhen, initial, maskEmail, messageOf } from '#lib/format.ts';
 	import { localeOptions, zoneOptions } from '#lib/locales.ts';
@@ -85,6 +86,14 @@
 	// Access
 	let tempPassword = $state('');
 	let tempPassword2 = $state('');
+	let showTemp = $state(false);
+	let generated = $state('');
+
+	async function generate() {
+		tempPassword = tempPassword2 = generatePassword();
+		showTemp = true;
+		generated = (await copyText(tempPassword)) ? 'Generated and copied.' : 'Generated. Copy it from the field.';
+	}
 	let reason = $state('');
 
 	async function signOutEverywhere() {
@@ -106,7 +115,8 @@
 		if (tempPassword !== tempPassword2) return say('access', false, 'The passwords do not match.');
 		try {
 			await api.put('/accounts/{account}/password', { path, body: { new_password: tempPassword } });
-			tempPassword = tempPassword2 = '';
+			tempPassword = tempPassword2 = generated = '';
+			showTemp = false;
 			say('access', true, `The temporary password is set. ${name} is signed out everywhere and must choose a new one at the next sign-in.`);
 			await refreshAll();
 		} catch (e) {
@@ -290,10 +300,14 @@
 		<form class="row stack" onsubmit={setPassword} novalidate>
 			<span><strong>Set a temporary password</strong><span class="hint block">{name} must choose a new one at the next sign-in. At least 10 characters.</span></span>
 			<div class="grid2 wide">
-				<PasswordField id="tp" label="Temporary password" bind:value={tempPassword} />
+				<PasswordField id="tp" label="Temporary password" bind:value={tempPassword} bind:show={showTemp} />
 				<PasswordField id="tp2" label="Temporary password again" bind:value={tempPassword2} />
 			</div>
-			<div class="end wide"><button class="btn" type="submit">Set password</button></div>
+			<div class="end wide gen">
+				{#if generated}<span class="hint" role="status">{generated}</span>{/if}
+				<button class="btn alt" type="button" onclick={generate}>Generate</button>
+				<button class="btn" type="submit">Set password</button>
+			</div>
 		</form>
 		{#if account.mfa.totp || (account.mfa.security_keys ?? []).length}
 			<form class="row bottom" onsubmit={resetTwoFactor} novalidate>
@@ -403,6 +417,14 @@
 </section>
 
 <style>
+	.gen {
+		gap: 12px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.gen .hint {
+		margin: 0 auto 0 0;
+	}
 	.title {
 		display: flex;
 		align-items: center;

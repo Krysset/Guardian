@@ -86,7 +86,32 @@ current: they are the hand-off between sessions.
   implemented with at least one test (owner's request, 2026-11-20).
   - **Passkeys (decided 2026-11-20):** a passkey signs in on its own, with no further step, and counts as
     two-factor (apps with `require_mfa` and administrators' rights accept it).
-  - **Part 2, security keys and passkeys: built, uncommitted.** `internal/passkey` (relying party = issuer host,
+  - **Part 4, the full chart (locally, no cluster yet): built, uncommitted.** Frontend image `frontend/Dockerfile`
+    (nginx-unprivileged 1.27, `frontend/nginx/default.conf` + `headers.conf`, probe `/_ui/health`, read-only with
+    `/tmp` emptyDir). Chart: `templates/frontend/*`, routing split in `httproute.yaml`/`ingress.yaml`,
+    `backend/hpa.yaml`, `backend/servicemonitor.yaml` (internal Service labelled `guardian.dev/service: internal`),
+    `networkpolicy.yaml` (pods that may reach the bundled Postgres carry `guardian.dev/database-client`),
+    `jobs/migrate.yaml` (hook; `fail`s unless `database.mode: external`; env from `guardian.commandEnv`, not the
+    ConfigMap), `jobs/backup.yaml` (CronJob + PVC with `helm.sh/resource-policy: keep`), mail and other settings
+    in the ConfigMap. Backend: `DB_MIGRATE=startup|wait` (`config.Database.Migrate`; `guardian migrate` always
+    migrates), `guardian backup --out-dir DIR --keep N` (`pruneBackups`). Compose: `--profile ui` builds the
+    frontend image and puts `docker/gateway.conf` (nginx) on :3008 routing like the chart. CI: chart.yml `install`
+    job on kind (bundled + UI, upgrade + backup by hand, second release with the Job against external Postgres);
+    frontend.yml builds the image; release.yml publishes both images. **No helm here:** `helm`, `kind` and
+    image registries are blocked in the cloud container (Docker runs but cannot pull). Check the chart with the
+    stand-in renderer `scratchpad/minihelm` (Go text/template + the few Sprig functions the chart uses;
+    `check.py` renders every `ci/` file and asserts routing, Job, CronJob, policies) and the schema with
+    `jsonschema`; the real `helm` runs in CI. SonarQube paused by the owner (2026-11-20).
+  - **Part 3, release workflow, SonarQube, Generate: built, uncommitted.** `.github/workflows/release.yml` (tag
+    `vX.Y.Z` → checks via `workflow_call` of backend/frontend/chart workflows → `ghcr.io/krysset/guardian-backend`
+    amd64+arm64, chart `oci://ghcr.io/krysset/charts/guardian`, GitHub release). Dockerfile cross-compiles
+    (`--platform=$BUILDPLATFORM`) and takes `VERSION`; `server.Version` via ldflags, `guardian version`,
+    `guardian_build_info`. SonarQube: `docker compose --profile sonarqube` (oauth2-proxy v7.15.5 on :3006 in
+    front of SonarQube 26.11 community, HTTP header sign-in; SonarQube has no port of its own),
+    `docs/LOCAL-SONARQUBE.md`, proxy pattern in INTEGRATION.md. The owner runs it and fills in the measured
+    staleness. Frontend: `lib/password.ts` (`generatePassword`, `copyText`), `PasswordField` has a bindable
+    `show`. Passkey-only accounts are a 1.x candidate (owner, 2026-11-20).
+  - **Part 2, security keys and passkeys: committed (`b123232`, with part 1).** `internal/passkey` (relying party = issuer host,
     origins = issuer + `ALLOWED_ORIGINS`; ceremonies sealed in tokens with kind and account; `used_challenge`
     makes each answer count once; clone warning refused). `store/webauthn.go` (`account_mfa` type `webauthn`
     with `credential_id` + `credential` JSONB; `RemoveFactor` keeps the last method when required and drops
@@ -98,7 +123,7 @@ current: they are the hand-off between sessions.
     `e2e/passkey_test.go`; browser check `scratchpad/ui04/passkeys.js` uses Chromium's CDP virtual
     authenticator (it answers conditional mediation at once, so the script turns suggestions off for the
     button and S14 paths). **Schema changed** (`credential` column, `used_challenge`): recreate local databases.
-  - **Part 1, retention: built, uncommitted** (staged together with part 2). `AUDIT_RETENTION` (config `AuditRetention`, `store.AuditRetention`,
+  - **Part 1, retention: committed (`b123232`).** `AUDIT_RETENTION` (config `AuditRetention`, `store.AuditRetention`,
     chart `config.auditRetention`); `store.PruneAudit` (batches of 5000) and `RemoveOrphanedSingleAppGroups`
     run in the hourly `cleanup`. `GET /overview` has `audit_retention_days`.
 - Go modules cannot be fetched in the cloud: `proxy.golang.org` is refused by the agent proxy (npm works with

@@ -1,9 +1,11 @@
 name: chart
 on:
   push:
-    paths: ["charts/**", ".github/workflows/chart.yml"]
+    paths: ["charts/**", "backend/**", "frontend/**", ".github/workflows/chart.yml"]
   pull_request:
-    paths: ["charts/**", ".github/workflows/chart.yml"]
+    paths: ["charts/**", "backend/**", "frontend/**", ".github/workflows/chart.yml"]
+  # The release workflow runs these same checks before publishing.
+  workflow_call:
 
 jobs:
   lint:
@@ -31,3 +33,87 @@ jobs:
           set -euo pipefail
           docker run --rm -v "$PWD:/w" -w /w ghcr.io/yannh/kubeconform:v0.6.7 \
             -strict -summary -ignore-missing-schemas rendered-*.yaml
+
+  # A real install in a throwaway kind cluster, with images built from this commit:
+  #   1. the bundled Postgres, migrations at startup, the UI, NetworkPolicies; the backend and the UI answer;
+  #   2. an upgrade in place, with a scheduled backup run by hand;
+  #   3. a second release against an external Postgres with the migration Job (pods wait for it).
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Build the images
+        run: |
+          docker build --build-arg VERSION=ci -t guardian-backend:ci backend
+          docker build -t guardian-frontend:ci frontend
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: guardian
+      - name: Load the images into the cluster
+        run: kind load docker-image guardian-backend:ci guardian-frontend:ci --name guardian
+      - name: Install with the bundled Postgres
+        run: |
+          set -euo pipefail
+          kubectl create namespace auth
+          kubectl -n auth create secret generic guardian \
+            --from-literal=key-encryption-keys="k1:$(openssl rand -base64 32)" \
+            --from-literal=admin-initial-password=ci-admin-password-1 \
+            --from-literal=db-password=ci-db-password
+          cat > ci-install.yaml <<'VALUES'
+          issuerURL: http://guardian.test
+          image: { repository: guardian-backend, tag: ci, pullPolicy: Never }
+          frontend:
+            image: { repository: guardian-frontend, tag: ci, pullPolicy: Never }
+          secrets: { existingSecret: guardian }
+          VALUES
+          helm install guardian charts/guardian -n auth -f ci-install.yaml --wait --timeout 8m
+      - name: The backend and the UI answer
+        run: |
+          set -euo pipefail
+          kubectl -n auth port-forward svc/guardian 3001:3001 >/dev/null &
+          kubectl -n auth port-forward svc/guardian-frontend 8080:8080 >/dev/null &
+          sleep 5
+          curl -sf http://localhost:3001/.well-known/openid-configuration | grep -q '"issuer":"http://guardian.test"'
+          curl -sf http://localhost:3001/login | grep -q 'Sign in'
+          curl -sf http://localhost:8080/admin | grep -q '/_app/'
+          curl -sf http://localhost:8080/_ui/health
+          curl -sfI http://localhost:8080/account | grep -qi "x-frame-options: DENY"
+      - name: Upgrade in place, and take a scheduled backup by hand
+        run: |
+          set -euo pipefail
+          helm upgrade guardian charts/guardian -n auth -f ci-install.yaml --wait --timeout 8m \
+            --set backup.enabled=true \
+            --set 'backup.recipients[0]=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p'
+          kubectl -n auth create job backup-now --from=cronjob/guardian-backup
+          kubectl -n auth wait --for=condition=complete job/backup-now --timeout=5m
+          kubectl -n auth logs job/backup-now | tee backup.log
+          grep -q "Wrote /backups/guardian-" backup.log
+      - name: A second release with an external Postgres and the migration Job
+        run: |
+          set -euo pipefail
+          kubectl create namespace auth2
+          kubectl -n auth2 run postgres --image=postgres:16 --port=5432 \
+            --env=POSTGRES_USER=guardian --env=POSTGRES_PASSWORD=ci-db-password --env=POSTGRES_DB=guardian
+          kubectl -n auth2 expose pod postgres --port=5432
+          kubectl -n auth2 wait --for=condition=ready pod/postgres --timeout=3m
+          kubectl -n auth2 create secret generic guardian \
+            --from-literal=key-encryption-keys="k1:$(openssl rand -base64 32)" \
+            --from-literal=admin-initial-password=ci-admin-password-2 \
+            --from-literal=db-password=ci-db-password
+          helm install guardian2 charts/guardian -n auth2 -f ci-install.yaml --wait --timeout 8m \
+            --set database.mode=external --set database.external.host=postgres --set database.external.sslMode=disable \
+            --set migrations.mode=job --set frontend.enabled=false
+          kubectl -n auth2 get configmap guardian2 -o jsonpath='{.data.DB_MIGRATE}' | grep -qx wait
+          kubectl -n auth2 logs deploy/guardian2 | grep -q "Guardian ready"
+      - name: Show what went wrong
+        if: failure()
+        run: |
+          kubectl get pods -A
+          for ns in auth auth2; do
+            kubectl -n $ns describe pods | tail -n 80 || true
+            kubectl -n $ns logs -l app.kubernetes.io/name=guardian --all-containers --tail=80 || true
+          done

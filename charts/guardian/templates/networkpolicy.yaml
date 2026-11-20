@@ -1,0 +1,73 @@
+{{- if .Values.networkPolicy.enabled }}
+# Incoming traffic only; Guardian sends email and back-channel logouts out, to addresses it cannot know here.
+# Probes from the kubelet are not affected by NetworkPolicies on common network plugins.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "guardian.fullname" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "guardian.backendSelector" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    # The public port: sign-in pages, OIDC and /api/v1, reached through the Gateway or Ingress, and by apps
+    # inside the cluster.
+    - ports:
+        - port: 3001
+    # The internal port (/metrics, probes): this namespace, and whoever metricsFrom names.
+    - ports:
+        - port: 3002
+      from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.metricsFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- if .Values.frontend.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "guardian.frontendName" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "guardian.frontendSelector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: 8080
+  # The UI's server only serves files: it needs no outgoing traffic at all.
+  egress: []
+{{- end }}
+{{- if eq .Values.database.mode "bundled" }}
+---
+# The bundled Postgres: only pods of this release that run Guardian (the backend, the migration Job, the
+# backup CronJob).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "guardian.postgresName" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "guardian.postgresSelector" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 5432
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "guardian.databaseClient" . | nindent 14 }}
+{{- end }}
+{{- end }}

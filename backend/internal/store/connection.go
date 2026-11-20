@@ -33,7 +33,7 @@ func Open(ctx context.Context, cfg config.Database) (*sql.DB, error) {
 		if db, err = connect(ctx, cfg); err != nil {
 			return
 		}
-		if err = initializeDB(ctx, db); err != nil {
+		if err = initializeDB(ctx, db, cfg.Migrate != "wait"); err != nil {
 			db.Close()
 			return
 		}
@@ -77,7 +77,21 @@ func connect(ctx context.Context, cfg config.Database) (*sql.DB, error) {
 	}
 }
 
-func initializeDB(ctx context.Context, db *sql.DB) error {
+func initializeDB(ctx context.Context, db *sql.DB, migrate bool) error {
+	if !migrate {
+		// DB_MIGRATE=wait: a migration Job applies the schema; wait until it has (an upgrade's Job runs before
+		// the new pods, an install's alongside them).
+		for {
+			err := VerifySchemaRevision(ctx, db)
+			if err == nil || !errors.Is(err, ErrSchemaRevision) {
+				return err
+			}
+			slog.Info("waiting for the migration job to apply the database schema", "detail", err.Error())
+			if err := wait(ctx, 3*time.Second); err != nil {
+				return fmt.Errorf("gave up waiting for the database schema: %w", err)
+			}
+		}
+	}
 	for {
 		err := Migrate(ctx, db)
 		if err == nil {

@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-20):** 215 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-20):** 216 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -69,6 +69,8 @@ over. Browser tests in the repository come with part 5 of 0.4.
 | A security key is a second factor; a tampered or copied key is refused | `TestE2ESecurityKeyIsASecondFactor` |
 | Keys confirm it's you; an account that must use two-factor keeps one method | `TestE2EKeysConfirmItsYouAndFollowTheRemovalRules`, `TestSecurityKeysAreUniqueAndTheLastFactorIsKept` |
 | The required setup works with a security key, and saves nothing before a recovery code is typed back | `TestE2ERequiredSetupWithASecurityKey` |
+| Scheduled backups keep the newest ones, each with its deletion log | `TestPruneBackupsKeepsTheNewestWithTheirDeletionLogs`, `TestBackupCommandLine` |
+| The chart installs, upgrades, takes a backup and runs the migration Job | the `install` job of `.github/workflows/chart.yml` (kind) |
 | The account area: Home's apps, connected apps and Remove access (consent, refresh tokens and the machine API's right gone), sessions (another account's not found, sign out one, everywhere else, or this one), the email address (pending, cancelled, removed), groups the user is in and manages, owners adding by exact username or email; each protected change needs re-authentication | `TestE2EHomeAndConnectedApps`, `TestE2EMySessions`, `TestE2EMyEmailAddress`, `TestE2EMyGroupsAndAddingMembersByLogin`, `TestDescribeUserAgent` |
 | The admin area: the overview counts without naming anyone (and only for administrators), accounts page with a total and filter by status, an account's details, signing it out everywhere, activity about it with who acted, who deleted it; the step-up asks a session without two-factor for a code and returns only to the management UI | `TestE2EAdminOverviewCountsWithoutNamingAnyone`, `TestE2EAdminAccountsPagesFiltersAndActivity`, `TestE2EStepUpForTheManagementUI` |
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |

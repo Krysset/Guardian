@@ -17,7 +17,7 @@ func setValid(t *testing.T) {
 	t.Helper()
 	for k, v := range map[string]string{
 		"DB_HOST": "db", "DB_USER": "guardian", "DB_NAME": "guardian", "DB_PASSWORD": "",
-		"DB_PORT": "", "DB_SSLMODE": "", "DB_MAX_CONNS": "",
+		"DB_PORT": "", "DB_SSLMODE": "", "DB_MAX_CONNS": "", "DB_MIGRATE": "",
 		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEYS": "k1:" + validKey,
 		"KEY_ENCRYPTION_KEYS_FILE": "", "KEY_ENCRYPTION_KEY": "", "SIGNING_KEY_LIFETIME": "",
 		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "",
@@ -44,7 +44,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.SessionIdleTimeout != 7*24*time.Hour || cfg.SessionMaxLifetime != 30*24*time.Hour || cfg.TrustedProxyHops != 0 {
 		t.Errorf("session idle = %v, max = %v, hops = %d", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime, cfg.TrustedProxyHops)
 	}
-	if cfg.DB.Port != 5432 || cfg.DB.SSLMode != "disable" || cfg.DB.MaxConns != 20 {
+	if cfg.DB.Port != 5432 || cfg.DB.SSLMode != "disable" || cfg.DB.MaxConns != 20 || cfg.DB.Migrate != "startup" {
 		t.Errorf("db = %+v", cfg.DB)
 	}
 	if cfg.Log.Format != "json" || cfg.Log.Level != "info" {
@@ -67,7 +67,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"PUBLIC_ADDR": ":8080", "INTERNAL_ADDR": ":8081", "ISSUER_URL": "https://auth.example.com/",
 		"ALLOWED_ORIGINS":      " https://a.example/ , ,https://b.example",
 		"SESSION_IDLE_TIMEOUT": "2h", "SESSION_MAX_LIFETIME": "12h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
-		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret",
+		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret", "DB_MIGRATE": "wait",
 		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug", "DELETION_GRACE_PERIOD": "168h", "AUDIT_RETENTION": "8760h",
 		"LOGIN_FAILURE_WINDOW": "1h", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP": "10", "LOGIN_MAX_FAILURES_PER_IP": "200",
 		"HELP_URL": "https://example.com/help", "PRIVACY_URL": " https://example.com/privacy ",
@@ -94,7 +94,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		cfg.SessionMaxLifetime != 12*time.Hour || cfg.TrustedProxyHops != 2 || cfg.AdminInitialPassword != "pw" {
 		t.Errorf("cfg = %+v", cfg)
 	}
-	if cfg.DB.Port != 6543 || cfg.DB.SSLMode != "require" || cfg.DB.MaxConns != 5 || cfg.DB.Password != "secret" {
+	if cfg.DB.Port != 6543 || cfg.DB.SSLMode != "require" || cfg.DB.MaxConns != 5 || cfg.DB.Password != "secret" || cfg.DB.Migrate != "wait" {
 		t.Errorf("db = %+v", cfg.DB)
 	}
 	if cfg.Log.Format != "text" || cfg.Log.Level != "debug" {
@@ -108,7 +108,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	setValid(t)
 	for k, v := range map[string]string{
-		"DB_HOST": "", "DB_PORT": "abc", "DB_SSLMODE": "maybe", "DB_MAX_CONNS": "0",
+		"DB_HOST": "", "DB_PORT": "abc", "DB_SSLMODE": "maybe", "DB_MAX_CONNS": "0", "DB_MIGRATE": "later",
 		"ISSUER_URL": "", "KEY_ENCRYPTION_KEYS": "", "SESSION_IDLE_TIMEOUT": "soon", "SESSION_MAX_LIFETIME": "-1h",
 		"TRUSTED_PROXY_HOPS": "-1", "LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
 		"HELP_URL": "javascript:alert(1)", "PRIVACY_URL": "/privacy",
@@ -121,7 +121,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load accepted a broken configuration")
 	}
-	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "ISSUER_URL",
+	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "DB_MIGRATE", "ISSUER_URL",
 		"KEY_ENCRYPTION_KEYS", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
 		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL", "HELP_URL", "PRIVACY_URL",
 		"LOGIN_FAILURE_WINDOW", "LOGIN_MAX_FAILURES_PER_ACCOUNT_IP", "LOGIN_MAX_FAILURES_PER_IP", "AUDIT_RETENTION"} {

@@ -7,9 +7,9 @@
 		label,
 		value = $bindable(''),
 		autocomplete = 'new-password',
-		error = ''
-	}: { id: string; label: string; value?: string; autocomplete?: AutoFill; error?: string } = $props();
-	let show = $state(false);
+		error = '',
+		show = $bindable(false)
+	}: { id: string; label: string; value?: string; autocomplete?: AutoFill; error?: string; show?: boolean } = $props();
 </script>
 
 <div>

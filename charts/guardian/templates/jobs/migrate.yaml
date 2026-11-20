@@ -1,0 +1,66 @@
+{{- if eq .Values.migrations.mode "job" }}
+{{- if ne .Values.database.mode "external" }}
+{{- fail "migrations.mode job needs database.mode external: the Job runs before the install, when a bundled Postgres does not exist yet. Use migrations.mode startup with the bundled Postgres." }}
+{{- end }}
+# Applies the database schema before the pods of an install or upgrade start; the pods wait for it
+# (DB_MIGRATE=wait). It reads its settings from the values, not from the ConfigMap, which is not current yet
+# when a hook runs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "guardian.fullname" . }}-migrate
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Argo CD uses its own hook annotations when they are set, and then ignores Helm's.
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "guardian.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+        {{- include "guardian.databaseClient" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "guardian.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env:
+            {{- include "guardian.commandEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: keyring
+              mountPath: /etc/guardian/keyring
+              readOnly: true
+      volumes:
+        {{- include "guardian.keyringVolume" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

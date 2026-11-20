@@ -3,6 +3,10 @@ issuerURL: https://auth.example.com
 image:
   repository: registry.example.com/guardian-backend
   tag: dev
+frontend:
+  image:
+    repository: registry.example.com/guardian-frontend
+    tag: dev
 secrets:
   existingSecret: guardian
 httpRoute:

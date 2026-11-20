@@ -1,4 +1,4 @@
-# Used by CI: an external Postgres behind a standard Ingress, one replica.
+# Used by CI: an external Postgres behind a standard Ingress, one replica, without the management UI.
 issuerURL: https://auth.example.com
 image:
   repository: registry.example.com/guardian-backend
@@ -11,6 +11,8 @@ database:
   external:
     host: postgres.db.svc
 replicaCount: 1
+frontend:
+  enabled: false
 ingress:
   enabled: true
   className: traefik

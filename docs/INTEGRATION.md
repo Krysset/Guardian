@@ -157,6 +157,25 @@ behaves when you connect it.
 - **Grafana** works with its generic OAuth provider. `docker-compose.yml` and `docs/LOCAL-GRAFANA.md` have a
   tested configuration: PKCE, roles from the `groups` claim, the email fallback above, and sign-out through
   Guardian. Grafana does not support back-channel logout.
+- **SonarQube** (self-hosted) cannot sign in with OIDC since its 25.x versions. Put a proxy in front, as
+  below. `docker-compose.yml` and `docs/LOCAL-SONARQUBE.md` have a configuration with oauth2-proxy and
+  SonarQube's HTTP header sign-in.
+
+## Apps without OIDC: a proxy in front
+
+An app that can take its user from HTTP headers (SonarQube, many internal tools) can sit behind
+[oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/), which is an ordinary confidential Guardian app:
+
+- Register the proxy as the app, with its callback (`https://<app>/oauth2/callback`) as the redirect URI, and
+  link the app's groups to it as usual. Use PKCE (`--code-challenge-method=S256`).
+- The proxy refreshes through Guardian every `--cookie-refresh`. That refresh is when group changes arrive and
+  when lost access is noticed (Guardian refuses the refresh and the proxy ends the session), so it is the
+  app's staleness bound: set it at or below the app's `access_token_ttl_seconds`. The proxy does not take
+  back-channel logout.
+- The app must be reachable **only** through the proxy, and the proxy must set the user headers itself: the
+  app trusts them without checking.
+- The proxy's `/oauth2/sign_out?rd=<Guardian>/logout` signs out of both; the app's own "Log out" usually only
+  ends the app's session, and the proxy signs the user straight back in.
 
 ## What Guardian does not decide
 

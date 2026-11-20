@@ -7,8 +7,12 @@
 # Internal:  http://localhost:3002  (/metrics, /healthz, /readyz; bound to this machine only)
 # Management UI (0.4, while it is developed): run `npm install` once and then `npm run dev` in frontend/, and
 #            open http://localhost:3000. Vite serves /account and /admin and forwards everything else here.
+# Both images: http://localhost:3008  (docker compose --profile ui up --build: the frontend image behind a
+#            gateway that routes like the chart's HTTPRoute, so the images can be tried before a cluster)
 # Mailpit:   http://localhost:3003  (catches every email Guardian sends: confirmation and reset links)
 # Grafana:   http://localhost:3005  (optional test app: docker compose --profile grafana up; see docs/LOCAL-GRAFANA.md)
+# SonarQube: http://localhost:3006  (optional test app behind oauth2-proxy: docker compose --profile sonarqube up;
+#            see docs/LOCAL-SONARQUBE.md)
 
 services:
   backend:
@@ -28,7 +32,8 @@ services:
       ISSUER_URL: http://localhost:3001
       TRUSTED_PROXY_HOPS: "0"
       # The management UI's dev server (npm run dev in frontend/) calls the API from this origin.
-      ALLOWED_ORIGINS: http://localhost:3000
+      # The gateway of the "ui" profile (below) serves the frontend image from this one.
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3008
       # Dev-only key (base64 of 32 bytes). Generate a real one with: openssl rand -base64 32
       KEY_ENCRYPTION_KEYS: k1:ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtYW55d2hlcmU=
       ADMIN_INITIAL_PASSWORD: guardian-dev-admin
@@ -71,6 +76,29 @@ services:
       - "127.0.0.1:3003:8025"   # web UI
       - "127.0.0.1:3004:1025"   # SMTP, for a backend run outside compose; inside compose use mailpit:1025
 
+  # The management UI's image (frontend/Dockerfile) and a gateway in front of both images, routing like the
+  # chart. Only started with --profile ui.
+  frontend:
+    container_name: guardian-frontend
+    image: guardian-frontend:dev
+    build:
+      context: ./frontend
+    profiles: ["ui"]
+    read_only: true
+    tmpfs: ["/tmp"]
+
+  gateway:
+    container_name: guardian-gateway
+    image: nginx:1.27-alpine
+    profiles: ["ui"]
+    volumes:
+      - ./docker/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:3008:8080"
+    depends_on:
+      - frontend
+      - backend
+
   # A real app that signs in through Guardian, to check the whole flow by hand (docs/LOCAL-GRAFANA.md).
   # Only started with --profile grafana, after the app is registered in Guardian and .env holds its client id
   # and secret. The browser uses localhost:3001; Grafana's own server-to-server calls use backend:3001.
@@ -106,5 +134,63 @@ services:
     depends_on:
       - backend
 
+  # SonarQube cannot sign in with OIDC itself any more, so oauth2-proxy signs in through Guardian and hands
+  # SonarQube the user in headers (docs/LOCAL-SONARQUBE.md). Only started with --profile sonarqube, after the
+  # app is registered in Guardian and .env holds its client id and secret. SonarQube has no port of its own:
+  # it must only be reachable through the proxy, or anyone could send the headers.
+  sonarqube-proxy:
+    container_name: guardian-sonarqube-proxy
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+    profiles: ["sonarqube"]
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_PROVIDER_DISPLAY_NAME: Guardian
+      OAUTH2_PROXY_CLIENT_ID: ${SONARQUBE_CLIENT_ID:-set-SONARQUBE_CLIENT_ID-in-.env}
+      OAUTH2_PROXY_CLIENT_SECRET: ${SONARQUBE_CLIENT_SECRET:-set-SONARQUBE_CLIENT_SECRET-in-.env}
+      # The browser uses localhost:3001; the proxy's own calls go to backend:3001, so discovery is skipped.
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://localhost:3001
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_LOGIN_URL: http://localhost:3001/authorize
+      OAUTH2_PROXY_REDEEM_URL: http://backend:3001/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://backend:3001/jwks.json
+      OAUTH2_PROXY_REDIRECT_URL: http://localhost:3006/oauth2/callback
+      OAUTH2_PROXY_SCOPE: openid profile email groups
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: groups
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      # Refresh through Guardian every minute: that is when group changes and lost access reach SonarQube.
+      OAUTH2_PROXY_COOKIE_REFRESH: 1m
+      OAUTH2_PROXY_COOKIE_NAME: _guardian_sonarqube
+      OAUTH2_PROXY_COOKIE_SECRET: dev-only-cookie-secret-32-bytes!
+      OAUTH2_PROXY_COOKIE_SECURE: "false"
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: http://sonarqube:9000
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+    ports:
+      - "127.0.0.1:3006:4180"
+    depends_on:
+      - backend
+      - sonarqube
+
+  sonarqube:
+    container_name: guardian-sonarqube
+    image: sonarqube:26.11.0.134175-community
+    profiles: ["sonarqube"]
+    environment:
+      # A throwaway local instance: skip Elasticsearch's production checks (vm.max_map_count) and use the
+      # embedded database.
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+      SONAR_WEB_SSO_ENABLE: "true"
+      SONAR_WEB_SSO_LOGINHEADER: X-Forwarded-Preferred-Username
+      SONAR_WEB_SSO_NAMEHEADER: X-Forwarded-Preferred-Username
+      SONAR_WEB_SSO_EMAILHEADER: X-Forwarded-Email
+      SONAR_WEB_SSO_GROUPSHEADER: X-Forwarded-Groups
+      # How often SonarQube rereads the name, email and groups from the headers (default 5 minutes).
+      SONAR_WEB_SSO_REFRESHINTERVALINMINUTES: "1"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+
 volumes:
   postgres-db:
+  sonarqube-data:

@@ -24,6 +24,24 @@ spec:
     - host: {{ include "guardian.host" . | quote }}
       http:
         paths:
+          {{- if .Values.frontend.enabled }}
+          # The management UI: exactly /, and /account, /admin and /_app with everything under them.
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "guardian.frontendName" . }}
+                port: { number: 8080 }
+          {{- range list "/account" "/admin" "/_app" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "guardian.frontendName" $ }}
+                port: { number: 8080 }
+          {{- end }}
+          {{- end }}
+          # Everything else: sign-in pages, OIDC, /api/v1.
           - path: /
             pathType: Prefix
             backend:

@@ -8,6 +8,7 @@
 //	guardian deletions  export the deletion log (ids of erased accounts), for restores
 //	guardian keys       signing keys and the encryption keyring (see keys.go)
 //	guardian mfa        reset-totp --all, after a keyring key leaked
+//	guardian version    print the version
 package main
 
 import (
@@ -34,6 +35,11 @@ func main() {
 		command = os.Args[1]
 	}
 
+	if command == "version" {
+		fmt.Println(server.Version)
+		return
+	}
+
 	// .env is optional: in containers the variables are injected directly.
 	envErr := godotenv.Load()
 
@@ -53,7 +59,7 @@ func main() {
 		}))
 	}
 	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
-		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore|deletions|keys|mfa]")
+		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore|deletions|keys|mfa|version]")
 		os.Exit(2)
 	}
 

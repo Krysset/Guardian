@@ -1,23 +1,47 @@
 # Installing Guardian in Kubernetes
 
-The Helm chart is in `charts/guardian`. It works with plain Helm and with Argo CD. This first version (release
-0.2) installs the backend, a bundled or external Postgres, and an HTTPRoute or Ingress. It has no email
-settings yet (0.3 adds email to Guardian; the chart follows when the cluster is ready), so installations from
-this chart run without email. The management UI, the
-NetworkPolicy, autoscaling and the ServiceMonitor come in later releases (`docs/ROADMAP.md`).
+The Helm chart is in `charts/guardian`. It works with plain Helm and with Argo CD. It installs the backend, the
+management UI, a bundled or external Postgres, and an HTTPRoute or Ingress; optionally email, autoscaling,
+NetworkPolicies, a ServiceMonitor, a migration Job and scheduled backups.
 
 Until 1.0 all data is test data: a new release may need a fresh database (see "Upgrades" below).
 
-## 1. Build and push the image
+## 1. Get the image
 
-There is no published image yet. Build the backend image and push it to your registry:
+**From a release.** Each release tag (`vX.Y.Z`) publishes the backend and frontend images for amd64 and
+arm64, and the chart:
 
 ```
-docker build -t registry.example.com/guardian-backend:0.2.0 backend
-docker push registry.example.com/guardian-backend:0.2.0
+ghcr.io/krysset/guardian-backend:X.Y.Z
+ghcr.io/krysset/guardian-frontend:X.Y.Z
+helm install guardian oci://ghcr.io/krysset/charts/guardian --version X.Y.Z ...
 ```
 
-If the registry needs credentials, create a pull secret in the namespace and list it in `imagePullSecrets`.
+GitHub makes new packages private. Make both packages public once (the package's settings on GitHub), or
+create a pull secret in the namespace and list it in `imagePullSecrets`.
+
+**Your own build.** Build both images and push them to your registry:
+
+```
+docker build --build-arg VERSION=0.5.0 -t registry.example.com/guardian-backend:0.5.0 backend
+docker build -t registry.example.com/guardian-frontend:0.5.0 frontend
+docker push registry.example.com/guardian-backend:0.5.0
+docker push registry.example.com/guardian-frontend:0.5.0
+```
+
+To try both images together before there is a cluster, `docker compose --profile ui up --build` serves them at
+http://localhost:3008 behind a gateway that routes like the chart.
+
+`guardian version` prints the version the image was built with, and `/metrics` shows it as
+`guardian_build_info{version}`. If the registry needs credentials, create a pull secret in the namespace and list
+it in `imagePullSecrets`.
+
+### Making a release
+
+Push a tag: `git tag v0.5.0 && git push origin v0.5.0`. The `release` workflow runs every check, publishes the
+image and the chart with that version (the chart's `version` and `appVersion` are set from the tag), and
+creates a GitHub release with generated notes. A tag with a suffix (`v0.5.0-rc.1`) is a prerelease and does not
+move the image's `latest` tag.
 
 ## 2. Create the Secret
 
@@ -29,6 +53,7 @@ manager; the names below are the chart's defaults):
 | `key-encryption-keys` | The encryption keyring: `k1:` followed by 32 random bytes in base64 (`openssl rand -base64 32`). Encrypts Guardian's signing keys and authenticator-app secrets in the database. **If a key is lost, what it encrypted is lost**: keep the keyring with your backups. See "Keys" for rotating it. |
 | `admin-initial-password` | The first password of the built-in `admin` account. It must be changed at the first sign-in. |
 | `db-password` | The database password. With the bundled Postgres it is set on the first start; changing it later is a manual step (`ALTER ROLE`, then update the Secret). |
+| `smtp-password` | Only with email and an SMTP user (`config.mail.username`): the SMTP password. |
 
 ```
 kubectl create namespace auth
@@ -48,10 +73,17 @@ A staging setup with the bundled Postgres behind a Gateway API HTTPRoute:
 ```yaml
 issuerURL: https://auth.example.com      # the OIDC issuer: never change it once apps are connected
 image:
-  repository: registry.example.com/guardian-backend
-  tag: "0.2.0"
+  repository: ghcr.io/krysset/guardian-backend   # the tag defaults to the chart's version
+frontend:
+  image:
+    repository: ghcr.io/krysset/guardian-frontend
 secrets:
   existingSecret: guardian
+config:
+  mail:                                  # leave out to run without email
+    host: smtp.example.com
+    username: guardian                   # the password is the Secret's smtp-password
+    from: Guardian <no-reply@example.com>
 httpRoute:
   enabled: true
   parentRefs:
@@ -72,7 +104,23 @@ trustedProxyHops: 1                      # one proxy (the gateway) appends to X-
 - `config.auditRetention` is how long audit entries are kept (default `4392h`, about 6 months; at least `24h`).
   Older entries are deleted every hour, and so are single-app groups whose app was deleted longer ago than this.
   The deletion log is never pruned: restores need it to keep erased accounts erased.
+- The routes send exactly `/`, and `/account`, `/admin` and `/_app` with everything under them, to the
+  management UI, and everything else to the backend. With `frontend.enabled: false` the backend's simple Home
+  is served at `/` instead.
 - For a standard Ingress instead, set `ingress.enabled: true` and `ingress.className` (for example `traefik`).
+- `config.mail` turns email on (confirmation and reset links, security notices). Without it, sign-up has no
+  email field and only administrators reset passwords. `requireEmail: true` makes an address mandatory.
+- `migrations.mode`: `startup` (default) lets each backend pod apply pending migrations as it starts, taking
+  turns under a lock. `job` runs them in a Job before every install and upgrade (a Helm hook, and an Argo CD
+  PreSync hook) while the pods wait for the schema; it needs an external Postgres, which exists before the
+  install.
+- `autoscaling.enabled` scales the backend on CPU. Keep `maxReplicas` times `database.maxConns` below Postgres'
+  `max_connections`.
+- `networkPolicy` (on by default) lets anything reach the public port and the UI, only this namespace and
+  `networkPolicy.metricsFrom` reach `/metrics`, and only Guardian's own pods reach the bundled Postgres.
+- `serviceMonitor.enabled` adds a Prometheus Operator ServiceMonitor; set `serviceMonitor.labels` to what your
+  Prometheus selects.
+- `backup.enabled` schedules backups (see "Scheduled backups" below).
 - For an external Postgres, set `database.mode: external` and `database.external.host` (and `port`, `user`,
   `name`, `sslMode`).
 - `values.yaml` describes every value; `values.schema.json` refuses an install that lacks the required ones.
@@ -130,7 +178,7 @@ Check the installation:
 
 ## Backup and restore
 
-Backups are taken with `kubectl exec` and land on your machine. They are encrypted with
+Backups are taken on a schedule onto a volume, or by hand with `kubectl exec`, landing on your machine. They are encrypted with
 [age](https://age-encryption.org): the cluster only ever sees the public key, and the private key stays offline
 (in Bitwarden). Generate the key pair once, on your machine:
 
@@ -138,6 +186,24 @@ Backups are taken with `kubectl exec` and land on your machine. They are encrypt
 age-keygen -o guardian-backup-key.txt      # the private key: store it offline, then delete this file
 age-keygen -y guardian-backup-key.txt      # prints the public key, age1...
 ```
+
+### Scheduled backups
+
+With `backup.enabled: true` a CronJob takes a backup on `backup.schedule` (default 02:00 every night),
+encrypted to the age public keys in `backup.recipients`, onto a volume (`backup.persistence`, kept when the
+release is uninstalled). Each backup is `guardian-<time>.gbk` with its deletion log `deletions-<time>.log` next
+to it, and only the newest `backup.keep` (default 14) stay.
+
+```yaml
+backup:
+  enabled: true
+  recipients: [age1...]                  # the public key from age-keygen -y
+```
+
+The volume is in the cluster, so it does not survive losing the cluster: copy its files somewhere else as well
+(your storage's snapshots, or a sync job). To take one now: `kubectl -n auth create job backup-now
+--from=cronjob/guardian-backup`. `guardian_backup_last_success_timestamp_seconds` tells when the last one
+finished.
 
 ### Taking a backup
 

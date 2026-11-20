@@ -28,7 +28,8 @@
           "required": ["keyEncryptionKeys", "adminInitialPassword"],
           "properties": {
             "keyEncryptionKeys": { "type": "string", "minLength": 1 },
-            "adminInitialPassword": { "type": "string", "minLength": 1 }
+            "adminInitialPassword": { "type": "string", "minLength": 1 },
+            "smtpPassword": { "type": "string", "minLength": 1 }
           }
         }
       }
@@ -59,6 +60,16 @@
     },
     "replicaCount": { "type": "integer", "minimum": 1 },
     "trustedProxyHops": { "type": "integer", "minimum": 0 },
+    "autoscaling": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "migrations": { "type": "object", "properties": { "mode": { "enum": ["startup", "job"] } } },
     "config": {
       "type": "object",
       "properties": {
@@ -66,6 +77,22 @@
         "logLevel": { "enum": ["debug", "info", "warn", "error"] },
         "extraEnv": { "type": "object", "additionalProperties": { "type": "string" } },
         "auditRetention": { "type": "string", "pattern": "^$|^[0-9]+(\\.[0-9]+)?(s|m|h)([0-9]+(s|m))?$" },
+        "deletionGracePeriod": { "type": "string", "pattern": "^$|^[0-9]+(\\.[0-9]+)?(s|m|h)([0-9]+(s|m))?$" },
+        "signingKeyLifetime": { "type": "string", "pattern": "^$|^[0-9]+(\\.[0-9]+)?(s|m|h)([0-9]+(s|m))?$" },
+        "mail": {
+          "type": "object",
+          "properties": {
+            "host": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "security": { "enum": ["starttls", "tls", "none"] },
+            "username": { "type": "string" },
+            "from": { "type": "string" },
+            "requireEmail": { "type": "boolean" }
+          },
+          "if": { "required": ["host"], "properties": { "host": { "minLength": 1 } } },
+          "then": { "required": ["from"], "properties": { "from": { "minLength": 3, "description": "The sender. Required with a mail host." } } },
+          "else": { "properties": { "requireEmail": { "const": false, "description": "requireEmail needs a mail host." } } }
+        },
         "loginLimits": {
           "type": "object",
           "properties": {
@@ -75,6 +102,55 @@
           }
         }
       }
+    },
+    "frontend": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "replicaCount": { "type": "integer", "minimum": 1 }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "image": { "required": ["repository"], "properties": { "repository": { "minLength": 1, "description": "The frontend image. Required when the frontend is enabled." } } }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" }, "metricsFrom": { "type": "array" } }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "interval": { "type": "string" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string", "minLength": 9 },
+        "recipients": { "type": "array", "items": { "type": "string", "pattern": "^age1[0-9a-z]{20,}$" } },
+        "keep": { "type": "integer", "minimum": 0 },
+        "withoutAudit": { "type": "boolean" },
+        "persistence": {
+          "type": "object",
+          "properties": { "existingClaim": { "type": "string" }, "size": { "type": "string" }, "storageClass": { "type": "string" } }
+        }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": { "properties": { "recipients": { "minItems": 1, "description": "The age public keys to encrypt to. Required when backups are enabled." } } }
     },
     "httpRoute": {
       "type": "object",

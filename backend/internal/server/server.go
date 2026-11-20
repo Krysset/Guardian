@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -29,6 +31,7 @@ import (
 // Migrate connects to the database, applies pending migrations and returns. It backs "guardian migrate",
 // for deployments that run migrations as a separate job. Starting the server does the same thing first.
 func Migrate(ctx context.Context, cfg config.Config) error {
+	cfg.DB.Migrate = "startup" // this command is what applies them
 	_, err := db.Open(ctx, cfg.DB)
 	return err
 }
@@ -71,7 +74,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	errs := make(chan error, 2)
 	go func() { errs <- public.ListenAndServe() }()
 	go func() { errs <- internal.ListenAndServe() }()
-	slog.Info("Guardian ready", "public", public.Addr, "internal", internal.Addr, "issuer", httpx.Issuer)
+	slog.Info("Guardian ready", "version", Version, "public", public.Addr, "internal", internal.Addr, "issuer", httpx.Issuer)
 
 	var runErr error
 	select {
@@ -103,6 +106,17 @@ func UseKeyring(cfg config.Config) error {
 	auth.SetKeyring(ring)
 	return nil
 }
+
+// Version is the release this binary was built from, set by the release build
+// (-ldflags "-X guardian/internal/server.Version=1.2.3"); "dev" otherwise. /metrics shows it as
+// guardian_build_info{version}.
+var Version = "dev"
+
+var buildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: "guardian", Name: "build_info", Help: "Always 1; the version label says which release is running.",
+}, []string{"version"})
+
+func init() { buildInfo.WithLabelValues(Version).Set(1) }
 
 // Configure hands the validated configuration and the signing keys to the HTTP packages. It must be
 // called once before serving; tests that build the routers call it too.

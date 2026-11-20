@@ -1,0 +1,115 @@
+{{- if .Values.backup.enabled }}
+{{- $b := .Values.backup }}
+{{- $claim := default (printf "%s-backups" (include "guardian.fullname" .)) $b.persistence.existingClaim }}
+{{- if not $b.persistence.existingClaim }}
+# Where the scheduled backups go. Kept when the release is uninstalled.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $claim }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $b.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $b.persistence.size }}
+---
+{{- end }}
+# Scheduled backups: `guardian backup` encrypts to the age public keys in backup.recipients, writes
+# guardian-<time>.gbk with its deletions-<time>.log next to it, and keeps the newest backup.keep of them.
+# Each backup is audited, and guardian_backup_last_success_timestamp_seconds tells when the last one ran.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "guardian.fullname" . }}-backup
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ $b.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "guardian.labels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+            {{- include "guardian.databaseClient" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: backup
+              image: {{ include "guardian.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - backup
+                - --execute
+                - --reason
+                - scheduled backup
+                {{- range $b.recipients }}
+                - --recipient
+                - {{ . | quote }}
+                {{- end }}
+                - --out-dir
+                - /backups
+                - --keep
+                - {{ $b.keep | quote }}
+                {{- if $b.withoutAudit }}
+                - --without-audit
+                {{- end }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "guardian.fullname" . }}
+              env:
+                - name: KEY_ENCRYPTION_KEYS_FILE
+                  value: /etc/guardian/keyring/keys
+                - name: DB_MAX_CONNS
+                  value: "2"
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "guardian.dbPasswordSecret" . }}
+                      key: {{ .Values.database.passwordKey }}
+              resources:
+                {{- toYaml $b.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: keyring
+                  mountPath: /etc/guardian/keyring
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            {{- include "guardian.keyringVolume" . | nindent 12 }}
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ $claim }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -55,6 +55,9 @@ func TestBackupCommandLine(t *testing.T) {
 		{"unknown flag", nil, []string{"backup", "--force"}, 2, "usage:"},
 		{"backup takes no file", nil, []string{"backup", "--execute", "x.gbk"}, 2, "unexpected arguments"},
 		{"two files", nil, []string{"restore", "a", "b"}, 2, "unexpected arguments"},
+		{"out-dir needs execute", nil, []string{"backup", "--out-dir", "/backups", "--recipient", "age1x"}, 2, "--out-dir needs --execute"},
+		{"out and out-dir", nil, []string{"backup", "--execute", "--out", "a", "--out-dir", "/b"}, 2, "--out-dir needs --execute"},
+		{"keep needs out-dir", nil, []string{"backup", "--execute", "--keep", "3"}, 2, "--keep needs --out-dir"},
 		// backup and restore need the configuration (database, issuer, key); verify and decrypt do not.
 		{"backup without configuration", nil, []string{"backup", "--recipient", "age1x"}, 1, "ISSUER_URL"},
 		{"restore without configuration", nil, []string{"restore", file}, 1, "ISSUER_URL"},
@@ -113,5 +116,30 @@ func TestKeysCommandLine(t *testing.T) {
 		if code != c.code || !strings.Contains(errOut.String(), c.stderr) {
 			t.Errorf("%v: exit %d, stderr %q; want %d and %q", c.args, code, errOut.String(), c.code, c.stderr)
 		}
+	}
+}
+
+func TestPruneBackupsKeepsTheNewestWithTheirDeletionLogs(t *testing.T) {
+	dir := t.TempDir()
+	stamps := []string{"20261101T020000Z", "20261102T020000Z", "20261103T020000Z", "20261104T020000Z"}
+	for _, s := range stamps {
+		os.WriteFile(filepath.Join(dir, "guardian-"+s+".gbk"), nil, 0o600)
+		os.WriteFile(filepath.Join(dir, "deletions-"+s+".log"), nil, 0o600)
+	}
+	os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600)
+	removed, err := pruneBackups(dir, 2)
+	if err != nil || strings.Join(removed, ",") != "guardian-20261101T020000Z.gbk,guardian-20261102T020000Z.gbk" {
+		t.Fatalf("removed %v (%v)", removed, err)
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "*"))
+	var names []string
+	for _, l := range left {
+		names = append(names, filepath.Base(l))
+	}
+	if strings.Join(names, ",") != "deletions-20261103T020000Z.log,deletions-20261104T020000Z.log,guardian-20261103T020000Z.gbk,guardian-20261104T020000Z.gbk,notes.txt" {
+		t.Errorf("left: %v", names)
+	}
+	if removed, _ := pruneBackups(dir, 0); removed != nil {
+		t.Error("keep 0 must keep everything")
 	}
 }

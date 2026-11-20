@@ -4,6 +4,8 @@ on:
     paths: ["frontend/**", "docs/openapi.yaml", ".github/workflows/frontend.yml"]
   pull_request:
     paths: ["frontend/**", "docs/openapi.yaml", ".github/workflows/frontend.yml"]
+  # The release workflow runs these same checks before publishing.
+  workflow_call:
 
 jobs:
   check:
@@ -23,3 +25,10 @@ jobs:
       - run: npm run api && git diff --exit-code -- src/lib/api/schema.d.ts
       - run: npm run check
       - run: npm run build
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the frontend image
+        run: docker build -t guardian-frontend:ci frontend
