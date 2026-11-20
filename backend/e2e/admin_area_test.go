@@ -163,3 +163,41 @@ func TestE2EStepUpForTheManagementUI(t *testing.T) {
 		t.Errorf("a foreign return_to was kept: %q", done.Header.Get("Location"))
 	}
 }
+
+// The app page needs the standard scopes and the audit entries about one app.
+func TestE2EScopesAndAppActivity(t *testing.T) {
+	newTestEnv(t)
+	testutil.AdminAccount(t, "robbie")
+	br := newBrowser(t)
+	br.mustLogin("robbie")
+	scopes := items(t, br.call("GET", "/api/v1/scopes", nil, 200))
+	var scopeNames []string
+	for _, s := range scopes {
+		scopeNames = append(scopeNames, str(s["name"]))
+	}
+	for _, want := range []string{"openid", "profile", "email", "groups", "offline_access"} {
+		if !contains(scopeNames, want) {
+			t.Errorf("scope %s missing from %v", want, scopeNames)
+		}
+	}
+
+	made := br.call("POST", "/api/v1/apps", map[string]any{"name": "ancient-oven", "pretty_name": "Ancient oven",
+		"redirect_uris": []string{"https://oven.example/callback"}}, 201)
+	id := str(made["app"].(map[string]any)["id"])
+	other := br.call("POST", "/api/v1/apps", map[string]any{"name": "slate", "pretty_name": "Slate",
+		"redirect_uris": []string{"https://slate.example/callback"}}, 201)
+	br.call("POST", "/api/v1/apps/"+id+"/secret", map[string]any{"grace_seconds": 3600}, 201)
+	var events []string
+	for _, e := range items(t, br.call("GET", "/api/v1/audit?app="+id, nil, 200)) {
+		events = append(events, str(e["event_type"]))
+	}
+	if !equal(events, []string{"app.secret_rotated", "app.created"}) {
+		t.Errorf("activity about the app: %v", events)
+	}
+	otherID := str(other["app"].(map[string]any)["id"])
+	br.call("DELETE", "/api/v1/apps/"+otherID, nil, 204)
+	if n := len(items(t, br.call("GET", "/api/v1/audit?app="+otherID, nil, 200))); n != 2 {
+		t.Errorf("a deleted app's activity: %d entries", n)
+	}
+	br.call("GET", "/api/v1/audit?app=nope", nil, 400)
+}

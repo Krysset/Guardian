@@ -39,7 +39,16 @@ const words: Record<string, string> = {
 	'app.access_removed': "Removed an app's access",
 	'authorize.denied': 'Refused by an app',
 	'token.revoked': 'App token revoked',
-	honeypot: 'Bot caught by the honeypot'
+	honeypot: 'Bot caught by the honeypot',
+	'app.created': 'App registered',
+	'app.updated': 'Settings changed',
+	'app.access_changed': 'Access changed',
+	'app.secret_rotated': 'Secret rotated',
+	'app.removed': 'App deleted',
+	'group.created': 'Group created',
+	'group.updated': 'Group changed',
+	'group.bound': 'Group bound to an app',
+	'group.deleted': 'Group deleted'
 };
 
 export function eventWords(type: string): string {

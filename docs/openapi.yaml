@@ -768,6 +768,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /scopes:
+    get:
+      tags: [apps]
+      summary: The standard scopes
+      description: The scopes an app may be allowed, with the description shown on the consent page and the claims each releases.
+      operationId: listScopes
+      responses:
+        '200':
+          description: The scopes, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description, claims]
+                      properties:
+                        name: { type: string }
+                        description: { type: string }
+                        claims: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /accounts/{account}/restore:
     parameters:
       - $ref: '#/components/parameters/AccountID'
@@ -1320,6 +1347,10 @@ paths:
         - name: about
           in: query
           description: Only entries where this account acted or that were done to it (metadata "account" or "target").
+          schema: { type: string, format: uuid }
+        - name: app
+          in: query
+          description: Only entries about this app (the acting app, or metadata "app").
           schema: { type: string, format: uuid }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'

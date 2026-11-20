@@ -44,3 +44,13 @@ func endAccountSessions(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"account": acct.ID, "apps_notified": len(notices)})
 	httpx.NoContent(w)
 }
+
+// listScopes returns the standard scopes an app may be allowed, with what each releases.
+func listScopes(w http.ResponseWriter, r *http.Request) {
+	scopes, err := db.ListScopes()
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "Failed to list the scopes")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, list(scopes))
+}

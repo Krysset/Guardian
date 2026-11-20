@@ -157,6 +157,24 @@ func GetScopes(names []string) ([]Scope, error) {
 	return out, rows.Err()
 }
 
+// ListScopes returns every standard scope (the ones not belonging to one app), for the app settings.
+func ListScopes() ([]Scope, error) {
+	rows, err := GetDatabaseConnection().Query(`SELECT name, description, claims FROM scope WHERE app_id IS NULL ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Scope{}
+	for rows.Next() {
+		var s Scope
+		if err := rows.Scan(&s.Name, &s.Description, scanArray(&s.Claims)); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // GetScopeClaims returns the claim names released by the given scopes.
 func GetScopeClaims(scopes []string) ([]string, error) {
 	rows, err := GetDatabaseConnection().Query(

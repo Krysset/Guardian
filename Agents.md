@@ -83,7 +83,15 @@ current: they are the hand-off between sessions.
 - **0.4 in progress**, in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
   (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
   two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
-  - **Part 3, admin overview and accounts: built, uncommitted.** Pages `/admin` (AD13), `/admin/accounts`
+  - **Part 4, admin groups and apps: built, uncommitted.** Pages `/admin/groups` (AD4), `/admin/groups/new`
+    (AD6), `/admin/groups/[group]` (AD5), `/admin/apps` (AD7), `/admin/apps/new` (AD9), `/admin/apps/[app]`
+    (AD8, with AD10). Components: `CopyField`, `UriList` (https, localhost or a custom scheme, no fragment;
+    `required` keeps the last one), `SecretDialog` (AD10), `GroupMembers` (shared by AC6 and AD5; `search`
+    turns on suggestions for admins only), `AppSettings`, `AccessFields`. API: `GET /scopes`
+    (`store.ListScopes`), audit filter `app` (actor app or metadata `app`). `POST /apps` answers
+    `{app, client_secret}`. `/admin/[...rest]` still stands in for `/admin/audit` until part 5.
+    Browser check: `scratchpad/ui04/part4.js` (session-local).
+  - **Part 3, admin overview and accounts: committed (`e207a35`).** Pages `/admin` (AD13), `/admin/accounts`
     (AD1), `/admin/accounts/new` (AD3), `/admin/accounts/[account]` (AD2), `/admin/deleted` (AD12); the admin
     layout loads `/overview` once (`depends('guardian:overview')`) for the start page and the A23 warning.
     API: `api/overview.go` (`GET /overview`, `DELETE /accounts/{account}/sessions`), `store/overview.go`,

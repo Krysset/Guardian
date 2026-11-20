@@ -407,6 +407,7 @@ type AuditFilter struct {
 	EventType string // exact event type, or "" for all
 	AccountID string // entries whose actor is this account, or "" for all
 	About     string // entries this account did or that were done to it (metadata "account" or "target"), or "" for all
+	App       string // entries about this app (its id as the actor app, or metadata "app"), or "" for all
 	Before    int64  // cursor: entries with a smaller id; 0 for the newest
 	Limit     int
 }
@@ -429,6 +430,10 @@ func ListAudit(f AuditFilter) ([]AuditEntry, error) {
 		p := arg(f.About)
 		// One parameter used as text twice, so Postgres infers one type for it.
 		where = append(where, "(l.actor_account_id = "+p+"::text::uuid OR l.metadata->>'account' = "+p+"::text OR l.metadata->>'target' = "+p+"::text)")
+	}
+	if f.App != "" {
+		p := arg(f.App)
+		where = append(where, "(l.actor_app_id = "+p+"::text::uuid OR l.metadata->>'app' = "+p+"::text)")
 	}
 	rows, err := GetDatabaseConnection().Query(
 		`SELECT l.id, l.occurred_at, l.event_type, COALESCE(l.actor_account_id::text, ''), COALESCE(l.actor_app_id::text, ''),

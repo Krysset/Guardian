@@ -126,12 +126,12 @@ Everything a group owner has, plus, for each app they administer. **In 1.0, Guar
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A15 | List apps: Guardian admins see all, app admins their own. | 0.1 / 0.4 | API done (admins) |
-| A17 | Change the app's settings: names, logo, URLs, redirect URIs, back-channel logout URI, skipping consent, token lifetime, scopes. | 0.1 / 0.4 | API done (admins) |
-| A18 | Set the access rule and the linked groups (app admins: only groups they own). Turning machine API access on or off is for Guardian admins only, because it widens what the app can read about users. | 0.1 / 0.4 | API done (admins) |
-| A19 | Rotate the client secret, with a grace period for the old one. | 0.1 / 0.4 | API done (admins) |
-| A20 | Disable and re-enable the app. | 0.1 / 0.4 | API done (admins) |
-| A21 | Copy what is needed to configure the app: discovery URL, client id, redirect URIs. | 0.4 | planned |
+| A15 | List apps: Guardian admins see all, app admins their own. | 0.1 / 0.4 | done (admins) |
+| A17 | Change the app's settings: names, logo, URLs, redirect URIs, back-channel logout URI, skipping consent, token lifetime, scopes. | 0.1 / 0.4 | done (admins) |
+| A18 | Set the access rule and the linked groups (app admins: only groups they own). Turning machine API access on or off is for Guardian admins only, because it widens what the app can read about users. | 0.1 / 0.4 | done (admins) |
+| A19 | Rotate the client secret, with a grace period for the old one. | 0.1 / 0.4 | done (admins) |
+| A20 | Disable and re-enable the app. | 0.1 / 0.4 | done (admins) |
+| A21 | Copy what is needed to configure the app: discovery URL, client id, redirect URIs. | 0.4 | done |
 | A22 | Read the audit log: Guardian admins all of it, app admins the entries about their app (1.x). | 0.1 / 0.4 | API done (admins) |
 | A24 | Two-factor is required for them. | 0.3 | done |
 
@@ -158,20 +158,20 @@ Everything an app admin has for every app, and everything a group owner has for 
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A11 | List all groups. | 0.1 / 0.4 | API done |
-| A12 | Create, change and delete groups; the key is chosen at creation and never changes, which the form must make clear. Built-in groups cannot be changed. | 0.1 / 0.4 | API done |
-| A13 | Manage the members of any group, with expiry dates; also from an account's page. | 0.1 / 0.4 | API done |
-| A14 | Set or remove a group's owner group. | 0.1 / 0.4 | API done |
+| A11 | List all groups. | 0.1 / 0.4 | done |
+| A12 | Create, change and delete groups; the key is chosen at creation and never changes, which the form must make clear. Built-in groups cannot be changed. | 0.1 / 0.4 | done |
+| A13 | Manage the members of any group, with expiry dates; also from an account's page. | 0.1 / 0.4 | done |
+| A14 | Set or remove a group's owner group. | 0.1 / 0.4 | done |
 | A26 | Mark a group as hidden from its members: it is left out of their own group list (U18). Owners and admins still see it, and apps still receive it in tokens, which a user's browser can sometimes read, so this hides it from the account area, not from a determined user. | 1.x, if needed | deferred |
-| A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | API done |
+| A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | done |
 | A29 | Copy a group: a new group, with a new key, starting with the same members (and their expiry dates), after which the two are unrelated. For replacing an app without adding every member again, for two groups that start alike but will grow apart, and for starting a larger group from a smaller one. | 1.x | planned |
 
 **Apps**
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A16 | Register an app; a confidential app's secret is shown once. | 0.1 / 0.4 | API done |
-| A25 | Delete an app, with its secrets, tokens and consents. | 0.1 / 0.4 | API done |
+| A16 | Register an app; a confidential app's secret is shown once. | 0.1 / 0.4 | done |
+| A25 | Delete an app, with its secrets, tokens and consents. | 0.1 / 0.4 | done |
 
 **Oversight**
 

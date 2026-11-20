@@ -498,6 +498,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The standard scopes
+         * @description The scopes an app may be allowed, with the description shown on the consent page and the claims each releases.
+         */
+        get: operations["listScopes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account}/restore": {
         parameters: {
             query?: never;
@@ -917,7 +937,8 @@ export interface components {
         Error: {
             /**
              * @description invalid_request, unauthorized, forbidden, not_found, method_not_allowed, conflict, rate_limited,
-             *     server_error, unavailable, or a specific code: last_admin, wrong_password, invalid_token.
+             *     server_error, unavailable, or a specific code: last_admin, wrong_password, invalid_token,
+             *     reauth_required, mfa_required, email_required, username_taken, email_taken.
              */
             error: string;
             message: string;
@@ -2238,6 +2259,34 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    listScopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The scopes, by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            name: string;
+                            description: string;
+                            claims: string[];
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     restoreAccount: {
         parameters: {
             query?: never;
@@ -2935,6 +2984,8 @@ export interface operations {
                 account?: string;
                 /** @description Only entries where this account acted or that were done to it (metadata "account" or "target"). */
                 about?: string;
+                /** @description Only entries about this app (the acting app, or metadata "app"). */
+                app?: string;
                 /** @description next_cursor from the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
