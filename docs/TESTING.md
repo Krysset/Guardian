@@ -24,6 +24,10 @@ go test -race -count=1 ./...
 Each test process takes a Postgres advisory lock, so packages can run in parallel without `-p 1`.
 CI: `.github/workflows/backend.yml` (at the repository root) runs everything against a Postgres service container and builds the image.
 
+The management UI (`frontend/`) has no automated tests yet: `npm run check` type-checks it against the API types
+generated from `docs/openapi.yaml`, and each part is checked in a real browser (Playwright) before it is handed
+over. Browser tests in the repository come with part 5 of 0.4.
+
 ## Layers
 
 | Layer | Where | Needs DB | What it proves |

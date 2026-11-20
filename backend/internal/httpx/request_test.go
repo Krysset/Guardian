@@ -55,11 +55,14 @@ func TestClientIP(t *testing.T) {
 	}
 }
 
-func TestSafeReturnToOnlyAllowsOwnAuthorizeEndpoint(t *testing.T) {
-	ok := []string{"/authorize?client_id=x", "/authorize?redirect_uri=//evil.example"}
+func TestSafeReturnToOnlyAllowsAuthorizeAndTheManagementUI(t *testing.T) {
+	ok := []string{"/authorize?client_id=x", "/authorize?redirect_uri=//evil.example",
+		"/account", "/account/security", "/admin", "/admin/accounts?q=link&page=2", "/account?x=//y"}
 	bad := []string{
 		"", "/", "/login", "/authorize", "/authorizeevil?x=1", "//evil.example", "https://evil.example/authorize?x=1",
 		"\\\\evil.example", "/\\evil.example", "javascript:alert(1)", " /authorize?x=1",
+		"/accounts", "/administrator", "/account//evil.example", "/admin/..//x", "/account/\\evil", "/account/\x00",
+		"/account/ä", "/account#x", "/admin/../login",
 	}
 	for _, p := range ok {
 		if SafeReturnTo(p) != p {

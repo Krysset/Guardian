@@ -5,6 +5,8 @@
 # Guardian:  http://localhost:3001  (sign in as "admin" with ADMIN_INITIAL_PASSWORD below; the first sign-in
 #            asks for a new password. After `docker compose down -v` the initial password works again.)
 # Internal:  http://localhost:3002  (/metrics, /healthz, /readyz; bound to this machine only)
+# Management UI (0.4, while it is developed): run `npm install` once and then `npm run dev` in frontend/, and
+#            open http://localhost:3000. Vite serves /account and /admin and forwards everything else here.
 # Mailpit:   http://localhost:3003  (catches every email Guardian sends: confirmation and reset links)
 # Grafana:   http://localhost:3005  (optional test app: docker compose --profile grafana up; see docs/LOCAL-GRAFANA.md)
 
@@ -25,6 +27,8 @@ services:
       INTERNAL_ADDR: ":3002"
       ISSUER_URL: http://localhost:3001
       TRUSTED_PROXY_HOPS: "0"
+      # The management UI's dev server (npm run dev in frontend/) calls the API from this origin.
+      ALLOWED_ORIGINS: http://localhost:3000
       # Dev-only key (base64 of 32 bytes). Generate a real one with: openssl rand -base64 32
       KEY_ENCRYPTION_KEYS: k1:ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtYW55d2hlcmU=
       ADMIN_INITIAL_PASSWORD: guardian-dev-admin

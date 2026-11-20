@@ -279,6 +279,9 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	h := w.Header()
 	ctype := mime.TypeByExtension(path.Ext(name))
+	if path.Ext(name) == ".woff2" { // not in Go's built-in table, and the image has no mime.types
+		ctype = "font/woff2"
+	}
 	if ctype == "" {
 		ctype = "application/octet-stream"
 	}

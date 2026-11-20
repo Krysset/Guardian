@@ -26,9 +26,28 @@ func ClientIP(r *http.Request) string {
 	return host
 }
 
-// SafeReturnTo only allows returning to our own /authorize endpoint (prevents open redirects).
+// SafeReturnTo only allows returning to our own /authorize endpoint or to a page of the management UI
+// (/account and /admin, with their pages and query strings); anything else is dropped, which prevents open
+// redirects.
 func SafeReturnTo(p string) string {
 	if strings.HasPrefix(p, "/authorize?") {
+		return p
+	}
+	for _, area := range []string{"/account", "/admin"} {
+		rest, ok := strings.CutPrefix(p, area)
+		if !ok || (rest != "" && rest[0] != '/' && rest[0] != '?') {
+			continue
+		}
+		// The path stays on this origin: no "//", no backslashes, no "..", only printable ASCII.
+		path, _, _ := strings.Cut(rest, "?")
+		if strings.Contains(path, "//") || strings.Contains(path, "..") || strings.ContainsAny(p, "\\#") {
+			return ""
+		}
+		for _, c := range p {
+			if c <= ' ' || c > '~' {
+				return ""
+			}
+		}
 		return p
 	}
 	return ""

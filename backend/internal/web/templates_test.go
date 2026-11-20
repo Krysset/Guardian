@@ -220,7 +220,8 @@ func TestStaticFiles(t *testing.T) {
 			t.Errorf("%s: status %d, want 404", p, rec.Code)
 		}
 	}
-	for _, name := range []string{"guardian.css", "guardian.js", "background.jpg", "logo-mask.svg", "favicon.svg"} {
+	for _, name := range []string{"guardian.css", "guardian.js", "background.jpg", "logo-mask.svg", "favicon.svg",
+		"figtree-latin.woff2", "figtree-latin-ext.woff2", "figtree-OFL.txt"} {
 		if assetVersions[name] == "" {
 			t.Errorf("static file %s is missing", name)
 		}

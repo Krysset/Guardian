@@ -10,7 +10,7 @@ Guardian is a hobby project under active development. It is not ready for produc
 Release 0.1 (it runs locally) is done: OIDC with signed JWT access tokens, groups and per-app access rules,
 the sign-in pages, a simple Home, the JSON API at `/api/v1`, and a read-only machine API for apps. 0.2 is in
 progress: the Helm chart and encrypted backups (`guardian backup`, `guardian restore`) are built, and wait for
-the cluster. 0.3 (accounts: email, two-factor, deletion, key rotation) is being built. The management UI (the account and admin areas) comes in 0.4. The plan is in
+the cluster. 0.3 (accounts: email, two-factor, deletion, key rotation) is built. The management UI (the account and admin areas, in `frontend/`) is being built in 0.4. The plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Run it locally

@@ -31,6 +31,8 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 | **Two listeners**: public `:3001`, internal `:3002` | Metrics and probes are never reachable through the ingress, even if an ingress rule is wrong. |
 | Rate limits in an UNLOGGED Postgres table | Correct across replicas without Redis; fine for login and sign-up volumes (1). |
 | Sign-in failures count per **account and address**, never per account alone | By default 5 failures for one account from one address in 15 minutes refuse that pair, and 50 from one address refuse it for all accounts (both settings). Accounts are never locked, so nobody can lock out an owner by guessing from elsewhere. Honeypot fields on sign-up and forgot-password catch form-filling bots without a CAPTCHA. |
+| The **management UI is a static single-page app** on the same origin | SvelteKit with `adapter-static`: nginx serves the files and one fallback page; all data comes from `/api/v1` with the session cookie, so no second server holds sessions or secrets. Its CSP allows only its own scripts (Kit's start script by hash). The font, background and logo are the backend's `/static/` files, shared with the sign-in pages. |
+| Sign-in returns only to known places | `return_to` must be `/authorize?...` or a page under `/account` or `/admin` (no `//`, `..` or backslashes), so the sign-in pages cannot be used as an open redirect. |
 | Client IP from `X-Forwarded-For` only with `TRUSTED_PROXY_HOPS` | Behind an ingress the TCP peer is the proxy; trusting the header blindly lets attackers dodge limits. |
 | Origin check on `/api`, SameSite=Lax cookies, CSRF tokens on HTML forms | CSRF defence for the browser API and sign-in pages. |
 | The machine API uses Bearer tokens with Guardian as audience | An app reads its own groups and users without a user present. A user's access token (audience: the app) is never accepted there. |
@@ -67,7 +69,7 @@ would let revoked access through.
 flowchart LR
   B[Browser] -->|HTTPS| I[Ingress / Gateway]
   subgraph K[Kubernetes cluster]
-    I -->|/account, /admin, /_app| F["Frontend pods<br/>(planned, 0.4)"]
+    I -->|/account, /admin, /_app| F["Frontend pods<br/>(0.4, nginx planned)"]
     I -->|everything else| P
     subgraph G[Guardian backend pods]
       P["public :3001<br/>OIDC, sign-in pages, /api/v1"]

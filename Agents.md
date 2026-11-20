@@ -36,7 +36,9 @@ current: they are the hand-off between sessions.
 - **Where things can run:**
   - **Cloud workspace:** PostgreSQL 16 (start it as the `postgres` user with `initdb` and `pg_ctl`; it is killed
     between turns, so restart it in each command that needs it), gofmt, Chromium with Playwright for
-    screenshots. No network. The preinstalled Go is too old: unpack `.tools/go1.26.11.linux-amd64.tar.gz`
+    screenshots. Node 22 and npm. No network except package registries (since 2026-11-20): npm reaches
+    registry.npmjs.org only through the agent proxy, so clear the proxy bypass first:
+    `export NO_PROXY= no_proxy= npm_config_noproxy=`. The preinstalled Go is too old: unpack `.tools/go1.26.11.linux-amd64.tar.gz`
     (SHA-256 `9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec`) and put its `bin` first on `PATH`.
   - **Owner's PC shell** (`device_bash`, a Linux VM with the repo at `$HOME/mnt/Guardian`): git, python3, tar,
     gcc. No Go, Postgres, Docker or network.
@@ -60,7 +62,7 @@ current: they are the hand-off between sessions.
   user.email="$(git log -1 --format=%ae)"`.
 - Review diffs for the owner go in `.tools/review/` (git-ignored); delete them once the work is committed.
 
-## Status (2026-11-19)
+## Status (2026-11-20)
 - **0.1 is done.** Everything up to and including the sign-in pages, Home, single-app groups and the Grafana
   check is committed (`632a0d4`). The owner ran the Grafana flow with Docker: admin signs in as Grafana Admin, an
   account without groups is refused, a `grafana-viewers` member signs in as Viewer, removal from the group
@@ -78,16 +80,21 @@ current: they are the hand-off between sessions.
     `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
   - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
     (including the email settings) wait until the owner's cluster is.
-- **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
+- **0.4 in progress**, in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
+  (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
+  two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
+  - **Part 1, foundation: built, uncommitted.** See "Management UI" below. AC1 has "About you" and the
+    username; its email, locale and time zone come in part 2.
+- **0.3 is built**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
   - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
-  - **Part 6, abuse protection: built, uncommitted.** `web/login.go`: the account is looked up first;
+  - **Part 6, abuse protection: committed (`20fd053`).** `web/login.go`: the account is looked up first;
     failures count under `login:account:<id or lowercased login>:ip:<ip>` (5 per 15 minutes) and `login:ip:<ip>`
     (50); a refusal runs `auth.DummyVerify`. The numbers are `config.LoginLimits` (`LOGIN_FAILURE_WINDOW`,
     `LOGIN_MAX_FAILURES_PER_ACCOUNT_IP`, `LOGIN_MAX_FAILURES_PER_IP`; chart `config.loginLimits`), applied by
     `web.Configure`; a zero value keeps `config.DefaultLoginLimits`. `honeypotHit(r, form)` in `web/signup.go` (audit `honeypot`, metric
     label `honeypot`), used by sign-up and `/forgot`. e2e: `TRUSTED_PROXY_HOPS=1`, and `browser.ip` is sent as
-    `X-Forwarded-For` to act from another address. **0.3 is then built; only the cluster check remains.**
+    `X-Forwarded-For` to act from another address.
   - **Part 5, keys: committed (`c453ea7`).** `auth/crypto.go` is the keyring (`ParseKeyring`, `SetKeyring`,
     `Encrypt`/`Decrypt` with `AAD(table, column, row)`, `Seal`/`Open` for browser-held tokens). `auth/keys.go`:
     `Keys` reloads (`Reload`, `ActiveKID`). `auth/maintenance.go`: `MaintainKeys` (reread the keyring file,
@@ -152,7 +159,9 @@ current: they are the hand-off between sessions.
   - `internal/testutil/` (helpers for database tests), `e2e/` (HTTP tests against both routers).
 - `charts/guardian/` — the Helm chart (0.2): backend Deployment, Services, PDB, bundled Postgres, HTTPRoute,
   Ingress; `ci/*.yaml` are the values CI renders. `docs/INSTALL.md` explains it.
-- `frontend/` — empty (0.4).
+- `frontend/` — the management UI (0.4): SvelteKit 3 (config lives in `vite.config.ts`; there is no
+  `svelte.config.js`), Svelte 5 runes, Vite 8, TypeScript 6, `adapter-static` with the fallback `200.html`.
+  See "Management UI" below.
 - `docker-compose.yml` — backend, Postgres 16, Mailpit, and Grafana behind the `grafana` profile.
 - `.github/workflows/backend.yml` — format check, vet, tests against Postgres, image build;
   `chart.yml` — helm lint, helm template and kubeconform for every `charts/guardian/ci/*.yaml`.
@@ -232,6 +241,32 @@ current: they are the hand-off between sessions.
   code and forgets used steps; e2e `mustLoginWith` passes `/mfa` and sets up on `/mfa/setup` by itself;
   `testutil.Session` makes `pwd otp` sessions. Sealed tokens in HTML are entity-escaped (`&#43;`): unescape.
 - **Schema changed** (fingerprint differs): the owner's local database must be recreated.
+
+## Management UI (`frontend/`, 0.4)
+- **Run it:** the backend on :3001 (docker compose), then `npm install` and `npm run dev` in `frontend/`, and open
+  http://localhost:3000. Vite serves `/account`, `/admin` and its own paths, and forwards everything else (sign-in
+  pages, `/api`, `/static`, OIDC) to the backend (`GUARDIAN_BACKEND`, default http://localhost:3001), so one origin
+  and one session cookie. The backend needs `ALLOWED_ORIGINS=http://localhost:3000` (set in compose).
+- **Checks:** `npm run check` (svelte-check, types) and `npm run build`. After changing `docs/openapi.yaml`, run
+  `npm run api` to regenerate `src/lib/api/schema.d.ts` (committed).
+- **SvelteKit 3, not 2:** imports use `#lib/...` with file extensions (`#lib/api/client.ts`), page state comes
+  from `$app/state` (`page`, not `$page`), `refreshAll` replaced `invalidateAll`.
+- **Single-page app:** `ssr = false` in the root layout; the root load fetches `/me` for every page. The CSP is a
+  `<meta>` tag with the hash of Kit's start script (`csp` in `vite.config.ts`); no inline styles.
+- **Files:** `src/lib/api/client.ts` (typed `api.get('/me')` etc.; 401 goes to `/login?return_to=`;
+  `403 reauth_required` opens AC8 and retries once; failures are `ApiError` with the API's code; `loadFailed(e)`
+  in load functions), `src/lib/reauth.svelte.ts` + `components/ReauthDialog.svelte` (AC8, a native `<dialog>`),
+  `components/Frame.svelte` (F2: top bar, area switch for admins, side nav, `banner` slot for A23),
+  `components/Icon.svelte`, `styles/app.css` (design F's dark tokens and shared classes), `routes/+error.svelte`
+  (404, 403, `mfa_required`).
+- **Shared with the sign-in pages:** the font (Figtree, `figtree-latin*.woff2`, OFL in `figtree-OFL.txt`), the
+  background and the logo are the backend's `/static/` files; the UI links to them, it does not copy them.
+- `[...rest]` pages in both areas stand in for pages not built yet; delete them when the last page lands.
+- Sign-in returns to the UI: `httpx.SafeReturnTo` accepts `/account...` and `/admin...` paths (printable ASCII,
+  no `//`, `..`, backslash or `#`) besides `/authorize?`.
+- Browser check: the Playwright flow signs in through :3000 (two-factor setup with a computed TOTP code,
+  password change), edits the profile, ages `session.auth_time` in the database to trigger AC8, and checks a
+  phone width.
 
 ## Design board
 - https://claude.ai/artifact/V4Qwf5xMJg2fWKAGQm3QKJ ("Guardian page designs"). It holds every page in
