@@ -428,6 +428,172 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [me]
+      summary: Remove the signed-in account's email address
+      description: >-
+        Removes the address and voids links for a new one. A protected change (see POST /me/reauth). Refused
+        when this Guardian requires an address on every account (error email_required).
+      operationId: removeMyEmail
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/email/pending:
+    delete:
+      tags: [me]
+      summary: Cancel a change of address
+      description: Voids the confirmation links for a new address; the account keeps its current one.
+      operationId: cancelMyPendingEmail
+      responses:
+        '204': { description: Cancelled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/home:
+    get:
+      tags: [me]
+      summary: What Home shows
+      description: >-
+        This Guardian's name, the apps the signed-in user has signed in to (connected), and the apps they may
+        sign in to but have not yet (available). Only enabled apps with a homepage are listed.
+      operationId: getHome
+      responses:
+        '200':
+          description: Home's content.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site_name, connected, available]
+                properties:
+                  site_name: { type: string }
+                  connected: { type: array, items: { $ref: '#/components/schemas/HomeApp' } }
+                  available: { type: array, items: { $ref: '#/components/schemas/HomeApp' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/sessions:
+    get:
+      tags: [me]
+      summary: The signed-in user's sessions
+      description: Live sessions (not signed out, expired or idle too long), most recently used first.
+      operationId: listMySessions
+      responses:
+        '200':
+          description: The sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/MySession' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [me]
+      summary: Sign out everywhere else
+      description: >-
+        Ends every session but the current one, and their apps' refresh tokens; apps with back-channel logout
+        are told. A protected change (see POST /me/reauth).
+      operationId: endMyOtherSessions
+      responses:
+        '204': { description: Signed out everywhere else. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/sessions/{session}:
+    parameters:
+      - name: session
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [me]
+      summary: Sign out one session
+      description: >-
+        Ends one of the user's sessions; ending the current one signs out (the cookie is cleared). A
+        protected change (see POST /me/reauth).
+      operationId: endMySession
+      responses:
+        '204': { description: Signed out. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/apps:
+    get:
+      tags: [me]
+      summary: The signed-in user's connected apps
+      description: Apps the user has signed in to, what each can see, and when they were first and last used.
+      operationId: listMyApps
+      responses:
+        '200':
+          description: The apps, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ConnectedApp' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/apps/{app}:
+    parameters:
+      - $ref: '#/components/parameters/AppID'
+    delete:
+      tags: [me]
+      summary: Remove an app's access
+      description: >-
+        Forgets the consent, ends the app's refresh tokens for the user, removes the app's right to look the
+        user up in the machine API, and tells the app with back-channel logout. Signing in to it again asks
+        for consent again. A protected change (see POST /me/reauth).
+      operationId: removeMyApp
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/groups:
+    get:
+      tags: [me]
+      summary: The signed-in user's groups
+      description: Groups the user is in (memberships that have not expired), and groups they manage as an owner.
+      operationId: listMyGroups
+      responses:
+        '200':
+          description: The groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member_of, manages]
+                properties:
+                  member_of:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        expires_at: { type: string, format: date-time }
+                  manages:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description, member_count, apps]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        member_count: { type: integer }
+                        apps: { type: array, items: { type: string }, description: The linked apps' display names. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /accounts:
     get:
@@ -835,6 +1001,38 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/GroupMember' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [groups]
+      summary: Add a member by exact username or email
+      description: >-
+        For administrators and the group's owners, who never search accounts: the answer is the member
+        added, or 404 "No user found". An existing member gets the new expiry.
+      operationId: addGroupMemberByLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [login]
+              properties:
+                login: { type: string, description: An exact username or email address. }
+                expires_at: { type: string, format: date-time, description: Omit to keep the member until removed. }
+      responses:
+        '200':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account_id: { type: string, format: uuid }
+                  username: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1376,7 +1574,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Account'
         - type: object
-          required: [is_admin, mfa]
+          required: [is_admin, mfa, email_settings]
           properties:
             is_admin: { type: boolean }
             mfa:
@@ -1386,6 +1584,50 @@ components:
                 totp_added_at: { type: string, format: date-time }
                 recovery_codes_left: { type: integer }
                 required: { type: boolean, description: 'Administrators and group owners must use two-factor; they cannot remove it.' }
+                required_reason: { type: string, description: Why two-factor is required, in a sentence. }
+            email_settings:
+              type: object
+              required: [enabled, required]
+              properties:
+                enabled: { type: boolean, description: This Guardian sends email; without it no address can be added or changed. }
+                required: { type: boolean, description: Every account must have an address (REQUIRE_EMAIL); it cannot be removed. }
+                pending: { type: string, description: A new address waiting for its confirmation link to be opened. }
+                pending_until: { type: string, format: date-time, description: When that link expires. }
+    HomeApp:
+      type: object
+      required: [id, display_name, description, homepage_url]
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        homepage_url: { type: string }
+    MySession:
+      type: object
+      required: [id, browser, user_agent, ip_address, created_at, last_seen_at, expires_at, current]
+      properties:
+        id: { type: string, format: uuid }
+        browser: { type: string, description: 'Browser and system read from the user agent, such as "Firefox on Windows".' }
+        user_agent: { type: string }
+        ip_address: { type: string }
+        created_at: { type: string, format: date-time, description: When the user signed in. }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        current: { type: boolean, description: The session making this request. }
+    ConnectedApp:
+      type: object
+      required: [id, name, display_name, description, scopes, sees, first_used_at, last_used_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        homepage_url: { type: string }
+        scopes: { type: array, items: { type: string } }
+        sees: { type: array, items: { type: string }, description: What the app can see, one line per scope, as on the consent page. }
+        first_used_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
     AccountDetail:
       allOf:
         - $ref: '#/components/schemas/Account'

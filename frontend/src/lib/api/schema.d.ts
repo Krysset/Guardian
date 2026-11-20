@@ -224,6 +224,159 @@ export interface paths {
          */
         put: operations["changeMyEmail"];
         post?: never;
+        /**
+         * Remove the signed-in account's email address
+         * @description Removes the address and voids links for a new one. A protected change (see POST /me/reauth). Refused when this Guardian requires an address on every account (error email_required).
+         */
+        delete: operations["removeMyEmail"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/email/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel a change of address
+         * @description Voids the confirmation links for a new address; the account keeps its current one.
+         */
+        delete: operations["cancelMyPendingEmail"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What Home shows
+         * @description This Guardian's name, the apps the signed-in user has signed in to (connected), and the apps they may sign in to but have not yet (available). Only enabled apps with a homepage are listed.
+         */
+        get: operations["getHome"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in user's sessions
+         * @description Live sessions (not signed out, expired or idle too long), most recently used first.
+         */
+        get: operations["listMySessions"];
+        put?: never;
+        post?: never;
+        /**
+         * Sign out everywhere else
+         * @description Ends every session but the current one, and their apps' refresh tokens; apps with back-channel logout are told. A protected change (see POST /me/reauth).
+         */
+        delete: operations["endMyOtherSessions"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/sessions/{session}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Sign out one session
+         * @description Ends one of the user's sessions; ending the current one signs out (the cookie is cleared). A protected change (see POST /me/reauth).
+         */
+        delete: operations["endMySession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in user's connected apps
+         * @description Apps the user has signed in to, what each can see, and when they were first and last used.
+         */
+        get: operations["listMyApps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/apps/{app}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The app's id (not its client id). */
+                app: components["parameters"]["AppID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove an app's access
+         * @description Forgets the consent, ends the app's refresh tokens for the user, removes the app's right to look the user up in the machine API, and tells the app with back-channel logout. Signing in to it again asks for consent again. A protected change (see POST /me/reauth).
+         */
+        delete: operations["removeMyApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in user's groups
+         * @description Groups the user is in (memberships that have not expired), and groups they manage as an owner.
+         */
+        get: operations["listMyGroups"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -481,7 +634,11 @@ export interface paths {
          */
         get: operations["listGroupMembers"];
         put?: never;
-        post?: never;
+        /**
+         * Add a member by exact username or email
+         * @description For administrators and the group's owners, who never search accounts: the answer is the member added, or 404 "No user found". An existing member gets the new expiry.
+         */
+        post: operations["addGroupMemberByLogin"];
         delete?: never;
         options?: never;
         head?: never;
@@ -797,7 +954,65 @@ export interface components {
                 recovery_codes_left?: number;
                 /** @description Administrators and group owners must use two-factor; they cannot remove it. */
                 required?: boolean;
+                /** @description Why two-factor is required */
+                required_reason?: string;
             };
+            email_settings: {
+                /** @description This Guardian sends email; without it no address can be added or changed. */
+                enabled: boolean;
+                /** @description Every account must have an address (REQUIRE_EMAIL); it cannot be removed. */
+                required: boolean;
+                /** @description A new address waiting for its confirmation link to be opened. */
+                pending?: string;
+                /**
+                 * Format: date-time
+                 * @description When that link expires.
+                 */
+                pending_until?: string;
+            };
+        };
+        HomeApp: {
+            /** Format: uuid */
+            id: string;
+            display_name: string;
+            description: string;
+            logo_url?: string;
+            homepage_url: string;
+        };
+        MySession: {
+            /** Format: uuid */
+            id: string;
+            /** @description Browser and system read from the user agent, such as "Firefox on Windows". */
+            browser: string;
+            user_agent: string;
+            ip_address: string;
+            /**
+             * Format: date-time
+             * @description When the user signed in.
+             */
+            created_at: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The session making this request. */
+            current: boolean;
+        };
+        ConnectedApp: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            display_name: string;
+            description: string;
+            logo_url?: string;
+            homepage_url?: string;
+            scopes: string[];
+            /** @description What the app can see */
+            sees: string[];
+            /** Format: date-time */
+            first_used_at: string;
+            /** Format: date-time */
+            last_used_at: string;
         };
         AccountDetail: components["schemas"]["Account"] & {
             groups: components["schemas"]["Membership"][];
@@ -1499,6 +1714,224 @@ export interface operations {
             };
         };
     };
+    removeMyEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cancelMyPendingEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getHome: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Home's content. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        site_name: string;
+                        connected: components["schemas"]["HomeApp"][];
+                        available: components["schemas"]["HomeApp"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listMySessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sessions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["MySession"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    endMyOtherSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out everywhere else. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+        };
+    };
+    endMySession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listMyApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The apps, most recently used first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ConnectedApp"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    removeMyApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The app's id (not its client id). */
+                app: components["parameters"]["AppID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listMyGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The groups. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        member_of: {
+                            /** Format: uuid */
+                            id: string;
+                            display_name: string;
+                            description: string;
+                            /** Format: date-time */
+                            expires_at?: string;
+                        }[];
+                        manages: {
+                            /** Format: uuid */
+                            id: string;
+                            display_name: string;
+                            description: string;
+                            member_count: number;
+                            /** @description The linked apps' display names. */
+                            apps: string[];
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listAccounts: {
         parameters: {
             query?: {
@@ -2003,6 +2436,48 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addGroupMemberByLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description An exact username or email address. */
+                    login: string;
+                    /**
+                     * Format: date-time
+                     * @description Omit to keep the member until removed.
+                     */
+                    expires_at?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Added. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        account_id?: string;
+                        username?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];

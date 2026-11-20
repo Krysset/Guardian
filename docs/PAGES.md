@@ -255,7 +255,8 @@ appear from that release; until then the page is drawn without them.
 - Visitors who are not signed in go to S1, and come back here afterwards. Signing in or up without an app
   to return to also lands here.
 - 0.1 has a simple version in the sign-in page style (served by the backend): the username, connected and
-  available apps, and Sign out. The full Home in the management UI design replaces it in 0.4.
+  available apps, and Sign out. The full Home in the management UI design replaces it in 0.4 (built in part 2);
+  the backend's version stays as the fallback until the chart sends `/` to the frontend.
 
 ### Account area
 

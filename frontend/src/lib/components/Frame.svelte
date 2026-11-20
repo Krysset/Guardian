@@ -1,6 +1,6 @@
 <!-- F2, the management UI frame: the top bar (logo to Home, the area switch for administrators, the signed-in
-     username, Sign out), the area's navigation, and the page. The admin area passes its warning (A23) as
-     `banner`. -->
+     username, Sign out), the area's navigation, and the page. Home has no area navigation. The admin area
+     passes its warning (A23) as `banner`. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
@@ -10,21 +10,21 @@
 
 	let {
 		area,
-		nav,
+		nav = [],
 		username,
 		isAdmin,
 		banner,
 		children
 	}: {
-		area: 'account' | 'admin';
-		nav: NavItem[];
+		area: 'home' | 'account' | 'admin';
+		nav?: NavItem[];
 		username: string;
 		isAdmin: boolean;
 		banner?: Snippet;
 		children: Snippet;
 	} = $props();
 
-	const areaLabel = $derived(area === 'account' ? 'Account' : 'Admin');
+	const areaLabel = $derived(area === 'admin' ? 'Admin' : 'Account');
 
 	// The area's start page is current only on itself; other items also on the pages below them.
 	function current(href: string): boolean {
@@ -34,7 +34,7 @@
 </script>
 
 <header class="top">
-	<a class="brand" href="/" data-sveltekit-reload>
+	<a class="brand" href="/">
 		<img src="/static/favicon.svg" alt="" width="28" height="28" />
 		<span>Guardian</span>
 	</a>
@@ -53,14 +53,16 @@
 {@render banner?.()}
 
 <div class="wrap">
-	<nav class="side" aria-label={areaLabel}>
-		{#each nav as item (item.href)}
-			<a class="nav" href={item.href} aria-current={current(item.href) ? 'page' : undefined}>
-				<Icon name={item.icon} />{item.label}
-			</a>
-		{/each}
-	</nav>
-	<main class="main">
+	{#if nav.length}
+		<nav class="side" aria-label={areaLabel}>
+			{#each nav as item (item.href)}
+				<a class="nav" href={item.href} aria-current={current(item.href) ? 'page' : undefined}>
+					<Icon name={item.icon} />{item.label}
+				</a>
+			{/each}
+		</nav>
+	{/if}
+	<main class="main" class:narrow={!nav.length}>
 		{@render children()}
 	</main>
 </div>
@@ -179,6 +181,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 20px;
+	}
+	.main.narrow {
+		max-width: 960px;
+		margin: 0 auto;
 	}
 	@media (max-width: 760px) {
 		.side {

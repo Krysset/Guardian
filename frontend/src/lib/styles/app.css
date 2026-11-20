@@ -71,6 +71,15 @@ body::before {
 [hidden] {
 	display: none !important;
 }
+/* Read by screen readers, not shown. */
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
 a {
 	color: var(--link);
 }
@@ -329,6 +338,8 @@ h3 {
 	font-weight: 600;
 	text-decoration: none;
 }
+/* A wide table scrolls inside its card. Positioned, so visually hidden parts stay inside it too. */
 .scroll {
+	position: relative;
 	overflow-x: auto;
 }

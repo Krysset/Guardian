@@ -87,26 +87,26 @@ Everything a visitor has, plus:
 | U3 | Choose a new password after an admin set a temporary one, before going on. | 0.1 | done |
 | U4 | Set up two-factor when it is required (they are an admin or a group owner, or the app requires it), including saving recovery codes and confirming one before setup finishes. | 0.3, keys 0.5 | done (keys 0.5) |
 | U5 | Confirm signing out when an app asks for it without proof it is them, and see that they are signed out of Guardian and all apps. | 0.1 | done |
-| U6 | When already signed in: see as whom, go to their account, or sign out to switch account. | 0.1 | done (the account link comes with the account area, 0.4) |
+| U6 | When already signed in: see as whom, go to their account, or sign out to switch account. | 0.1 | done |
 
 **In the account area**
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| U7 | View and change their profile: display, given and family name, picture, locale, time zone. The email address is shown masked (for example `a•••@example.com`) until the user chooses to show it. | 0.1 / 0.4 | API done |
-| U8 | Change their username. | 0.1 / 0.4 | API done |
-| U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | API done (change); removal and the page in 0.4 |
-| U10 | Change their password with the current one; their other sessions end. | 0.1 / 0.4 | API done |
-| U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | API done (keys 0.5) |
-| U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | planned |
-| U13 | See the apps they use and what each can see; remove an app's access. | 0.4 / 0.4 | planned |
-| U14 | Download their data as JSON. | 0.3 / 0.4 | API done |
-| U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | API done |
-| U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | API done for username, email and password; the rest as each arrives |
+| U7 | View and change their profile: display, given and family name, picture, locale, time zone. The email address is shown masked (for example `a•••@example.com`) until the user chooses to show it. | 0.1 / 0.4 | done |
+| U8 | Change their username. | 0.1 / 0.4 | done |
+| U9 | Add, change or remove their email; a new address shows as waiting for confirmation until its link is used, and the old address is told. | 0.3 / 0.4 | done |
+| U10 | Change their password with the current one; their other sessions end. | 0.1 / 0.4 | done (the current password is replaced by "Confirm it's you", U16) |
+| U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | done (keys 0.5) |
+| U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | done |
+| U13 | See the apps they use and what each can see; remove an app's access. | 0.4 / 0.4 | done |
+| U14 | Download their data as JSON. | 0.3 / 0.4 | done |
+| U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | done |
+| U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | done |
 | U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | done for password and email changes; the two-factor ones come with two-factor |
-| U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
-| U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | simple version done (0.1) |
-| U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | simple version done (0.1) |
+| U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | done |
+| U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | done |
+| U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | done |
 
 ## Group owner
 
@@ -114,11 +114,11 @@ Everything a user has, plus, for each group they own:
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| O1 | List the groups they own. | 0.1 / 0.4 | API done |
-| O2 | See each group's active members and when their memberships expire. | 0.1 / 0.4 | API done |
-| O3 | Add a member by typing their exact username or email, optionally with an expiry, and remove members. There are no suggestions or partial matches, so nothing leaks: the answer is only "No user found" or "User added". | 0.1 / 0.4 | API done for removal; add by username or email planned |
+| O1 | List the groups they own. | 0.1 / 0.4 | done |
+| O2 | See each group's active members and when their memberships expire. | 0.1 / 0.4 | done |
+| O3 | Add a member by typing their exact username or email, optionally with an expiry, and remove members. There are no suggestions or partial matches, so nothing leaks: the answer is only "No user found" or "User added". | 0.1 / 0.4 | done |
 | O4 | Two-factor is required for them. | 0.3 | done |
-| O5 | See which apps their groups are linked to (names only; linking stays with admins). | 0.1 / 0.4 | planned |
+| O5 | See which apps their groups are linked to (names only; linking stays with admins). | 0.1 / 0.4 | done |
 
 ## App admin (1.x)
 

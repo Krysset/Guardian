@@ -3,7 +3,7 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 // The management UI is a single-page app: adapter-static writes the script and style files under /_app and one
-// fallback page that nginx serves for every path under /account and /admin. The sign-in pages, the API and
+// fallback page that nginx serves for Home (/ exactly) and every path under /account and /admin. The sign-in pages, the API and
 // /static/ (the font, the background and the logo) come from the backend on the same origin.
 const backend = process.env.GUARDIAN_BACKEND ?? 'http://localhost:3001';
 
@@ -35,8 +35,9 @@ export default defineConfig({
 		// Development: open http://localhost:3000. Vite serves the management UI and forwards everything else
 		// (sign-in pages, /api, /static, OIDC) to the backend, so both share one origin and the session cookie.
 		proxy: {
-			// Vite's own paths (/@vite, /@fs, /node_modules, /src, /.svelte-kit) stay with Vite.
-			'^/(?!(@|(account|admin|_app|node_modules|src|\\.svelte-kit)(/|$))).*': { target: backend, xfwd: true }
+			// Home (/ itself), the two areas and Vite's own paths (/@vite, /@fs, /node_modules, /src, /.svelte-kit)
+			// stay with Vite.
+			'^/(?!($|\\?|@|(account|admin|_app|node_modules|src|\\.svelte-kit)(/|$))).*': { target: backend, xfwd: true }
 		}
 	}
 });

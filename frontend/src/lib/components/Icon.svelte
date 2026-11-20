@@ -12,7 +12,10 @@
 		deleted: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 		warning: '<path d="M12 3l10 18H2zM12 10v5M12 18h.01"/>',
 		eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
-		check: '<path d="M5 12l5 5 9-10"/>'
+		check: '<path d="M5 12l5 5 9-10"/>',
+		shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/>',
+		plus: '<path d="M12 5v14M5 12h14"/>',
+		list: '<path d="M8 4h12M8 12h12M8 20h12M3.5 4h.01M3.5 12h.01M3.5 20h.01"/>'
 	} as const;
 	export type IconName = keyof typeof paths;
 </script>

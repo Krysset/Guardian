@@ -83,8 +83,11 @@ current: they are the hand-off between sessions.
 - **0.4 in progress**, in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
   (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
   two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
-  - **Part 1, foundation: built, uncommitted.** See "Management UI" below. AC1 has "About you" and the
-    username; its email, locale and time zone come in part 2.
+  - **Part 2, Home and the account area: built, uncommitted.** Pages `/` (H0), `/account` (AC1),
+    `/account/security|sessions|apps|groups|data`, `/account/groups/[group]` (AC6). API: `api/me.go` (home,
+    sessions, connected apps, groups, email removal and cancel, add a member by login) on `store/me.go`;
+    `api/useragent.go` ("Firefox on Windows"). e2e: `e2e/account_area_test.go`.
+  - **Part 1, foundation: committed (`b836b22`).** See "Management UI" below.
 - **0.3 is built**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
   - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
@@ -117,7 +120,7 @@ current: they are the hand-off between sessions.
     password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
     today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
     change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
-- Tests: 198, all passing with `-race` (`docs/TESTING.md`).
+- Tests: 203, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
@@ -261,9 +264,19 @@ current: they are the hand-off between sessions.
   (404, 403, `mfa_required`).
 - **Shared with the sign-in pages:** the font (Figtree, `figtree-latin*.woff2`, OFL in `figtree-OFL.txt`), the
   background and the logo are the backend's `/static/` files; the UI links to them, it does not copy them.
-- `[...rest]` pages in both areas stand in for pages not built yet; delete them when the last page lands.
+- `[...rest]` in the admin area stands in for pages not built yet; delete it when the last page lands.
+- **Shared parts (part 2):** `confirm.svelte.ts` + `ConfirmDialog.svelte` (`askConfirm({title, message, confirm,
+  danger})` before anything that cannot be undone), `format.ts` (dates, `maskIP`, `maskEmail`, `endOfDay` for date
+  inputs, `messageOf`), `AppLogo.svelte`, `PasswordField.svelte`, `RecoveryCodes.svelte` (S16's codes: copy,
+  download, type one back). Global classes in `app.css` include `.visually-hidden` and `.scroll` (positioned, so
+  hidden table headers stay inside it).
+- **Home is `/` in the UI** (the dev proxy keeps exactly `/` with Vite). The backend's `/` Home stays as the
+  fallback until the chart routes `/` to the frontend.
 - Sign-in returns to the UI: `httpx.SafeReturnTo` accepts `/account...` and `/admin...` paths (printable ASCII,
   no `//`, `..`, backslash or `#`) besides `/authorize?`.
+- Screenshots: take full-page ones only after `scrollTo(0, 0)`. Taken while scrolled, they draw the sticky top bar
+  in the middle of the page and cut off the fixed background, which looks like a bug but is not. Check sticky
+  parts with viewport screenshots at several scroll positions.
 - Browser check: the Playwright flow signs in through :3000 (two-factor setup with a computed TOTP code,
   password change), edits the profile, ages `session.auth_time` in the database to trigger AC8, and checks a
   phone width.

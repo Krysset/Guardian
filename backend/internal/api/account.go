@@ -132,15 +132,30 @@ func getMe(w http.ResponseWriter, r *http.Request) {
 		accountFail(w, err)
 		return
 	}
+	pending, pendingUntil, err := db.PendingEmail(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
 	type mfaInfo struct {
 		db.MFAStatus
 		Required bool `json:"required"`
+		// RequiredReason says why: an administrator, a group owner, or an app that requires it.
+		RequiredReason string `json:"required_reason,omitempty"`
+	}
+	type emailInfo struct {
+		Enabled      bool       `json:"enabled"`  // this Guardian sends email; without it no address can be confirmed
+		Required     bool       `json:"required"` // REQUIRE_EMAIL: the address cannot be removed
+		Pending      string     `json:"pending,omitempty"`
+		PendingUntil *time.Time `json:"pending_until,omitempty"`
 	}
 	httpx.JSON(w, http.StatusOK, struct {
 		db.Account
-		IsAdmin bool    `json:"is_admin"`
-		MFA     mfaInfo `json:"mfa"`
-	}{acct, admin, mfaInfo{mfa, required != ""}})
+		IsAdmin bool      `json:"is_admin"`
+		MFA     mfaInfo   `json:"mfa"`
+		Email   emailInfo `json:"email_settings"`
+	}{acct, admin, mfaInfo{mfa, required != "", required},
+		emailInfo{mail.Enabled(), web.RequireEmail(), pending, pendingUntil}})
 }
 
 // updateMe changes the signed-in user's profile. Only fields present in the body change; "" clears one.

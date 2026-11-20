@@ -69,7 +69,7 @@ would let revoked access through.
 flowchart LR
   B[Browser] -->|HTTPS| I[Ingress / Gateway]
   subgraph K[Kubernetes cluster]
-    I -->|/account, /admin, /_app| F["Frontend pods<br/>(0.4, nginx planned)"]
+    I -->|"/ (exactly), /account, /admin, /_app"| F["Frontend pods<br/>(0.4, nginx planned)"]
     I -->|everything else| P
     subgraph G[Guardian backend pods]
       P["public :3001<br/>OIDC, sign-in pages, /api/v1"]

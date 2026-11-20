@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '#lib/styles/app.css';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ReauthDialog from '#lib/components/ReauthDialog.svelte';
 	import type { LayoutProps } from './$types';
 
@@ -8,3 +9,4 @@
 
 {@render children()}
 <ReauthDialog hasTotp={data.me.mfa.totp ?? false} />
+<ConfirmDialog />
