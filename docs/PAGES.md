@@ -433,16 +433,7 @@ user. It holds no other personal data.
 
 ### What the API still lacks for these pages
 
-- The account area:
-  - the user's own groups (AC5);
-  - sessions (AC3);
-  - connected apps (AC4);
-  - the data export (AC7).
-- Adding a member by exact username or email (AC6, AD5).
-- Linked app names for owners (AC6).
-- Signing an account out everywhere (AD2).
-- The overview figures (AD13).
-- Audit entries about an account or app, as the target and not only the actor (AD2, AD8).
+Nothing since 0.4: every page gets its data from `/api/v1`.
 
 ## Requirements without pages
 

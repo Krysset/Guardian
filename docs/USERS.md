@@ -132,7 +132,7 @@ Everything a group owner has, plus, for each app they administer. **In 1.0, Guar
 | A19 | Rotate the client secret, with a grace period for the old one. | 0.1 / 0.4 | done (admins) |
 | A20 | Disable and re-enable the app. | 0.1 / 0.4 | done (admins) |
 | A21 | Copy what is needed to configure the app: discovery URL, client id, redirect URIs. | 0.4 | done |
-| A22 | Read the audit log: Guardian admins all of it, app admins the entries about their app (1.x). | 0.1 / 0.4 | API done (admins) |
+| A22 | Read the audit log: Guardian admins all of it, app admins the entries about their app (1.x). | 0.1 / 0.4 | done (admins) |
 | A24 | Two-factor is required for them. | 0.3 | done |
 
 ## Guardian admin

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -12,7 +14,8 @@ import (
 var eventTypeRe = regexp.MustCompile(`^[a-z_]+(\.[a-z_]+)*$`)
 
 // listAudit returns the audit log, newest first. ?event= filters on one event type, ?account= on the
-// account that acted; ?cursor= continues from next_cursor; ?limit= is 1-200 (default 50).
+// account that acted, ?about= and ?username= on entries an account did or that were done to it, ?app= on an
+// app; ?cursor= continues from next_cursor; ?limit= is 1-200 (default 50).
 func listAudit(w http.ResponseWriter, r *http.Request) {
 	limit, ok := pageLimit(w, r)
 	if !ok {
@@ -27,6 +30,21 @@ func listAudit(w http.ResponseWriter, r *http.Request) {
 	if (f.AccountID != "" && !db.IsUUID(f.AccountID)) || (f.About != "" && !db.IsUUID(f.About)) || (f.App != "" && !db.IsUUID(f.App)) {
 		httpx.Error(w, http.StatusBadRequest, "account and about must be account ids, and app an app id")
 		return
+	}
+	if u := q.Get("username"); u != "" {
+		if f.About != "" {
+			httpx.Error(w, http.StatusBadRequest, "use about or username, not both")
+			return
+		}
+		id, err := db.AccountIDByUsername(u)
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.ErrorCode(w, http.StatusNotFound, "account_not_found", "No account has that username")
+			return
+		} else if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "Failed to read the audit log")
+			return
+		}
+		f.About = id
 	}
 	if c := q.Get("cursor"); c != "" {
 		n, err := strconv.ParseInt(c, 10, 64)

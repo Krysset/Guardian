@@ -80,10 +80,18 @@ current: they are the hand-off between sessions.
     `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
   - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
     (including the email settings) wait until the owner's cluster is.
-- **0.4 in progress**, in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
+- **0.4 built** (part 5 uncommitted; the nginx image and the chart's frontend wait for the cluster), in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
   (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
   two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
-  - **Part 4, admin groups and apps: built, uncommitted.** Pages `/admin/groups` (AD4), `/admin/groups/new`
+  - **Part 5, audit log and the browser pass: built, uncommitted.** `/admin/audit` (AD11): filters in the address
+    (`event`, `username`, `app`, `cursor`), 50 a page, Previous via a stack of cursors, a row opens its details
+    (links to the account, app and group, the raw metadata). On a phone the rows become stacked cards. API:
+    AuditEntry gains `target_username`, `app_name`, `group_name` (joined through `uuidOrNull`, so metadata that
+    is not an id never breaks the query); `?username=` resolves an account (also one in its grace period) to
+    `about`, 404 `account_not_found` if none. `lib/events.ts`: `eventWords(type, metadata)` (says "App
+    disabled" etc.), `summary(entry)`, `who(entry)`, `eventGroups` for the filter. `[...rest]` is gone; unknown
+    admin paths get the 404 page. Browser pass: `scratchpad/ui04/part5.js` (every page at 1280 and 390 wide).
+  - **Part 4, admin groups and apps: committed (`5dcebd6`).** Pages `/admin/groups` (AD4), `/admin/groups/new`
     (AD6), `/admin/groups/[group]` (AD5), `/admin/apps` (AD7), `/admin/apps/new` (AD9), `/admin/apps/[app]`
     (AD8, with AD10). Components: `CopyField`, `UriList` (https, localhost or a custom scheme, no fragment;
     `required` keeps the last one), `SecretDialog` (AD10), `GroupMembers` (shared by AC6 and AD5; `search`
@@ -281,7 +289,6 @@ current: they are the hand-off between sessions.
   (404, 403, `mfa_required`).
 - **Shared with the sign-in pages:** the font (Figtree, `figtree-latin*.woff2`, OFL in `figtree-OFL.txt`), the
   background and the logo are the backend's `/static/` files; the UI links to them, it does not copy them.
-- `[...rest]` in the admin area stands in for pages not built yet; delete it when the last page lands.
 - **Shared parts (part 2):** `confirm.svelte.ts` + `ConfirmDialog.svelte` (`askConfirm({title, message, confirm,
   danger})` before anything that cannot be undone), `format.ts` (dates, `maskIP`, `maskEmail`, `endOfDay` for date
   inputs, `messageOf`), `AppLogo.svelte`, `PasswordField.svelte`, `RecoveryCodes.svelte` (S16's codes: copy,

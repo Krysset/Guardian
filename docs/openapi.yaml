@@ -1352,6 +1352,10 @@ paths:
           in: query
           description: Only entries about this app (the acting app, or metadata "app").
           schema: { type: string, format: uuid }
+        - name: username
+          in: query
+          description: Like about, for the account with this username (also one in its deletion grace period). 404 account_not_found if there is none.
+          schema: { type: string, maxLength: 64 }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -1370,6 +1374,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /apps/self:
     get:
@@ -1835,6 +1840,9 @@ components:
         actor_account_id: { type: string, format: uuid }
         actor_app_id: { type: string, format: uuid }
         actor_username: { type: string, description: The acting account's username, while it exists. }
+        target_username: { type: string, description: 'The username of the account the entry is about (metadata "target" or "account"), while it exists.' }
+        app_name: { type: string, description: 'The display name of the app (the acting app or metadata "app"), while it exists.' }
+        group_name: { type: string, description: 'The display name of the group (metadata "group"), while it exists.' }
         ip_address: { type: string }
         metadata: { type: object, additionalProperties: true }
 

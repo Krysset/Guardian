@@ -397,7 +397,10 @@ type AuditEntry struct {
 	EventType      string         `json:"event_type"`
 	ActorAccountID string         `json:"actor_account_id,omitempty"`
 	ActorAppID     string         `json:"actor_app_id,omitempty"`
-	ActorUsername  string         `json:"actor_username,omitempty"` // "" once the account is erased
+	ActorUsername  string         `json:"actor_username,omitempty"`  // "" once the account is erased
+	TargetUsername string         `json:"target_username,omitempty"` // the account it was about (metadata "target" or "account"), while it exists
+	AppName        string         `json:"app_name,omitempty"`        // the app's display name (actor app or metadata "app"), while it exists
+	GroupName      string         `json:"group_name,omitempty"`      // the group's display name (metadata "group"), while it exists
 	IPAddress      string         `json:"ip_address,omitempty"`
 	Metadata       map[string]any `json:"metadata"`
 }
@@ -410,6 +413,20 @@ type AuditFilter struct {
 	App       string // entries about this app (its id as the actor app, or metadata "app"), or "" for all
 	Before    int64  // cursor: entries with a smaller id; 0 for the newest
 	Limit     int
+}
+
+// uuidOrNull casts a text expression to a uuid, or NULL when it is not one, so metadata written by older
+// versions can never break the query.
+func uuidOrNull(expr string) string {
+	return "(CASE WHEN " + expr + " ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (" + expr + ")::uuid END)"
+}
+
+// AccountIDByUsername finds an account by its username, including one in its deletion grace period, for
+// filtering the audit log. An erased account has no username.
+func AccountIDByUsername(username string) (string, error) {
+	var id string
+	err := GetDatabaseConnection().QueryRow(`SELECT id FROM account WHERE lower(username) = lower($1)`, username).Scan(&id)
+	return id, err
 }
 
 // ListAudit returns audit entries, newest first.
@@ -437,8 +454,13 @@ func ListAudit(f AuditFilter) ([]AuditEntry, error) {
 	}
 	rows, err := GetDatabaseConnection().Query(
 		`SELECT l.id, l.occurred_at, l.event_type, COALESCE(l.actor_account_id::text, ''), COALESCE(l.actor_app_id::text, ''),
-		        COALESCE(host(l.ip_address), ''), l.metadata, COALESCE(a.username, '')
-		 FROM audit_log l LEFT JOIN account a ON a.id = l.actor_account_id
+		        COALESCE(host(l.ip_address), ''), l.metadata, COALESCE(a.username, ''),
+		        COALESCE(t.username, ''), COALESCE(p.pretty_name, ''), COALESCE(g.display_name, '')
+		 FROM audit_log l
+		 LEFT JOIN account a ON a.id = l.actor_account_id
+		 LEFT JOIN account t ON t.id = `+uuidOrNull("COALESCE(l.metadata->>'target', l.metadata->>'account')")+`
+		 LEFT JOIN app p ON p.id = COALESCE(l.actor_app_id, `+uuidOrNull("l.metadata->>'app'")+`)
+		 LEFT JOIN user_group g ON g.id = `+uuidOrNull("l.metadata->>'group'")+`
 		 WHERE `+strings.Join(where, " AND ")+` ORDER BY l.id DESC LIMIT `+arg(f.Limit), args...)
 	if err != nil {
 		return nil, err
@@ -448,7 +470,8 @@ func ListAudit(f AuditFilter) ([]AuditEntry, error) {
 	for rows.Next() {
 		var e AuditEntry
 		var meta []byte
-		if err := rows.Scan(&e.ID, &e.OccurredAt, &e.EventType, &e.ActorAccountID, &e.ActorAppID, &e.IPAddress, &meta, &e.ActorUsername); err != nil {
+		if err := rows.Scan(&e.ID, &e.OccurredAt, &e.EventType, &e.ActorAccountID, &e.ActorAppID, &e.IPAddress, &meta, &e.ActorUsername,
+			&e.TargetUsername, &e.AppName, &e.GroupName); err != nil {
 			return nil, err
 		}
 		e.OccurredAt = e.OccurredAt.UTC()

@@ -1220,6 +1220,12 @@ export interface components {
             actor_app_id?: string;
             /** @description The acting account's username */
             actor_username?: string;
+            /** @description The username of the account the entry is about (metadata "target" or "account"), while it exists. */
+            target_username?: string;
+            /** @description The display name of the app (the acting app or metadata "app"), while it exists. */
+            app_name?: string;
+            /** @description The display name of the group (metadata "group"), while it exists. */
+            group_name?: string;
             ip_address?: string;
             metadata: {
                 [key: string]: unknown;
@@ -2986,6 +2992,8 @@ export interface operations {
                 about?: string;
                 /** @description Only entries about this app (the acting app, or metadata "app"). */
                 app?: string;
+                /** @description Like about, for the account with this username (also one in its deletion grace period). 404 account_not_found if there is none. */
+                username?: string;
                 /** @description next_cursor from the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
@@ -3011,6 +3019,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     machineSelf: {

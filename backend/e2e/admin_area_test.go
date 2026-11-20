@@ -201,3 +201,50 @@ func TestE2EScopesAndAppActivity(t *testing.T) {
 	}
 	br.call("GET", "/api/v1/audit?app=nope", nil, 400)
 }
+
+func TestE2EAuditLogNamesAndUsernameFilter(t *testing.T) {
+	newTestEnv(t)
+	testutil.AdminAccount(t, "purah")
+	testutil.CreateAccount(t, "symin")
+	symin := testutil.AccountID(t, "symin")
+	br := newBrowser(t)
+	br.mustLogin("purah")
+
+	br.call("POST", "/api/v1/apps", map[string]any{"name": "slate", "pretty_name": "Sheikah Slate",
+		"redirect_uris": []string{"https://slate.example/callback"}}, 201)
+	group := br.call("POST", "/api/v1/groups", map[string]any{"key": "lab", "display_name": "Tech lab"}, 201)
+	br.call("PUT", "/api/v1/groups/"+str(group["id"])+"/members/"+symin, map[string]any{}, 204)
+	// Older or hand-written metadata that is not an id must not break the log.
+	testutil.Exec(t, `INSERT INTO audit_log (event_type, metadata) VALUES ('group.updated', '{"group": "not-an-id", "target": 7}')`)
+
+	all := items(t, br.call("GET", "/api/v1/audit", nil, 200))
+	byType := map[string]map[string]any{}
+	for _, e := range all {
+		if _, seen := byType[str(e["event_type"])]; !seen {
+			byType[str(e["event_type"])] = e
+		}
+	}
+	if e := byType["group.member_added"]; str(e["target_username"]) != "symin" || str(e["group_name"]) != "Tech lab" || str(e["actor_username"]) != "purah" {
+		t.Errorf("a member added: %v", e)
+	}
+	if e := byType["app.created"]; str(e["app_name"]) != "Sheikah Slate" {
+		t.Errorf("an app registered: %v", e)
+	}
+	if e := byType["group.updated"]; e["group_name"] != nil || e["target_username"] != nil {
+		t.Errorf("metadata that is not an id: %v", e)
+	}
+
+	// By username: what symin did and what was done to her, also during her deletion grace period.
+	br.call("DELETE", "/api/v1/accounts/"+symin, nil, 204)
+	var events []string
+	for _, e := range items(t, br.call("GET", "/api/v1/audit?username=SYMIN", nil, 200)) {
+		events = append(events, str(e["event_type"]))
+	}
+	if !equal(events, []string{"account.deleted", "group.member_added"}) {
+		t.Errorf("entries about symin: %v", events)
+	}
+	if got := br.call("GET", "/api/v1/audit?username=nobody", nil, 404); got["error"] != "account_not_found" {
+		t.Errorf("an unknown username: %v", got)
+	}
+	br.call("GET", "/api/v1/audit?username=symin&about="+symin, nil, 400)
+}

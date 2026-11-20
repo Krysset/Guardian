@@ -213,7 +213,7 @@
 				<thead><tr><th>When</th><th>Event</th><th>Who</th></tr></thead>
 				<tbody>
 					{#each data.activity as e (e.id)}
-						<tr><td>{formatWhen(e.occurred_at)}</td><td>{eventWords(e.event_type)}</td><td>{e.actor_username || (e.actor_account_id ? 'An erased account' : name)}</td></tr>
+						<tr><td>{formatWhen(e.occurred_at)}</td><td>{eventWords(e.event_type, e.metadata)}</td><td>{e.actor_username || (e.actor_account_id ? 'An erased account' : name)}</td></tr>
 					{/each}
 				</tbody>
 			</table>
