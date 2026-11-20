@@ -139,7 +139,7 @@ func TestListingAccountsSearchesAndPages(t *testing.T) {
 	testutil.Exec(t, `UPDATE account SET status = 'disabled' WHERE username = 'carl'`)
 	testutil.Exec(t, `UPDATE account SET email = 'robert@example.com' WHERE username = 'bob'`)
 	gone := testutil.CreateAccount(t, "gone")
-	if _, err := db.SoftDeleteAccount(gone.ID); err != nil {
+	if _, err := db.SoftDeleteAccount(gone.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	names := func(f db.AccountFilter) string {

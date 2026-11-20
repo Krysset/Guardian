@@ -58,6 +58,9 @@ func TestBackupCommandLine(t *testing.T) {
 		// backup and restore need the configuration (database, issuer, key); verify and decrypt do not.
 		{"backup without configuration", nil, []string{"backup", "--recipient", "age1x"}, 1, "ISSUER_URL"},
 		{"restore without configuration", nil, []string{"restore", file}, 1, "ISSUER_URL"},
+		{"deletions needs export", nil, []string{"deletions"}, 2, "usage:"},
+		{"deletions export without configuration", nil, []string{"deletions", "export"}, 1, "ISSUER_URL"},
+		{"a missing deletion log", nil, []string{"restore", "--apply-deletions", file + ".nope", file}, 1, "ISSUER_URL"},
 	}
 	for _, c := range cases {
 		code, stdout, stderr := run(t, c.stdin, c.args...)

@@ -60,7 +60,7 @@ func TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers(t *testing.T) {
 	}
 	testutil.AddMember(t, other, alice.ID)
 	expireMembership(t, linked, expired.ID)
-	if _, err := db.SoftDeleteAccount(gone.ID); err != nil {
+	if _, err := db.SoftDeleteAccount(gone.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 

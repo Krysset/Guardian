@@ -41,6 +41,8 @@ func Router() http.Handler {
 			r.Put("/me/password", changeMyPassword)
 			r.Put("/me/email", changeMyEmail)
 			r.Post("/me/reauth", reauth)
+			r.Delete("/me", deleteMe)
+			r.Get("/me/export", exportMe)
 			r.Post("/me/mfa/totp", startTOTPSetup)
 			r.Post("/me/mfa/totp/confirm", confirmTOTPSetup)
 			r.Post("/me/mfa/totp/finish", finishTOTPSetup)
@@ -70,6 +72,9 @@ func Router() http.Handler {
 				r.Delete("/accounts/{account}", deleteAccount)
 				r.Put("/accounts/{account}/password", setAccountPassword)
 				r.Post("/accounts/{account}/mfa/reset", resetAccountMFA)
+				r.Get("/accounts/deleted", listDeletedAccounts)
+				r.Post("/accounts/{account}/restore", restoreAccount)
+				r.Post("/accounts/{account}/erase", eraseAccount)
 
 				r.Get("/apps", listApps)
 				r.Post("/apps", createApp)

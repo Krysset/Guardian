@@ -5,6 +5,7 @@
 //	guardian migrate    apply pending database migrations, then exit
 //	guardian backup     write an encrypted backup to stdout (see backup.go)
 //	guardian restore    restore a backup into a new installation
+//	guardian deletions  export the deletion log (ids of erased accounts), for restores
 package main
 
 import (
@@ -34,7 +35,7 @@ func main() {
 	// .env is optional: in containers the variables are injected directly.
 	envErr := godotenv.Load()
 
-	if command == "backup" || command == "restore" {
+	if command == "backup" || command == "restore" || command == "deletions" {
 		// stdout carries the backup, so log lines go to stderr.
 		os.Exit(runBackupCommand(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, func() (config.Config, error) {
 			cfg, err := config.Load()
@@ -43,7 +44,7 @@ func main() {
 		}))
 	}
 	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
-		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore]")
+		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore|deletions]")
 		os.Exit(2)
 	}
 

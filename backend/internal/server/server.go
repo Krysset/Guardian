@@ -90,6 +90,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 func Configure(cfg config.Config, keys *auth.Keys) {
 	httpx.Configure(cfg)
 	web.Configure(cfg)
+	db.DeletionGrace = cfg.DeletionGrace
 	oidc.SetKeys(keys)
 	web.SendLogoutNotices = oidc.SendLogoutNotices
 }

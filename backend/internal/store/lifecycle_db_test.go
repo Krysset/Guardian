@@ -487,7 +487,7 @@ func TestSoftDeleteLocksTheAccountOutEverywhere(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notices, err := db.SoftDeleteAccount(acct.ID)
+	notices, err := db.SoftDeleteAccount(acct.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,5 +951,27 @@ func TestLastBackupTimeComesFromTheAuditLog(t *testing.T) {
 	got, err := db.LastBackupTime()
 	if err != nil || time.Since(got) < 59*time.Minute || time.Since(got) > 61*time.Minute {
 		t.Errorf("last backup = %v (%v), want an hour ago", got, err)
+	}
+}
+
+func TestDeletedAccountsAreErasedAfterTheGracePeriod(t *testing.T) {
+	testutil.Reset(t)
+	due := testutil.CreateAccount(t, "due")
+	waiting := testutil.CreateAccount(t, "waiting")
+	for _, a := range []db.Account{due, waiting} {
+		if _, err := db.SoftDeleteAccount(a.ID, a.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.Exec(t, `UPDATE account SET erase_after = now() - interval '1 minute' WHERE id = $1`, due.ID)
+	erased, err := db.EraseDueAccounts()
+	if err != nil || len(erased) != 1 || erased[0] != due.ID {
+		t.Fatalf("erased %v (%v), want only the due account", erased, err)
+	}
+	if _, err := db.GetDeletedAccount(waiting.ID); err != nil {
+		t.Error("an account still in its grace period was erased")
+	}
+	if err := db.EraseAccount(testutil.CreateAccount(t, "live").ID); !errors.Is(err, db.ErrNotDeleted) {
+		t.Errorf("erasing a live account: %v", err)
 	}
 }

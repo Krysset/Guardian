@@ -21,7 +21,9 @@ const backupUsage = `usage:
   guardian backup [--execute --reason TEXT] (--recipient KEY ... | --recipients-file FILE) [--without-audit] [--out FILE]
   guardian backup verify [--identity-file FILE] [FILE|-]
   guardian backup decrypt --identity-file FILE [--out FILE] [FILE|-]
-  guardian restore [--execute --reason TEXT --confirm HOST] [--identity-file FILE] [--allow-other-issuer] [FILE|-]
+  guardian restore [--execute --reason TEXT --confirm HOST] [--identity-file FILE] [--allow-other-issuer]
+                   [--apply-deletions FILE] [FILE|-]
+  guardian deletions export [--out FILE]
 
 Without --execute, backup and restore only show what they would do. See docs/INSTALL.md, "Backup and restore".`
 
@@ -48,13 +50,19 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	if command == "backup" && len(args) > 0 && (args[0] == "verify" || args[0] == "decrypt") {
 		command, args = "backup "+args[0], args[1:]
 	}
+	if command == "deletions" {
+		if len(args) == 0 || args[0] != "export" {
+			return usage("")
+		}
+		command, args = "deletions export", args[1:]
+	}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var (
-		execute, withoutAudit, otherIssuer bool
-		reason, recipientsFile, out        string
-		identityFile, confirm              string
-		recipients                         listFlag
+		execute, withoutAudit, otherIssuer   bool
+		reason, recipientsFile, out          string
+		identityFile, confirm, deletionsFile string
+		recipients                           listFlag
 	)
 	switch command {
 	case "backup":
@@ -75,12 +83,15 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		fs.StringVar(&confirm, "confirm", "", "")
 		fs.StringVar(&identityFile, "identity-file", "", "")
 		fs.BoolVar(&otherIssuer, "allow-other-issuer", false, "")
+		fs.StringVar(&deletionsFile, "apply-deletions", "", "")
+	case "deletions export":
+		fs.StringVar(&out, "out", "", "")
 	}
 	if err := fs.Parse(args); err != nil {
 		return usage(err.Error())
 	}
 	rest := fs.Args()
-	wantsFile := command != "backup"
+	wantsFile := command != "backup" && command != "deletions export"
 	if (!wantsFile && len(rest) > 0) || len(rest) > 1 {
 		return usage("unexpected arguments: " + strings.Join(rest, " "))
 	}
@@ -137,9 +148,34 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	ctx := context.Background()
 	opt := backup.Options{Issuer: cfg.IssuerURL, KeyEncryptionKey: cfg.KeyEncryptionKey, Execute: execute, Reason: reason}
 
+	if command == "deletions export" {
+		w, finish, err := output(out, stdout)
+		if err != nil {
+			return fail(err)
+		}
+		n, err := backup.ExportDeletions(ctx, conn, w)
+		if err := finish(err); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stderr, "Wrote %d deletion log entries.\n", n)
+		return 0
+	}
+
 	if command == "restore" {
+		var deletions []db.Deletion
+		if deletionsFile != "" {
+			f, err := os.Open(deletionsFile)
+			if err != nil {
+				return fail(err)
+			}
+			deletions, err = backup.ReadDeletions(f)
+			f.Close()
+			if err != nil {
+				return fail(err)
+			}
+		}
 		err := backup.Restore(ctx, conn, backup.RestoreOptions{
-			Options: opt, Confirm: confirm, Identities: identities, AllowOtherIssuer: otherIssuer,
+			Options: opt, Confirm: confirm, Identities: identities, AllowOtherIssuer: otherIssuer, Deletions: deletions,
 		}, in, stderr)
 		if err != nil {
 			return fail(err)

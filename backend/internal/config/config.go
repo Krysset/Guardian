@@ -36,6 +36,9 @@ type Config struct {
 	SessionIdleTimeout time.Duration
 	// SessionMaxLifetime ends a sign-in session this long after sign-in, however active it is.
 	SessionMaxLifetime time.Duration
+	// DeletionGrace is how long a deleted account waits before it is erased; an administrator can restore
+	// it until then.
+	DeletionGrace time.Duration
 
 	// HelpURL and PrivacyURL are the Help and Privacy links in the footer of the sign-in pages.
 	// Each link is left out when its address is empty.
@@ -118,6 +121,7 @@ func Load() (Config, error) {
 		AdminInitialPassword: os.Getenv("ADMIN_INITIAL_PASSWORD"),
 		SessionIdleTimeout:   7 * 24 * time.Hour,
 		SessionMaxLifetime:   30 * 24 * time.Hour,
+		DeletionGrace:        30 * 24 * time.Hour,
 	}
 
 	var err error
@@ -172,6 +176,7 @@ func Load() (Config, error) {
 	}
 	duration("SESSION_IDLE_TIMEOUT", &cfg.SessionIdleTimeout)
 	duration("SESSION_MAX_LIFETIME", &cfg.SessionMaxLifetime)
+	duration("DELETION_GRACE_PERIOD", &cfg.DeletionGrace)
 	if cfg.SessionIdleTimeout > cfg.SessionMaxLifetime {
 		fail("SESSION_IDLE_TIMEOUT (%s) must not be longer than SESSION_MAX_LIFETIME (%s)", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime)
 	}

@@ -362,3 +362,13 @@ func Session(t testing.TB, accountID string) (db.Session, string) {
 	}
 	return s, cookie
 }
+
+// AccountID returns the id of the account with this username.
+func AccountID(t testing.TB, username string) string {
+	t.Helper()
+	acct, _, err := db.GetAccountForLogin(username)
+	if err != nil {
+		t.Fatalf("account %s: %v", username, err)
+	}
+	return acct.ID
+}

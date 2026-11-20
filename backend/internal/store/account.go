@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -118,11 +119,16 @@ func TouchLogin(id string) {
 	GetDatabaseConnection().Exec(`UPDATE account SET last_login_at = now() WHERE id = $1`, id)
 }
 
-// SoftDeleteAccount disables the account and ends all its sessions and refresh tokens, in one
-// transaction. From then on every refresh fails, and userinfo refuses the account's access tokens. It
-// returns the back-channel logouts to send, so apps that support them drop the user at once.
-// It refuses to delete the last administrator (ErrLastAdmin).
-func SoftDeleteAccount(id string) ([]LogoutNotice, error) {
+// DeletionGrace is how long a deleted account waits before it is erased (DELETION_GRACE_PERIOD). An
+// administrator can restore it until then.
+var DeletionGrace = 30 * 24 * time.Hour
+
+// SoftDeleteAccount deletes an account: it is disabled at once, its sessions and refresh tokens end, and
+// it is erased after DeletionGrace. Its group memberships are taken away (a deleted account must not
+// count as a member, for example as an administrator) and kept with the account, to be given back if it
+// is restored. by is who deleted it. It returns the back-channel logouts to send, so apps that support
+// them drop the user at once, and refuses to delete the last administrator (ErrLastAdmin).
+func SoftDeleteAccount(id, by string) ([]LogoutNotice, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
 		return nil, err
@@ -148,15 +154,19 @@ func SoftDeleteAccount(id string) ([]LogoutNotice, error) {
 	if err != nil {
 		return nil, err
 	}
-	stmts := []string{
-		`UPDATE account SET deleted_at = now(), status = 'disabled' WHERE id = $1 AND deleted_at IS NULL`,
-		// A deleted account must not keep counting as a group member, for example as an administrator.
-		`DELETE FROM group_member WHERE account_id = $1`,
+	res, err := tx.Exec(`UPDATE account SET deleted_at = now(), status = 'disabled', deleted_by = NULLIF($2, '')::uuid,
+			erase_after = now() + make_interval(secs => $3),
+			held_memberships = (SELECT COALESCE(jsonb_agg(jsonb_build_object('group_id', m.group_id, 'added_by', m.added_by,
+				'added_at', m.added_at, 'expires_at', m.expires_at)), '[]') FROM group_member m WHERE m.account_id = $1)
+		 WHERE id = $1 AND deleted_at IS NULL`, id, by, DeletionGrace.Seconds())
+	if err != nil {
+		return nil, err
 	}
-	for _, q := range stmts {
-		if _, err := tx.Exec(q, id); err != nil {
-			return nil, err
-		}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`DELETE FROM group_member WHERE account_id = $1`, id); err != nil {
+		return nil, err
 	}
 	return notices, tx.Commit()
 }

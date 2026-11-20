@@ -100,8 +100,8 @@ Everything a visitor has, plus:
 | U11 | Manage two-factor: authenticator app on or off, new recovery codes (0.3); security keys and passkeys, listed, renamed and removed (0.5). Warned before removing their last way to recover the account. | 0.3, keys 0.5 / 0.4, keys 0.5 | API done (keys 0.5) |
 | U12 | See their sessions (device or browser, IP address partly masked until shown, when signed in, last active, which is this one); sign out one or all. | 0.4 / 0.4 | planned |
 | U13 | See the apps they use and what each can see; remove an app's access. | 0.4 / 0.4 | planned |
-| U14 | Download their data as JSON. | 0.3 / 0.4 | planned |
-| U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | planned |
+| U14 | Download their data as JSON. | 0.3 / 0.4 | API done |
+| U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | API done |
 | U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | API done for username, email and password; the rest as each arrives |
 | U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | done for password and email changes; the two-factor ones come with two-factor |
 | U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | planned |
@@ -149,8 +149,8 @@ Everything an app admin has for every app, and everything a group owner has for 
 | A4 | Change an account's profile, username and email. | 0.1 / 0.4 | API done |
 | A5 | Disable and re-enable an account; disabling signs it out everywhere. Refused for the last administrator. | 0.1 / 0.4 | API done |
 | A6 | Set a temporary password, typed twice, which signs the account out everywhere and must be changed at the next sign-in (U3). From 0.5 Guardian can also generate one and copy it to the clipboard. | 0.1 / 0.4 | API done |
-| A7 | Delete an account: disabled at once, erased after the grace period (0.3), or erased at once ("erase now", 0.3). | 0.1, grace and erase 0.3 / 0.4 | API done (soft delete) |
-| A8 | Restore a deleted account during its grace period. | 0.3 / 0.4 | planned |
+| A7 | Delete an account: disabled at once, erased after the grace period (0.3), or erased at once ("erase now", 0.3). | 0.1, grace and erase 0.3 / 0.4 | API done |
+| A8 | Restore a deleted account during its grace period. | 0.3 / 0.4 | API done |
 | A9 | Reset an account's two-factor, giving a reason; the user is emailed. | 0.3 / 0.4 | API done |
 | A10 | Sign an account out everywhere without disabling it. Admins do not see the account's sessions. | 0.1 / 0.4 | planned |
 
@@ -187,7 +187,7 @@ Works in the CLI and with Kubernetes, never in the management UI. Has no require
 | Id | Requirement | Release | Status |
 |---|---|---|---|
 | P1 | Run database migrations (`guardian migrate`, or at startup). | 0.1 | done |
-| P2 | Back up, verify, restore, and export the deletion log. | 0.2 | done (the deletion log comes in 0.3) |
+| P2 | Back up, verify, restore, and export the deletion log. | 0.2 | done |
 | P3 | Rotate or emergency-revoke signing keys; add and promote encryption keys. | 0.3 | planned |
 | P4 | Reset two-factor for everyone (dry run by default, confirmation required). | 0.3 | planned |
 | P5 | Set the first admin password through a Secret. | 0.1 | done |

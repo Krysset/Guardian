@@ -18,7 +18,7 @@ func setValid(t *testing.T) {
 		"DB_PORT": "", "DB_SSLMODE": "", "DB_MAX_CONNS": "",
 		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEY": validKey,
 		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "",
-		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "",
+		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "", "DELETION_GRACE_PERIOD": "",
 		"TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
 		"LOG_FORMAT": "", "LOG_LEVEL": "",
 		"SMTP_HOST": "", "SMTP_PORT": "", "SMTP_USERNAME": "", "SMTP_PASSWORD": "", "SMTP_SECURITY": "",
@@ -58,7 +58,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"ALLOWED_ORIGINS":      " https://a.example/ , ,https://b.example",
 		"SESSION_IDLE_TIMEOUT": "2h", "SESSION_MAX_LIFETIME": "12h", "TRUSTED_PROXY_HOPS": "2", "ADMIN_INITIAL_PASSWORD": "pw",
 		"DB_PORT": "6543", "DB_SSLMODE": "require", "DB_MAX_CONNS": "5", "DB_PASSWORD": "secret",
-		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug",
+		"LOG_FORMAT": "TEXT", "LOG_LEVEL": "Debug", "DELETION_GRACE_PERIOD": "168h",
 		"HELP_URL": "https://example.com/help", "PRIVACY_URL": " https://example.com/privacy ",
 	} {
 		t.Setenv(k, v)
@@ -66,6 +66,9 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DeletionGrace != 7*24*time.Hour {
+		t.Errorf("deletion grace = %s", cfg.DeletionGrace)
 	}
 	if cfg.IssuerURL != "https://auth.example.com" {
 		t.Errorf("issuer = %q, the trailing slash must be removed", cfg.IssuerURL)

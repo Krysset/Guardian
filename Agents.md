@@ -81,6 +81,13 @@ current: they are the hand-off between sessions.
 - **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
   - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
+  - **Part 4, account deletion: built, uncommitted.** `store/deletion.go` (`SoftDeleteAccount(id, by)` sets
+    `deleted_by`, `erase_after`, `held_memberships`; `RestoreAccount`; `EraseAccount`/`EraseAccountTx` delete the
+    row, scrub the audit entries (`personalKeys`, IP) and log the id in `deletion_log`; `EraseDueAccounts` runs in
+    maintenance; `ExportAccountData`). `api/deletion.go`: `DELETE /me`, `GET /me/export`, `GET /accounts/deleted`,
+    `POST /accounts/{id}/restore`, `POST /accounts/{id}/erase`. `backup/deletions.go`: the deletion log file
+    (`GUARDIAN-DELETIONS 1` + JSON lines), `guardian deletions export`, `restore --apply-deletions`. Config
+    `DELETION_GRACE_PERIOD` (720h). Schema changed again (account columns, `deletion_log`).
   - **Part 3, two-factor: built, uncommitted.** See "Two-factor" below. `rsc.io/qr` vendored 2026-11-20.
   - **Part 2, re-authentication: built, uncommitted.** `httpx.RequireReauth(w, r)` in a handler answers
     `403 reauth_required` unless the session's `auth_time` is under 5 minutes old (`httpx.ReauthWindow`);
@@ -88,7 +95,7 @@ current: they are the hand-off between sessions.
     password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
     today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
     change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
-- Tests: 187, all passing with `-race` (`docs/TESTING.md`).
+- Tests: 193, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.

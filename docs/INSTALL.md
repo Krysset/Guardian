@@ -139,14 +139,17 @@ kubectl -n auth exec deploy/guardian -- /guardian backup --execute --reason "bef
   --recipient age1... > guardian-$(date +%F).gbk
 ```
 
-- The file holds accounts, groups, apps, consents, signing keys (still encrypted with `key-encryption-key`) and
-  the audit log (`--without-audit` leaves it out). Sessions and tokens are left out: everyone signs in again
+- The file holds accounts, groups, apps, consents, two-factor, signing keys (still encrypted with
+  `key-encryption-key`), the deletion log and the audit log (`--without-audit` leaves it out). Sessions and tokens are left out: everyone signs in again
   after a restore.
 - It starts with a manifest in the clear (times, counts, no personal data). Check a file at any time, without
   the private key: `guardian backup verify guardian-2026-11-19.gbk`.
 - Every backup is recorded in the audit log, and `guardian_backup_last_success_timestamp_seconds` on the
   metrics port tells when the last one was taken: alert when it gets old.
 - **The backup is useless without `key-encryption-key`.** Keep that key with the age private key.
+- **Keep the deletion log next to your backups.** A backup still holds accounts erased after it was taken. Export
+  the log (ids of erased accounts only, no personal data) whenever you take a backup, and before you restore:
+  `kubectl -n auth exec deploy/guardian -- /guardian deletions export > deletions-$(date +%F).log`.
 
 `guardian backup verify` and `guardian backup decrypt` need no database and no configuration, so they run on
 your machine with the image (`docker run --rm -i <image> backup verify - < file.gbk`) or with a local build
@@ -171,6 +174,9 @@ needs the same release (until 1.0) and the same `key-encryption-key` as the inst
    ```
    The dry run does the whole restore in a transaction and rolls it back, so a dry run that succeeds means the
    real one will. `--confirm` is the issuer's host, typed back.
+   With the newest deletion log, add `--apply-deletions deletions.log` (copy the file into the pod first, for
+   example with `kubectl cp`): accounts erased after the backup was taken are erased again, in the same
+   transaction, so erased people stay erased.
 4. `kubectl -n auth rollout restart deploy/guardian`, so every replica loads the restored signing keys.
 
 ### After a restore

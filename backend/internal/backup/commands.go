@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	db "guardian/internal/store"
 	"guardian/migrations"
 )
 
@@ -40,6 +41,9 @@ type RestoreOptions struct {
 	Identities io.Reader
 	// AllowOtherIssuer restores a backup taken under another issuer URL.
 	AllowOtherIssuer bool
+	// Deletions is a deletion log newer than the backup (ReadDeletions): the accounts in it that the backup
+	// still holds are erased in the same transaction.
+	Deletions []db.Deletion
 }
 
 // RecipientList returns the recipients without blank lines and comments.
@@ -181,6 +185,10 @@ func Restore(ctx context.Context, db *sql.DB, opt RestoreOptions, in io.Reader, 
 	if err != nil {
 		return err
 	}
+	erased, err := applyDeletions(ctx, tx, opt.Deletions)
+	if err != nil {
+		return fmt.Errorf("apply the deletion log: %w", err)
+	}
 	if _, err := io.Copy(io.Discard, payload); err != nil {
 		return fmt.Errorf("%w: %v", ErrDamaged, err)
 	}
@@ -192,12 +200,14 @@ func Restore(ctx context.Context, db *sql.DB, opt RestoreOptions, in io.Reader, 
 		fmt.Fprintf(report, "Dry run: the backup taken %s at %s restores cleanly into this database; nothing was changed.\n",
 			m.CreatedAt.Format(time.RFC3339), m.Issuer)
 		printCounts(report, counts)
+		printDeletions(report, opt.Deletions, erased)
 		fmt.Fprintf(report, "Run again with --execute, --reason and --confirm=%s to restore it.\n", IssuerHost(opt.Issuer))
 		return nil
 	}
 	if err := audit(ctx, tx, "backup.restored", map[string]any{
 		"reason": opt.Reason, "backup_created_at": m.CreatedAt, "backup_issuer": m.Issuer,
 		"audit_log_included": m.AuditLogIncluded, "tables": countMap(counts),
+		"deletions_applied": len(opt.Deletions), "accounts_erased": erased,
 	}); err != nil {
 		return err
 	}
@@ -206,6 +216,7 @@ func Restore(ctx context.Context, db *sql.DB, opt RestoreOptions, in io.Reader, 
 	}
 	fmt.Fprintf(report, "Restored the backup taken %s at %s.\n", m.CreatedAt.Format(time.RFC3339), m.Issuer)
 	printCounts(report, counts)
+	printDeletions(report, opt.Deletions, erased)
 	fmt.Fprintln(report, "Restart Guardian now (kubectl rollout restart), so it loads the restored signing keys. "+
 		"Then go through the post-restore checklist in docs/INSTALL.md.")
 	return nil

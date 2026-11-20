@@ -33,7 +33,8 @@ var tables = []table{
 	{"app_user", "app_id, account_id"},
 	{"signing_key", "kid"},
 	{"account_mfa", "id"},
-	{auditLog, "id"},
+	{"deletion_log", "account_id"},
+	{auditLog, "id"}, // last: a backup without the audit log leaves out the last table
 }
 
 const auditLog = "audit_log"

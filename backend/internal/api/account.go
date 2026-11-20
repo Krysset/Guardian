@@ -460,23 +460,6 @@ func updateAccount(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, acct)
 }
 
-// deleteAccount disables the account at once, ends all of its sessions and removes it from its groups.
-func deleteAccount(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "account")
-	if _, err := db.GetAccount(id); err != nil {
-		accountFail(w, err)
-		return
-	}
-	notices, err := db.SoftDeleteAccount(id)
-	if err != nil {
-		accountFail(w, err)
-		return
-	}
-	oidc.SendLogoutNotices(notices) // apps that support back-channel logout drop the user at once
-	db.Audit("account.deleted", httpx.AccountID(r), "", httpx.ClientIP(r), map[string]any{"target": id})
-	httpx.NoContent(w)
-}
-
 // setAccountPassword is how an administrator helps someone who cannot reset their own password (for
 // example an account without an email). The user must choose a new password at their next sign-in, and
 // all of the account's sessions end.

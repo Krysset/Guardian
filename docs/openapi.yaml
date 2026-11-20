@@ -96,6 +96,37 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Me' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [me]
+      summary: Delete the signed-in account
+      description: >-
+        A protected change (see POST /me/reauth), confirmed by typing the username. The account is signed out
+        everywhere at once and erased after the grace period; an administrator can restore it until then.
+        Refused for the last administrator (409 last_admin).
+      operationId: deleteMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { type: string }
+      responses:
+        '200':
+          description: Deleted; the session cookie is cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  erase_after: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409': { $ref: '#/components/responses/Conflict' }
     patch:
       tags: [me]
       summary: Change the signed-in account's profile
@@ -121,6 +152,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/ProtectedChange' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/export:
+    get:
+      tags: [me]
+      summary: Download my data
+      description: >-
+        Everything Guardian holds about the signed-in account, as a JSON file: the profile, two-factor status,
+        groups, consents, apps used, sessions, and its audit entries. Secrets (password hash, two-factor
+        secrets, tokens) are left out.
+      operationId: exportMe
+      responses:
+        '200':
+          description: The data, as an attachment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exported_at: { type: string, format: date-time }
+                  account: { $ref: '#/components/schemas/Account' }
+                  two_factor: { type: object }
+                  groups: { type: array, items: { type: object } }
+                  consents: { type: array, items: { type: object } }
+                  apps_used: { type: array, items: { type: object } }
+                  sessions: { type: array, items: { type: object } }
+                  audit_log: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /me/reauth:
     post:
@@ -480,10 +538,81 @@ paths:
     delete:
       tags: [accounts]
       summary: Delete an account
-      description: The account is disabled at once, all of its sessions end, apps with back-channel logout are told, and it leaves its groups. The last administrator cannot be deleted (409 last_admin).
+      description: >-
+        The account is disabled at once, all of its sessions end, apps with back-channel logout are told, and
+        it leaves its groups. It is erased after the grace period (DELETION_GRACE_PERIOD, 30 days by default),
+        and can be restored until then (POST /accounts/{account}/restore). The last administrator cannot be
+        deleted (409 last_admin).
       operationId: deleteAccount
       responses:
         '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /accounts/deleted:
+    get:
+      tags: [accounts]
+      summary: Accounts waiting to be erased
+      description: Deleted accounts in their grace period, the soonest to be erased first.
+      operationId: listDeletedAccounts
+      responses:
+        '200':
+          description: The deleted accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/DeletedAccount' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounts/{account}/restore:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Restore a deleted account
+      description: >-
+        During the grace period only. The account is active again and gets back its group memberships, except
+        in groups deleted since and memberships that expired since. It signs in again; its sessions stay ended.
+      operationId: restoreAccount
+      responses:
+        '200':
+          description: The restored account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts/{account}/erase:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Erase an account now
+      description: >-
+        "Erase now": deletes the account for good, without waiting for the grace period, deleting it first if
+        it is not deleted yet (refused for the last administrator). Its IP addresses and personal details are
+        removed from its audit entries, and its id goes into the deletion log. Confirmed by typing its username.
+      operationId: eraseAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { type: string }
+      responses:
+        '204': { description: Erased. }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1203,6 +1332,15 @@ components:
       type: string
       enum: [groups, anyone]
 
+    DeletedAccount:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        deleted_at: { type: string, format: date-time }
+        erase_after: { type: string, format: date-time }
+        deleted_by: { type: string, format: uuid, description: The account that deleted it. }
+        deleted_by_itself: { type: boolean }
     Account:
       type: object
       required: [id, username, email_verified, status, must_change_password, created_at, updated_at]

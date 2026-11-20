@@ -42,6 +42,17 @@ func cleanup() {
 			slog.Error("maintenance query failed", "error", err)
 		}
 	}
+	// Deleted accounts whose grace period has ended.
+	erased, err := EraseDueAccounts()
+	for _, id := range erased {
+		Audit("account.erased", "", "", "", map[string]any{"target": id, "by": "schedule"})
+	}
+	if err != nil {
+		slog.Error("erasing deleted accounts failed", "error", err)
+	}
+	if len(erased) > 0 {
+		slog.Info("erased deleted accounts", "count", len(erased))
+	}
 }
 
 // LastBackupTime returns when the last backup was written (the newest backup.created audit entry), or the

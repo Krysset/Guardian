@@ -326,7 +326,7 @@ func TestTheLastAdministratorCannotBeRemoved(t *testing.T) {
 	if err := db.AddGroupMember(admins, seeded.ID, "", &later); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("giving the only administrator an expiry: %v, want ErrLastAdmin", err)
 	}
-	if _, err := db.SoftDeleteAccount(seeded.ID); !errors.Is(err, db.ErrLastAdmin) {
+	if _, err := db.SoftDeleteAccount(seeded.ID, ""); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("deleting the only administrator: %v, want ErrLastAdmin", err)
 	}
 	if ok, _ := db.IsAdmin(seeded.ID); !ok {
@@ -362,7 +362,7 @@ func TestTheLastAdministratorCannotBeRemoved(t *testing.T) {
 		t.Error("the removed administrator is still an administrator")
 	}
 	// ...and now the second one is the last
-	if _, err := db.SoftDeleteAccount(second.ID); !errors.Is(err, db.ErrLastAdmin) {
+	if _, err := db.SoftDeleteAccount(second.ID, ""); !errors.Is(err, db.ErrLastAdmin) {
 		t.Errorf("deleting the administrator that is now the last: %v, want ErrLastAdmin", err)
 	}
 	// removing someone from another group is never affected by the rule
@@ -408,7 +408,7 @@ func TestADeletedAccountLeavesItsGroups(t *testing.T) {
 	g := testutil.Group(t, "crew", "")
 	gone := testutil.AdminAccount(t, "gone")
 	testutil.AddMember(t, g, gone.ID)
-	if _, err := db.SoftDeleteAccount(gone.ID); err != nil {
+	if _, err := db.SoftDeleteAccount(gone.ID, ""); err != nil {
 		t.Fatalf("deleting one of two administrators: %v", err)
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM group_member WHERE account_id = $1`, gone.ID); n != 0 {

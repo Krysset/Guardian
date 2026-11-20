@@ -77,6 +77,7 @@ func populate(t *testing.T) {
 		VALUES ($1, 'webauthn', 'YubiKey', '\x00ff10'::bytea, '\xdead'::bytea, 7)`, alice.ID)
 	testutil.Exec(t, `INSERT INTO audit_log (event_type, actor_account_id, ip_address, metadata)
 		VALUES ('login.success', $1, '2001:db8::1', '{"k":[1,"two"]}')`, alice.ID)
+	testutil.Exec(t, `INSERT INTO deletion_log (account_id, erased_at) VALUES (gen_random_uuid(), now() - interval '3 days')`)
 	testutil.Exec(t, `INSERT INTO session (account_id, session_hash, expires_at, ip_address) VALUES ($1, 'h', now() + interval '1 day', '10.0.0.1')`, alice.ID)
 }
 
@@ -260,6 +261,57 @@ func TestEveryTableIsBackedUpOrLeftOutOnPurpose(t *testing.T) {
 		}
 		if !slices.Contains(known, name) {
 			t.Errorf("table %s is neither in the backup nor in notBackedUp (internal/backup/database.go)", name)
+		}
+	}
+}
+
+func TestRestoreAppliesANewerDeletionLog(t *testing.T) {
+	testutil.RequireTestDB(t)
+	ctx := context.Background()
+	conn := db.GetDatabaseConnection()
+	fresh(t)
+	keep := testutil.CreateAccount(t, "keep")
+	gone := testutil.CreateAccount(t, "gone")
+	file, identity := takeBackup(t, true)
+
+	// After the backup, "gone" is deleted and erased; the deletion log says so.
+	if _, err := db.SoftDeleteAccount(gone.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EraseAccount(gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	var exported bytes.Buffer
+	if n, err := ExportDeletions(ctx, conn, &exported); err != nil || n != 1 {
+		t.Fatalf("export: %d %v", n, err)
+	}
+	deletions, err := ReadDeletions(bytes.NewReader(exported.Bytes()))
+	if err != nil || len(deletions) != 1 || deletions[0].AccountID != gone.ID {
+		t.Fatalf("read back: %v %v", deletions, err)
+	}
+
+	fresh(t)
+	var report bytes.Buffer
+	err = Restore(ctx, conn, RestoreOptions{Options: opts(true), Confirm: "auth.test", Identities: strings.NewReader(identity),
+		Deletions: deletions}, bytes.NewReader(file), &report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if testutil.Count(t, `SELECT count(*) FROM account WHERE id = $1`, gone.ID) != 0 {
+		t.Error("the erased account came back with the backup")
+	}
+	if testutil.Count(t, `SELECT count(*) FROM account WHERE id = $1`, keep.ID) != 1 {
+		t.Error("an account that was not erased is missing")
+	}
+	if testutil.Count(t, `SELECT count(*) FROM deletion_log WHERE account_id = $1`, gone.ID) != 1 {
+		t.Error("the restored deletion log lacks the applied entry")
+	}
+	if !strings.Contains(report.String(), "1 accounts erased") {
+		t.Errorf("report: %s", report.String())
+	}
+	for _, bad := range []string{"", "GUARDIAN-DELETIONS 1\nnot json\n", "GUARDIAN-DELETIONS 1\n{\"account_id\":\"x\"}\n"} {
+		if _, err := ReadDeletions(strings.NewReader(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
 		}
 	}
 }

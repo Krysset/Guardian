@@ -66,7 +66,13 @@ CREATE TABLE IF NOT EXISTS account (
 	created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- OIDC `updated_at`
 	last_login_at        TIMESTAMPTZ,
-	deleted_at           TIMESTAMPTZ                    -- soft delete / GDPR grace period
+
+	-- Deletion: the account is disabled at once and erased (deleted, ids into deletion_log) after the
+	-- grace period, during which an administrator can restore it.
+	deleted_at           TIMESTAMPTZ,
+	deleted_by           UUID,                          -- who deleted it (itself or an admin); no FK
+	erase_after          TIMESTAMPTZ,                   -- when maintenance erases it
+	held_memberships     JSONB                          -- its group memberships, given back on restore
 );
 -- Case-insensitive uniqueness (no citext extension needed)
 CREATE UNIQUE INDEX IF NOT EXISTS ux_account_username ON account (lower(username));
@@ -354,6 +360,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_log (actor_account_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS ix_audit_event ON audit_log (event_type, occurred_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- DELETION LOG: the ids of erased accounts, and nothing else. Backups carry it, and a restore can apply a
+-- newer one (`guardian restore --apply-deletions`), so an erased account stays erased.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deletion_log (
+	account_id  UUID PRIMARY KEY,
+	erased_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =============================================================================
 -- SEED DATA - each block runs only if its table is empty.
