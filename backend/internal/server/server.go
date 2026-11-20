@@ -39,13 +39,17 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	if err := auth.SetEncryptionKey(cfg.KeyEncryptionKey); err != nil {
+	if err := UseKeyring(cfg); err != nil {
 		return err
 	}
 	keys, err := auth.LoadKeys()
 	if err != nil {
 		return fmt.Errorf("load signing keys: %w", err)
 	}
+	schedule := auth.DefaultSchedule
+	schedule.Lifetime = cfg.SigningKeyLifetime
+	auth.MaintainKeys(keys, schedule, cfg.KeyringFile) // re-encrypts and sets the metrics at once
+	auth.RunKeyMaintenance(ctx, keys, schedule, cfg.KeyringFile)
 	Configure(cfg, keys)
 	if m := cfg.Mail; m.Enabled() {
 		mail.Configure(mail.SMTP{Host: m.Host, Port: m.Port, Username: m.Username, Password: m.Password,
@@ -83,6 +87,20 @@ func Run(ctx context.Context, cfg config.Config) error {
 	public.Shutdown(shutdownCtx)
 	internal.Shutdown(shutdownCtx)
 	return runErr
+}
+
+// UseKeyring parses the configured keyring and makes it the encryption keyring. It refuses one that lacks
+// a key the stored values need: Guardian would fail to decrypt its signing keys or authenticator apps.
+func UseKeyring(cfg config.Config) error {
+	ring, err := auth.ParseKeyring(cfg.Keyring)
+	if err != nil {
+		return fmt.Errorf("the encryption keyring: %w", err)
+	}
+	if err := auth.CheckKeyring(ring); err != nil {
+		return err
+	}
+	auth.SetKeyring(ring)
+	return nil
 }
 
 // Configure hands the validated configuration and the signing keys to the HTTP packages. It must be

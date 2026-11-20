@@ -81,21 +81,29 @@ current: they are the hand-off between sessions.
 - **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
   - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
-  - **Part 4, account deletion: built, uncommitted.** `store/deletion.go` (`SoftDeleteAccount(id, by)` sets
+  - **Part 5, keys: built, uncommitted.** `auth/crypto.go` is the keyring (`ParseKeyring`, `SetKeyring`,
+    `Encrypt`/`Decrypt` with `AAD(table, column, row)`, `Seal`/`Open` for browser-held tokens). `auth/keys.go`:
+    `Keys` reloads (`Reload`, `ActiveKID`). `auth/maintenance.go`: `MaintainKeys` (reread the keyring file,
+    `db.AdvanceSigningKeys`, reload keys, `Reencrypt`, metric) every minute. `store/signingkeys.go`: the stages
+    and `EmergencyRotate`; `store/keyring.go`: the encrypted values. `cmd/guardian/keys.go`: `keys list|rotate|
+    reencrypt`, `mfa reset-totp --all`. `server.UseKeyring(cfg)`. Config: `KEY_ENCRYPTION_KEYS_FILE` or
+    `KEY_ENCRYPTION_KEYS`, `SIGNING_KEY_LIFETIME`. Backups: `Manifest.KeyringKeys` ("id:fingerprint").
+    Schema changed (signing_key stages). Tests set keyrings with `auth.SetEncryptionKey` (one key "k1").
+  - **Part 4, account deletion: committed (`131cc81`).** `store/deletion.go` (`SoftDeleteAccount(id, by)` sets
     `deleted_by`, `erase_after`, `held_memberships`; `RestoreAccount`; `EraseAccount`/`EraseAccountTx` delete the
     row, scrub the audit entries (`personalKeys`, IP) and log the id in `deletion_log`; `EraseDueAccounts` runs in
     maintenance; `ExportAccountData`). `api/deletion.go`: `DELETE /me`, `GET /me/export`, `GET /accounts/deleted`,
     `POST /accounts/{id}/restore`, `POST /accounts/{id}/erase`. `backup/deletions.go`: the deletion log file
     (`GUARDIAN-DELETIONS 1` + JSON lines), `guardian deletions export`, `restore --apply-deletions`. Config
     `DELETION_GRACE_PERIOD` (720h). Schema changed again (account columns, `deletion_log`).
-  - **Part 3, two-factor: built, uncommitted.** See "Two-factor" below. `rsc.io/qr` vendored 2026-11-20.
-  - **Part 2, re-authentication: built, uncommitted.** `httpx.RequireReauth(w, r)` in a handler answers
+  - **Part 3, two-factor: committed (`9d95287`).** See "Two-factor" below. `rsc.io/qr` vendored 2026-11-20.
+  - **Part 2, re-authentication: committed.** `httpx.RequireReauth(w, r)` in a handler answers
     `403 reauth_required` unless the session's `auth_time` is under 5 minutes old (`httpx.ReauthWindow`);
     `Authenticate` puts `auth_time` in the context. `POST /api/v1/me/reauth` (`api/account.go`) checks the
     password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
     today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
     change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
-- Tests: 193, all passing with `-race` (`docs/TESTING.md`).
+- Tests: 197, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
@@ -128,7 +136,7 @@ current: they are the hand-off between sessions.
     - `internal/api/` — `/api/v1`, described in `docs/openapi.yaml`; `TestOpenAPIDescribesEveryRoute` fails when
       they drift apart. `account.go`, `groups.go`, `app.go`, `audit.go`, `machine.go` (`/apps/self`).
     - `internal/internalapi/` — `/metrics`, `/healthz`, `/readyz`.
-  - `internal/auth/` — argon2id, AES key encryption, RSA signing keys and JWKS.
+  - `internal/auth/` — argon2id, the encryption keyring, RSA signing keys and their schedule, JWKS, TOTP.
   - `internal/store/` — queries (imported as `db`); goose migrations at startup.
   - `migrations/00001_init.sql` — the whole data model, embedded. Edited in place until 1.0; it records a
     fingerprint of itself and Guardian refuses a database made by another revision, so **after any edit, existing

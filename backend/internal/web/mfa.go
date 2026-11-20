@@ -155,7 +155,7 @@ func verifyTOTP(accountID, code string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	secret, err := auth.Open(f.SealedSecret)
+	secret, err := auth.Decrypt(f.SealedSecret, TOTPSecretAAD(accountID))
 	if err != nil {
 		return false, err
 	}
@@ -165,6 +165,9 @@ func verifyTOTP(accountID, code string) (bool, error) {
 	}
 	return db.UseTOTPStep(f.ID, step)
 }
+
+// TOTPSecretAAD is the associated data of an account's stored authenticator-app secret.
+func TOTPSecretAAD(accountID string) string { return auth.AAD("account_mfa", "secret", accountID) }
 
 // ---- Setting up an authenticator app (shared with the API) ------------------------
 
@@ -263,7 +266,7 @@ func FinishTOTPSetup(acct db.Account, token, typed, ip string) error {
 	if !typedOneOf(typed, s.Codes, acct.ID) {
 		return ErrWrongCode
 	}
-	sealed, err := auth.Seal([]byte(s.Secret))
+	sealed, err := auth.Encrypt([]byte(s.Secret), TOTPSecretAAD(acct.ID))
 	if err != nil {
 		return err
 	}

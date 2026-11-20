@@ -92,17 +92,36 @@ func Enqueue(m Message) {
 	if !on {
 		return
 	}
+	inFlight.Add(1)
 	select {
 	case q <- m:
 	default:
+		inFlight.Done()
 		sent.WithLabelValues("dropped").Inc()
 		slog.Error("email queue is full; an email was dropped", "subject", m.Subject)
 	}
 }
 
+// inFlight counts the queued messages not yet sent or given up, for Wait.
+var inFlight sync.WaitGroup
+
 func work(q chan Message) {
 	for m := range q {
 		deliver(m)
+		inFlight.Done()
+	}
+}
+
+// Wait blocks until every queued message is sent or given up, or ctx ends. Commands that run once (and
+// then exit) call it, so their emails are not lost with the process.
+func Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { inFlight.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

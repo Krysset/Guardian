@@ -81,11 +81,15 @@ type RefreshToken struct {
 }
 
 type SigningKey struct {
-	KID                 string
-	Alg                 string
-	PublicJWK           []byte
-	PrivateKeyEncrypted string
-	Status              string
+	KID                 string     `json:"kid"`
+	Alg                 string     `json:"alg"`
+	PublicJWK           []byte     `json:"-"`
+	PrivateKeyEncrypted string     `json:"-"`
+	Status              string     `json:"status"` // pending, active, retiring or retired
+	CreatedAt           time.Time  `json:"created_at"`
+	ActivatedAt         *time.Time `json:"activated_at,omitempty"`
+	RetireAt            *time.Time `json:"retire_at,omitempty"`
+	RetiredAt           *time.Time `json:"retired_at,omitempty"`
 }
 
 // LogoutTarget is an app that must be told (back-channel) that a session ended.

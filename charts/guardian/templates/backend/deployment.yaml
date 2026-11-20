@@ -38,15 +38,14 @@ spec:
             - configMapRef:
                 name: {{ include "guardian.fullname" . }}
           env:
-            - name: KEY_ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
-                  key: {{ .Values.secrets.keys.keyEncryptionKey }}
+            # The keyring is a mounted file, so a changed Secret reaches Guardian without a restart
+            # (Kubernetes updates the file within a minute or two; Guardian rereads it every minute).
+            - name: KEY_ENCRYPTION_KEYS_FILE
+              value: /etc/guardian/keyring/keys
             - name: ADMIN_INITIAL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret }}
+                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
                   key: {{ .Values.secrets.keys.adminInitialPassword }}
             - name: DB_PASSWORD
               valueFrom:
@@ -77,9 +76,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: keyring
+              mountPath: /etc/guardian/keyring
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: keyring
+          secret:
+            secretName: {{ .Values.secrets.existingSecret }}
+            defaultMode: 0440   # readable by the pod's fsGroup (podSecurityContext)
+            items:
+              - key: {{ .Values.secrets.keys.keyEncryptionKeys }}
+                path: keys
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

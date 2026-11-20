@@ -298,16 +298,23 @@ CREATE TABLE IF NOT EXISTS session_app (
 );
 
 -- Keys for signing ID/access tokens; public half is served at /jwks.json
+-- Signing keys move through pending (published, not signing yet, so apps learn the key before it signs),
+-- active (exactly one signs), retiring (published until tokens it signed have expired) and retired (no
+-- longer published; the private key is wiped).
 CREATE TABLE IF NOT EXISTS signing_key (
 	kid                    TEXT PRIMARY KEY,
 	alg                    TEXT NOT NULL DEFAULT 'RS256',
 	public_jwk             JSONB NOT NULL,
-	private_key_encrypted  TEXT NOT NULL,              -- encrypt with a KMS/env key, never plaintext
+	private_key_encrypted  TEXT,                       -- keyring value (v1:<key id>:...); NULL once retired
 	status                 TEXT NOT NULL DEFAULT 'active'
-	                       CHECK (status IN ('active', 'retiring', 'retired')),  -- retiring = still published, no longer signs
+	                       CHECK (status IN ('pending', 'active', 'retiring', 'retired')),
 	created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	retire_at              TIMESTAMPTZ
+	activated_at           TIMESTAMPTZ,
+	retire_at              TIMESTAMPTZ,                -- retiring: when it stops being published
+	retired_at             TIMESTAMPTZ,
+	CHECK ((status = 'retired') = (private_key_encrypted IS NULL))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS ux_signing_key_active ON signing_key (alg) WHERE status = 'active';
 
 -- -----------------------------------------------------------------------------
 -- ONE-TIME TOKENS (password reset, email verification, re-authentication, invites)

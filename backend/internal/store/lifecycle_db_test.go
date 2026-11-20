@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -787,7 +788,8 @@ func TestEnsureSigningKeyCreatesExactlyOneUnderConcurrency(t *testing.T) {
 	}
 
 	testutil.Exec(t, `INSERT INTO signing_key (kid, alg, public_jwk, private_key_encrypted, status) VALUES
-		('k2', 'RS256', '{"kid":"k2"}', 'x', 'retiring'), ('k3', 'RS256', '{"kid":"k3"}', 'x', 'retired')`)
+		('k2', 'RS256', '{"kid":"k2"}', 'x', 'retiring'), ('k3', 'RS256', '{"kid":"k3"}', NULL, 'retired'),
+		('k4', 'RS256', '{"kid":"k4"}', 'x', 'pending')`)
 	published, err := db.GetPublishedSigningKeys()
 	if err != nil {
 		t.Fatal(err)
@@ -797,9 +799,92 @@ func TestEnsureSigningKeyCreatesExactlyOneUnderConcurrency(t *testing.T) {
 		kids = append(kids, k.KID)
 	}
 	sort.Strings(kids)
-	if len(kids) != 2 || kids[0] != "k1" || kids[1] != "k2" {
-		t.Fatalf("published keys = %v, want active + retiring only", kids)
+	if strings.Join(kids, ",") != "k1,k2,k4" {
+		t.Fatalf("published keys = %v, want pending, active and retiring, not retired", kids)
 	}
+}
+
+func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
+	testutil.Reset(t)
+	testutil.DeleteSigningKeys()
+	n := 0
+	generate := func() (db.SigningKey, error) {
+		n++
+		kid := fmt.Sprintf("key%d", n)
+		return db.SigningKey{KID: kid, Alg: "RS256", PublicJWK: []byte(`{"kid":"` + kid + `"}`), PrivateKeyEncrypted: "v1:k1:x"}, nil
+	}
+	sched := db.KeySchedule{Lifetime: 90 * 24 * time.Hour, Pending: time.Hour, Skew: 5 * time.Minute}
+	status := func() string {
+		keys, err := db.ListSigningKeys()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for i := len(keys) - 1; i >= 0; i-- {
+			out = append(out, keys[i].KID+"="+keys[i].Status)
+		}
+		return strings.Join(out, " ")
+	}
+	if err := db.EnsureSigningKey(generate); err != nil {
+		t.Fatal(err)
+	}
+	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 0 || status() != "key1=active" {
+		t.Fatalf("a young key changed: %v, %s", steps, status())
+	}
+	// 89 days and a bit later, the successor is published, but does not sign yet.
+	testutil.Exec(t, `UPDATE signing_key SET activated_at = now() - interval '89 days 23 hours 1 minute', created_at = now() - interval '90 days'`)
+	steps, err := db.AdvanceSigningKeys(sched, generate)
+	if err != nil || len(steps) != 1 || steps[0].Event != "signing_key.created" || status() != "key1=active key2=pending" {
+		t.Fatalf("due: %v %v, %s", steps, err, status())
+	}
+	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 0 {
+		t.Fatalf("a second pending key: %v", steps)
+	}
+	// An hour later it signs; the old key retires once the longest token lifetime (+ skew) has passed.
+	testutil.CreateApp(t, "long", testutil.AppOptions{})
+	testutil.Exec(t, `UPDATE app SET access_token_ttl_seconds = 3600`)
+	testutil.Exec(t, `UPDATE signing_key SET created_at = now() - interval '61 minutes' WHERE kid = 'key2'`)
+	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 1 || status() != "key1=retiring key2=active" {
+		t.Fatalf("activation: %v, %s", steps, status())
+	}
+	k1 := mustKey(t, "key1")
+	if d := time.Until(*k1.RetireAt); d < 64*time.Minute || d > 66*time.Minute {
+		t.Errorf("retire_at in %s, want the longest token lifetime (1h) plus 5 minutes", d)
+	}
+	testutil.Exec(t, `UPDATE signing_key SET retire_at = now() - interval '1 second' WHERE kid = 'key1'`)
+	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 1 || status() != "key1=retired key2=active" {
+		t.Fatalf("retirement: %v, %s", steps, status())
+	}
+	if k := mustKey(t, "key1"); k.PrivateKeyEncrypted != "" || k.RetiredAt == nil {
+		t.Error("a retired key keeps its private key")
+	}
+
+	// By hand: a pending key now, refused while one is pending.
+	k3, _ := generate()
+	if err := db.AddPendingSigningKey(k3); err != nil {
+		t.Fatal(err)
+	}
+	k4, _ := generate()
+	if err := db.AddPendingSigningKey(k4); !errors.Is(err, db.ErrKeyPending) {
+		t.Errorf("a second pending key: %v", err)
+	}
+	// The emergency path: the new key signs at once; the active and pending ones are retired at once.
+	retired, err := db.EmergencyRotate(k4)
+	if err != nil || len(retired) != 2 || status() != "key1=retired key2=retired key3=retired key4=active" {
+		t.Fatalf("emergency: %v %v, %s", retired, err, status())
+	}
+}
+
+func mustKey(t *testing.T, kid string) db.SigningKey {
+	t.Helper()
+	keys, _ := db.ListSigningKeys()
+	for _, k := range keys {
+		if k.KID == kid {
+			return k
+		}
+	}
+	t.Fatalf("no key %s", kid)
+	return db.SigningKey{}
 }
 
 // ---- Maintenance ------------------------------------------------------------

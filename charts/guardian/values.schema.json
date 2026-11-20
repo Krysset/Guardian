@@ -25,9 +25,9 @@
         "existingSecret": { "type": "string", "minLength": 1, "description": "The Secret with Guardian's secrets. Required." },
         "keys": {
           "type": "object",
-          "required": ["keyEncryptionKey", "adminInitialPassword"],
+          "required": ["keyEncryptionKeys", "adminInitialPassword"],
           "properties": {
-            "keyEncryptionKey": { "type": "string", "minLength": 1 },
+            "keyEncryptionKeys": { "type": "string", "minLength": 1 },
             "adminInitialPassword": { "type": "string", "minLength": 1 }
           }
         }

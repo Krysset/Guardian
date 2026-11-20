@@ -49,15 +49,15 @@ func TestMain(m *testing.M) {
 		os.Setenv("ISSUER_URL", testIssuer)
 		os.Setenv("SESSION_IDLE_TIMEOUT", "30m")
 		os.Setenv("SESSION_MAX_LIFETIME", "1h")
-		os.Setenv("KEY_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
+		os.Setenv("KEY_ENCRYPTION_KEYS", "k1:"+base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
 		testutil.DeleteSigningKeys()
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "configuration:", err)
 			os.Exit(1)
 		}
-		if err := auth.SetEncryptionKey(cfg.KeyEncryptionKey); err != nil {
-			fmt.Fprintln(os.Stderr, "encryption key:", err)
+		if err := server.UseKeyring(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "keyring:", err)
 			os.Exit(1)
 		}
 		k, err := auth.LoadKeys()

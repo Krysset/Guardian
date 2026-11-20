@@ -3,23 +3,34 @@ package backup
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"guardian/internal/auth"
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
 )
 
 var (
-	testKEK   = bytes.Repeat([]byte{7}, 32)
+	testRing  = mustRing("k1:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
+	otherRing = mustRing("k1:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
 	testIssur = "https://auth.test"
 )
 
+func mustRing(spec string) *auth.Keyring {
+	r, err := auth.ParseKeyring(spec)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
 func opts(execute bool) Options {
-	return Options{Issuer: testIssur, KeyEncryptionKey: testKEK, Execute: execute, Reason: "test"}
+	return Options{Issuer: testIssur, Keyring: testRing, Execute: execute, Reason: "test"}
 }
 
 // fresh empties the database like a new installation: seed data only, no signing key.
@@ -72,7 +83,7 @@ func populate(t *testing.T) {
 	testutil.Exec(t, `INSERT INTO scope (name, description, claims, app_id) VALUES ('billing:read', 'Your invoices', ARRAY['inv'], $1)`, app.ID)
 	testutil.Exec(t, `INSERT INTO app_user (app_id, account_id) VALUES ($1, $2)`, app.ID, alice.ID)
 	testutil.Exec(t, `INSERT INTO signing_key (kid, public_jwk, private_key_encrypted, status, retire_at)
-		VALUES ('k1', '{"kty":"RSA","n":"abc"}', 'v1:sealed', 'retiring', now())`)
+		VALUES ('k1', '{"kty":"RSA","n":"abc"}', 'v1:k1:c2VhbGVk', 'retiring', now())`)
 	testutil.Exec(t, `INSERT INTO account_mfa (account_id, type, name, credential_id, public_key, sign_count)
 		VALUES ($1, 'webauthn', 'YubiKey', '\x00ff10'::bytea, '\xdead'::bytea, 7)`, alice.ID)
 	testutil.Exec(t, `INSERT INTO audit_log (event_type, actor_account_id, ip_address, metadata)
@@ -113,7 +124,7 @@ func TestBackupRestoresIntoAFreshInstallationExactly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if n, _ := m.Rows("account"); n != 3 || !m.AuditLogIncluded || m.KeyEncryptionKeyID != KeyID(testKEK) {
+	if n, _ := m.Rows("account"); n != 3 || !m.AuditLogIncluded || strings.Join(m.KeyringKeys, ",") != "k1:"+testRing.Fingerprints()["k1"] {
 		t.Errorf("manifest = %+v", m)
 	}
 
@@ -140,10 +151,10 @@ func TestBackupRestoresIntoAFreshInstallationExactly(t *testing.T) {
 	refused := map[string]RestoreOptions{
 		"no --confirm":    {Options: opts(true), Identities: strings.NewReader(identity)},
 		"wrong --confirm": {Options: opts(true), Confirm: "other.test", Identities: strings.NewReader(identity)},
-		"no --reason":     {Options: Options{Issuer: testIssur, KeyEncryptionKey: testKEK, Execute: true}, Confirm: "auth.test"},
+		"no --reason":     {Options: Options{Issuer: testIssur, Keyring: testRing, Execute: true}, Confirm: "auth.test"},
 		"no identity":     {Options: opts(true), Confirm: "auth.test"},
-		"other KEK":       {Options: Options{Issuer: testIssur, KeyEncryptionKey: bytes.Repeat([]byte{8}, 32), Execute: true, Reason: "x"}, Confirm: "auth.test"},
-		"other issuer":    {Options: Options{Issuer: "https://new.test", KeyEncryptionKey: testKEK, Execute: true, Reason: "x"}, Confirm: "new.test"},
+		"other KEK":       {Options: Options{Issuer: testIssur, Keyring: otherRing, Execute: true, Reason: "x"}, Confirm: "auth.test"},
+		"other issuer":    {Options: Options{Issuer: "https://new.test", Keyring: testRing, Execute: true, Reason: "x"}, Confirm: "new.test"},
 		"wrong identity":  {Options: opts(true), Confirm: "auth.test", Identities: strings.NewReader(func() string { _, id := newKey(t); return id }())},
 		"damaged file":    withKey(true),
 	}
@@ -216,7 +227,7 @@ func TestBackupWithoutAuditLogAndDryRun(t *testing.T) {
 	for name, o := range map[string]BackupOptions{
 		"no recipient":  {Options: opts(true)},
 		"bad recipient": {Options: opts(true), Recipients: "age1notakey"},
-		"no reason":     {Options: Options{Issuer: testIssur, KeyEncryptionKey: testKEK, Execute: true}, Recipients: recipient},
+		"no reason":     {Options: Options{Issuer: testIssur, Keyring: testRing, Execute: true}, Recipients: recipient},
 	} {
 		if err := Backup(ctx, conn, o, &out, &report); err == nil {
 			t.Errorf("%s: backup went ahead", name)

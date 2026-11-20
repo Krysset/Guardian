@@ -6,6 +6,8 @@
 //	guardian backup     write an encrypted backup to stdout (see backup.go)
 //	guardian restore    restore a backup into a new installation
 //	guardian deletions  export the deletion log (ids of erased accounts), for restores
+//	guardian keys       signing keys and the encryption keyring (see keys.go)
+//	guardian mfa        reset-totp --all, after a keyring key leaked
 package main
 
 import (
@@ -35,6 +37,13 @@ func main() {
 	// .env is optional: in containers the variables are injected directly.
 	envErr := godotenv.Load()
 
+	if command == "keys" || command == "mfa" {
+		os.Exit(runKeysCommand(os.Args[1:], os.Stdout, os.Stderr, func() (config.Config, error) {
+			cfg, err := config.Load()
+			slog.SetDefault(newLogger(cfg.Log, os.Stderr))
+			return cfg, err
+		}))
+	}
 	if command == "backup" || command == "restore" || command == "deletions" {
 		// stdout carries the backup, so log lines go to stderr.
 		os.Exit(runBackupCommand(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, func() (config.Config, error) {
@@ -44,7 +53,7 @@ func main() {
 		}))
 	}
 	if len(os.Args) > 2 || (command != "serve" && command != "migrate") {
-		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore|deletions]")
+		fmt.Fprintln(os.Stderr, "usage: guardian [serve|migrate|backup|restore|deletions|keys|mfa]")
 		os.Exit(2)
 	}
 

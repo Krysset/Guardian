@@ -311,13 +311,14 @@ func EnableTOTP(t testing.TB, accountID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := auth.Seal([]byte(secret))
+	aad := auth.AAD("account_mfa", "secret", accountID)
+	sealed, err := auth.Encrypt([]byte(secret), aad)
 	if err != nil {
 		// Package tests without a server have no key encryption key yet; any key will do for them.
 		if err := auth.SetEncryptionKey(make([]byte, 32)); err != nil {
 			t.Fatal(err)
 		}
-		if sealed, err = auth.Seal([]byte(secret)); err != nil {
+		if sealed, err = auth.Encrypt([]byte(secret), aad); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -17,8 +17,10 @@ imagePullSecrets: []
 secrets:
   existingSecret: ""
   keys:
-    # 32 random bytes, base64 (openssl rand -base64 32). Encrypts the signing keys in the database.
-    keyEncryptionKey: key-encryption-key
+    # The encryption keyring: "k1:<32 random bytes, base64>" (openssl rand -base64 32), and later
+    # "k2:<new>,k1:<old>" while rotating. Encrypts the signing keys and authenticator apps in the database.
+    # Mounted as a file and reread every minute (docs/INSTALL.md, "Keys").
+    keyEncryptionKeys: key-encryption-keys
     # The first password of the built-in "admin" account; it must be changed at the first sign-in.
     adminInitialPassword: admin-initial-password
 

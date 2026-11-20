@@ -110,10 +110,7 @@ func TestRecipientListSkipsCommentsAndBlankLines(t *testing.T) {
 	}
 }
 
-func TestKeyIDAndIssuerHost(t *testing.T) {
-	if KeyID([]byte("a")) == KeyID([]byte("b")) || len(KeyID([]byte("a"))) != 16 {
-		t.Error("KeyID must tell keys apart in 16 hex digits")
-	}
+func TestIssuerHost(t *testing.T) {
 	if h := IssuerHost("https://auth.example.com"); h != "auth.example.com" {
 		t.Errorf("host = %q", h)
 	}

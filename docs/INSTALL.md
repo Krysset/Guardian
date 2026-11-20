@@ -26,14 +26,14 @@ manager; the names below are the chart's defaults):
 
 | Key | What it is |
 |---|---|
-| `key-encryption-key` | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts Guardian's signing keys in the database. **If it is lost, every signing key is lost**: keep it with your backups. |
+| `key-encryption-keys` | The encryption keyring: `k1:` followed by 32 random bytes in base64 (`openssl rand -base64 32`). Encrypts Guardian's signing keys and authenticator-app secrets in the database. **If a key is lost, what it encrypted is lost**: keep the keyring with your backups. See "Keys" for rotating it. |
 | `admin-initial-password` | The first password of the built-in `admin` account. It must be changed at the first sign-in. |
 | `db-password` | The database password. With the bundled Postgres it is set on the first start; changing it later is a manual step (`ALTER ROLE`, then update the Secret). |
 
 ```
 kubectl create namespace auth
 kubectl -n auth create secret generic guardian \
-  --from-literal=key-encryption-key="$(openssl rand -base64 32)" \
+  --from-literal=key-encryption-keys="k1:$(openssl rand -base64 32)" \
   --from-literal=admin-initial-password='<a long password>' \
   --from-literal=db-password='<another long password>'
 ```
@@ -140,13 +140,14 @@ kubectl -n auth exec deploy/guardian -- /guardian backup --execute --reason "bef
 ```
 
 - The file holds accounts, groups, apps, consents, two-factor, signing keys (still encrypted with
-  `key-encryption-key`), the deletion log and the audit log (`--without-audit` leaves it out). Sessions and tokens are left out: everyone signs in again
+  the keyring), the deletion log and the audit log (`--without-audit` leaves it out). Sessions and tokens are left out: everyone signs in again
   after a restore.
 - It starts with a manifest in the clear (times, counts, no personal data). Check a file at any time, without
   the private key: `guardian backup verify guardian-2026-11-19.gbk`.
 - Every backup is recorded in the audit log, and `guardian_backup_last_success_timestamp_seconds` on the
   metrics port tells when the last one was taken: alert when it gets old.
-- **The backup is useless without `key-encryption-key`.** Keep that key with the age private key.
+- **The backup is useless without the keyring keys it names.** The manifest lists them (id and fingerprint).
+  Keep the keyring with the age private key, and keep an old key as long as backups need it.
 - **Keep the deletion log next to your backups.** A backup still holds accounts erased after it was taken. Export
   the log (ids of erased accounts only, no personal data) whenever you take a backup, and before you restore:
   `kubectl -n auth exec deploy/guardian -- /guardian deletions export > deletions-$(date +%F).log`.
@@ -159,9 +160,9 @@ your machine with the image (`docker run --rm -i <image> backup verify - < file.
 
 A restore only goes into a **new installation**: no apps, no groups of its own, no account but the built-in
 admin, and nobody signed in. It refuses anything else, so it can never overwrite a Guardian in use. It also
-needs the same release (until 1.0) and the same `key-encryption-key` as the installation that took the backup.
+needs the same release (until 1.0) and the keyring keys the backup names (the manifest lists them).
 
-1. Install Guardian as above, into an empty database, with the old `key-encryption-key` and the same issuer URL.
+1. Install Guardian as above, into an empty database, with a keyring holding the backup's keys and the same issuer URL.
    Do not sign in.
 2. Decrypt the backup on your machine, so the private key never enters the cluster:
    `guardian backup decrypt --identity-file guardian-backup-key.txt --out plain.gbk guardian-2026-11-19.gbk`.
@@ -202,16 +203,66 @@ docker compose exec -T backend /guardian restore --execute --reason drill --conf
 docker compose restart backend
 ```
 
-The compose installation has another `KEY_ENCRYPTION_KEY` and issuer, so set the backed-up installation's key
-in `docker-compose.yml` for the drill, and add `--allow-other-issuer`. Then sign in with a real account.
+The compose installation has another keyring and issuer, so add the backed-up installation's keys to
+`KEY_ENCRYPTION_KEYS` in `docker-compose.yml` for the drill, and add `--allow-other-issuer`. Then sign in with a real account.
 
 ## Upgrades
 
 - Until 1.0 the database schema is still edited in place. A release that changes it refuses to start on an
   older database, with a message that says so, and a backup only restores into the release that took it. So
   until 1.0 such an upgrade means starting from an empty database.
-- Never change `key-encryption-key`: Guardian cannot decrypt its signing keys with another one and refuses to
-  start. Key rotation comes in 0.3.
+- Never remove a keyring key that values are still encrypted with: Guardian refuses to start with such a
+  keyring (and a running Guardian keeps its previous one). Rotate it as described under "Keys".
+
+## Keys
+
+### Signing keys
+
+Guardian signs tokens with RSA keys that rotate by themselves every 90 days (`SIGNING_KEY_LIFETIME`). A new
+key is published an hour before it signs, and the old one stays published until every token it signed has
+expired. Apps that fetch Guardian's keys (`/jwks.json`, cached for 15 minutes) never see an unknown key.
+
+```
+kubectl -n auth exec deploy/guardian -- /guardian keys list              # stages, and the keyring
+kubectl -n auth exec deploy/guardian -- /guardian keys rotate --execute --reason "yearly check"
+```
+
+**If a signing key leaked**, withdraw it at once:
+
+```
+kubectl -n auth exec deploy/guardian -- /guardian keys rotate --now --revoke-current \
+  --execute --reason "key leaked" --confirm auth.example.com
+```
+
+A new key signs at once and the leaked one is no longer published; every replica follows within a minute.
+The limit: apps cache Guardian's keys, so they accept tokens signed with the withdrawn key until their cache
+expires (up to 15 minutes, or longer if an app caches longer). Restart or refresh the apps. Everyone signed in
+to an app keeps working once the app has the new key; tokens it holds are refreshed with the new key.
+
+### The encryption keyring
+
+The keyring (`key-encryption-keys` in the Secret) encrypts the signing keys and the authenticator-app
+secrets. The first key encrypts; every key decrypts. Guardian rereads the mounted Secret every minute, so
+rotating needs no restart, only a minute or two between steps for Kubernetes to update the file:
+
+1. **Add** the new key at the end: `k1:<old>,k2:<new>`. It decrypts only, so every replica learns it first.
+2. **Promote** it: `k2:<new>,k1:<old>`. New values are encrypted with `k2`, and Guardian re-encrypts the
+   stored values in the background (`guardian keys reencrypt --execute --reason ...` does it at once).
+3. **Remove** the old key once `guardian_keyring_values{key_id="k1"}` (or `guardian keys list`) shows no
+   values under it: `k2:<new>`. Keep the old key with any backups taken before step 2.
+
+Guardian refuses a keyring that lacks a key still in use, at start and on reload.
+
+**If a keyring key leaked**, rotate the keyring as above, then rotate the signing keys (`keys rotate --now
+--revoke-current`), and remove every authenticator app, whose secrets the leaked key protected:
+
+```
+kubectl -n auth exec deploy/guardian -- /guardian mfa reset-totp --all \
+  --execute --reason "keyring key leaked" --confirm auth.example.com
+```
+
+Everyone with an address is emailed the reason; administrators and group owners set two-factor up again at
+their next sign-in.
 
 ## Uninstalling
 

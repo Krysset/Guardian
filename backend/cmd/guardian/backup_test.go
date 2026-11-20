@@ -92,3 +92,26 @@ func TestOutputFileIsRemovedWhenTheCommandFails(t *testing.T) {
 		t.Error("an existing file was overwritten")
 	}
 }
+
+func TestKeysCommandLine(t *testing.T) {
+	noConfig := func() (config.Config, error) { return config.Config{}, errors.New("ISSUER_URL is required") }
+	for _, c := range []struct {
+		args   []string
+		code   int
+		stderr string
+	}{
+		{[]string{"keys"}, 2, "usage:"},
+		{[]string{"keys", "burn"}, 2, "unknown command"},
+		{[]string{"keys", "rotate", "--now"}, 2, "both --now and --revoke-current"},
+		{[]string{"keys", "rotate", "--execute"}, 2, "--reason is required"},
+		{[]string{"mfa", "reset-totp"}, 2, "--all"},
+		{[]string{"keys", "list", "extra"}, 2, "unexpected arguments"},
+		{[]string{"keys", "list"}, 1, "ISSUER_URL"},
+	} {
+		var out, errOut bytes.Buffer
+		code := runKeysCommand(c.args, &out, &errOut, noConfig)
+		if code != c.code || !strings.Contains(errOut.String(), c.stderr) {
+			t.Errorf("%v: exit %d, stderr %q; want %d and %q", c.args, code, errOut.String(), c.code, c.stderr)
+		}
+	}
+}

@@ -68,7 +68,9 @@ func discovery(w http.ResponseWriter, r *http.Request) {
 
 func jwks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	// A new key is published an hour before it signs, so apps that cache this for 15 minutes always
+	// know it in time.
+	w.Header().Set("Cache-Control", "public, max-age=900")
 	w.Write(signingKeys.JWKS())
 }
 

@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,12 +44,6 @@ var notBackedUp = []string{"session", "authorization_code", "refresh_token", "se
 
 var schemaTables = []string{"schema_revision", "goose_db_version"}
 
-// KeyID identifies a key encryption key without revealing it: the first 8 bytes of its SHA-256, in hex.
-func KeyID(key []byte) string {
-	sum := sha256.Sum256(key)
-	return hex.EncodeToString(sum[:8])
-}
-
 // Snapshot is one consistent view of the database, from which a backup is taken.
 type Snapshot struct {
 	tx        *sql.Tx
@@ -77,6 +69,26 @@ func OpenSnapshot(ctx context.Context, db *sql.DB, withAudit bool) (*Snapshot, e
 		s.Counts = append(s.Counts, TableCount{t.name, n})
 	}
 	return s, nil
+}
+
+// keyIDs returns the ids of the keyring keys the snapshot's encrypted values use.
+func (s *Snapshot) keyIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.tx.QueryContext(ctx, `SELECT DISTINCT split_part(v, ':', 2) FROM (
+		SELECT private_key_encrypted AS v FROM signing_key WHERE private_key_encrypted IS NOT NULL
+		UNION ALL SELECT secret FROM account_mfa WHERE type = 'totp') x ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Snapshot) tables() []table {

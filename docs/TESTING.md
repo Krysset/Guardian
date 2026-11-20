@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-19):** 193 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-19):** 197 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -61,6 +61,7 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |
 | Email links: sign-up waits for its confirmation, links work once and only the newest, the link signs in only the browser that signed up, the first account to confirm an address gets it, resets end every session, the reset answer never reveals an account | `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt`, `TestE2EPasswordResetByEmail`, `TestE2EChangingTheEmailAddress`, `TestE2EEmailOffAndEmailRequired` |
 | Emails are valid, escaped, and never sent in the clear when STARTTLS is asked for | `TestEveryEmailRendersBothPartsAndEscapes`, `TestComposeIsAValidMultipartMessage`, `TestSMTPSendsAndStartTLSIsRequired` |
+| Keys: the RFC-style lifecycle (pending, active, retiring, retired) on schedule and by hand, the emergency path, every replica following a rotation, the keyring's add-promote-remove rotation with re-encryption, and a keyring that lacks a needed key refused | `TestSigningKeysMoveThroughTheirStages`, `TestKeysFollowARotation`, `TestKeyringRotationReencryptsEverything`, `TestRotatingTheKeyring`, `TestKeysCommandLine` |
 | Deleting accounts: the grace period, restoring with the memberships that still can be, erasing now (audit entries scrubbed, id in the deletion log, username free again), erasing when due, the last administrator kept, "download my data" without secrets, and a newer deletion log applied on restore | `TestE2EDeletingYourOwnAccountAndRestoringIt`, `TestE2EErasingAnAccountNow`, `TestE2EDownloadMyData`, `TestE2ETheLastAdministratorCannotDeleteItself`, `TestDeletedAccountsAreErasedAfterTheGracePeriod`, `TestRestoreAppliesANewerDeletionLog` |
 | Two-factor: no session before the code; codes and recovery codes work once; setup saves nothing until one recovery code is typed back; administrators, group owners and apps that require it get the setup or a step-up; attempts are limited; the admin reset ends sessions and emails the reason | `TestE2ETwoFactorThroughTheAPIAndAtSignIn`, `TestE2ETwoFactorAttemptsAreLimitedAndCanBeCancelled`, `TestE2EAdministratorsAndOwnersMustUseTwoFactor`, `TestE2EAppsThatRequireTwoFactor`, `TestE2EAdministratorsResetTwoFactor`, `TestTOTPMatchesTheRFC` |
 | Protected changes need a sign-in or re-authentication within 5 minutes, per session; wrong passwords are limited | `TestE2EProtectedChangesNeedARecentSignIn`, `TestE2EReauthIsLimited` |

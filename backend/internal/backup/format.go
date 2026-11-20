@@ -49,10 +49,10 @@ type Manifest struct {
 	SchemaRevision string    `json:"schema_revision"`
 	CreatedAt      time.Time `json:"created_at"`
 	Issuer         string    `json:"issuer"`
-	// KeyEncryptionKeyID identifies the key that encrypts the signing keys inside the backup (the first 8
-	// bytes of its SHA-256, in hex). A restore needs the same key.
-	KeyEncryptionKeyID string `json:"key_encryption_key_id"`
-	Encryption         string `json:"encryption"`
+	// KeyringKeys are the encryption-keyring keys the backed-up secrets (signing keys, authenticator apps)
+	// are encrypted with, as "<key id>:<fingerprint>". A restore needs every one of them in its keyring.
+	KeyringKeys []string `json:"keyring_keys"`
+	Encryption  string   `json:"encryption"`
 	// Recipients are the age public keys the payload is encrypted to.
 	Recipients       []string     `json:"recipients,omitempty"`
 	AuditLogIncluded bool         `json:"audit_log_included"`

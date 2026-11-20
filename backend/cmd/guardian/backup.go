@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"guardian/internal/auth"
 	"guardian/internal/backup"
 	"guardian/internal/config"
 	db "guardian/internal/store"
@@ -146,7 +147,12 @@ func runBackupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		return fail(err)
 	}
 	ctx := context.Background()
-	opt := backup.Options{Issuer: cfg.IssuerURL, KeyEncryptionKey: cfg.KeyEncryptionKey, Execute: execute, Reason: reason}
+	ring, err := auth.ParseKeyring(cfg.Keyring)
+	if err != nil {
+		return fail(fmt.Errorf("the encryption keyring: %w", err))
+	}
+	auth.SetKeyring(ring)
+	opt := backup.Options{Issuer: cfg.IssuerURL, Keyring: ring, Execute: execute, Reason: reason}
 
 	if command == "deletions export" {
 		w, finish, err := output(out, stdout)

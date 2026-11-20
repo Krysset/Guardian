@@ -12,16 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"guardian/internal/auth"
 	db "guardian/internal/store"
 	"guardian/migrations"
 )
 
 // Options are what the backup and restore commands take from the running configuration and the command line.
 type Options struct {
-	Issuer           string // ISSUER_URL
-	KeyEncryptionKey []byte // KEY_ENCRYPTION_KEY
-	Execute          bool
-	Reason           string
+	Issuer  string        // ISSUER_URL
+	Keyring *auth.Keyring // the encryption keyring
+	Execute bool
+	Reason  string
 }
 
 // BackupOptions configure `guardian backup`.
@@ -87,14 +88,24 @@ func Backup(ctx context.Context, db *sql.DB, opt BackupOptions, out, report io.W
 	}
 
 	m := Manifest{
-		SchemaRevision:     migrations.InitFingerprint,
-		CreatedAt:          time.Now().UTC().Truncate(time.Second),
-		Issuer:             opt.Issuer,
-		KeyEncryptionKeyID: KeyID(opt.KeyEncryptionKey),
-		Encryption:         EncryptionAge,
-		Recipients:         recipients,
-		AuditLogIncluded:   opt.WithAudit,
-		Tables:             snap.Counts,
+		SchemaRevision:   migrations.InitFingerprint,
+		CreatedAt:        time.Now().UTC().Truncate(time.Second),
+		Issuer:           opt.Issuer,
+		Encryption:       EncryptionAge,
+		Recipients:       recipients,
+		AuditLogIncluded: opt.WithAudit,
+		Tables:           snap.Counts,
+	}
+	ids, err := snap.keyIDs(ctx)
+	if err != nil {
+		return err
+	}
+	fingerprints := opt.Keyring.Fingerprints()
+	for _, id := range ids {
+		if fingerprints[id] == "" {
+			return fmt.Errorf("the keyring lacks key %s, which the database's secrets are encrypted with", id)
+		}
+		m.KeyringKeys = append(m.KeyringKeys, id+":"+fingerprints[id])
 	}
 	w, err := NewWriter(out, m)
 	if err != nil {
@@ -155,9 +166,9 @@ func Restore(ctx context.Context, db *sql.DB, opt RestoreOptions, in io.Reader, 
 	case m.SchemaRevision != migrations.InitFingerprint:
 		return fmt.Errorf("the backup is from another development version of Guardian (schema revision %s, this one has %s); "+
 			"until 1.0 a backup only restores into the version that took it", m.SchemaRevision, migrations.InitFingerprint)
-	case m.KeyEncryptionKeyID != KeyID(opt.KeyEncryptionKey):
-		return fmt.Errorf("the backup's signing keys are encrypted with another KEY_ENCRYPTION_KEY (key id %s, this installation has %s); "+
-			"set the key the backed-up installation used", m.KeyEncryptionKeyID, KeyID(opt.KeyEncryptionKey))
+	case missingKeys(m.KeyringKeys, opt.Keyring) != "":
+		return fmt.Errorf("the backup's secrets are encrypted with keyring key(s) %s, which this installation's keyring lacks "+
+			"(or has with other key material); add them to the keyring", missingKeys(m.KeyringKeys, opt.Keyring))
 	case m.Issuer != opt.Issuer && !opt.AllowOtherIssuer:
 		return fmt.Errorf("the backup was taken at %s, this installation is %s: apps would see a new issuer. "+
 			"Add --allow-other-issuer if that is intended", m.Issuer, opt.Issuer)
@@ -252,8 +263,8 @@ func Verify(in io.Reader, identities io.Reader, report io.Writer) (Manifest, err
 	size, sum := r.Sum()
 	fmt.Fprintf(report, "The backup is complete: taken %s at %s, format %d, schema revision %s.\n",
 		m.CreatedAt.Format(time.RFC3339), m.Issuer, m.Format, m.SchemaRevision)
-	fmt.Fprintf(report, "Payload: %d bytes, sha256 %s, encryption %s; signing keys need key id %s.\n",
-		size, sum, m.Encryption, m.KeyEncryptionKeyID)
+	fmt.Fprintf(report, "Payload: %d bytes, sha256 %s, encryption %s; secrets need keyring keys %s.\n",
+		size, sum, m.Encryption, strings.Join(m.KeyringKeys, ", "))
 	printCounts(report, m.Tables)
 	if opened {
 		fmt.Fprintln(report, "The payload was opened and every row count matches the manifest.")
@@ -336,6 +347,22 @@ func countMap(counts []TableCount) map[string]int64 {
 		out[c.Name] = c.Rows
 	}
 	return out
+}
+
+// missingKeys lists the "<id>:<fingerprint>" entries that the keyring does not have.
+func missingKeys(needed []string, ring *auth.Keyring) string {
+	have := map[string]string{}
+	if ring != nil {
+		have = ring.Fingerprints()
+	}
+	var missing []string
+	for _, n := range needed {
+		id, fp, _ := strings.Cut(n, ":")
+		if have[id] != fp {
+			missing = append(missing, id)
+		}
+	}
+	return strings.Join(missing, ", ")
 }
 
 // IssuerHost is the host part of the issuer URL, which a restore asks to have typed back.

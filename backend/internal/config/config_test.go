@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +18,8 @@ func setValid(t *testing.T) {
 	for k, v := range map[string]string{
 		"DB_HOST": "db", "DB_USER": "guardian", "DB_NAME": "guardian", "DB_PASSWORD": "",
 		"DB_PORT": "", "DB_SSLMODE": "", "DB_MAX_CONNS": "",
-		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEY": validKey,
+		"ISSUER_URL": "https://auth.example.com", "KEY_ENCRYPTION_KEYS": "k1:" + validKey,
+		"KEY_ENCRYPTION_KEYS_FILE": "", "KEY_ENCRYPTION_KEY": "", "SIGNING_KEY_LIFETIME": "",
 		"PUBLIC_ADDR": "", "INTERNAL_ADDR": "", "ALLOWED_ORIGINS": "",
 		"SESSION_IDLE_TIMEOUT": "", "SESSION_MAX_LIFETIME": "", "DELETION_GRACE_PERIOD": "",
 		"TRUSTED_PROXY_HOPS": "", "ADMIN_INITIAL_PASSWORD": "",
@@ -46,8 +49,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.Log.Format != "json" || cfg.Log.Level != "info" {
 		t.Errorf("log = %+v", cfg.Log)
 	}
-	if len(cfg.KeyEncryptionKey) != 32 {
-		t.Errorf("key length = %d", len(cfg.KeyEncryptionKey))
+	if cfg.Keyring != "k1:"+validKey || cfg.KeyringFile != "" || cfg.SigningKeyLifetime != 90*24*time.Hour {
+		t.Errorf("keyring = %q, file %q, signing key lifetime %s", cfg.Keyring, cfg.KeyringFile, cfg.SigningKeyLifetime)
 	}
 }
 
@@ -95,7 +98,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	setValid(t)
 	for k, v := range map[string]string{
 		"DB_HOST": "", "DB_PORT": "abc", "DB_SSLMODE": "maybe", "DB_MAX_CONNS": "0",
-		"ISSUER_URL": "", "KEY_ENCRYPTION_KEY": "", "SESSION_IDLE_TIMEOUT": "soon", "SESSION_MAX_LIFETIME": "-1h",
+		"ISSUER_URL": "", "KEY_ENCRYPTION_KEYS": "", "SESSION_IDLE_TIMEOUT": "soon", "SESSION_MAX_LIFETIME": "-1h",
 		"TRUSTED_PROXY_HOPS": "-1", "LOG_FORMAT": "xml", "LOG_LEVEL": "loud",
 		"HELP_URL": "javascript:alert(1)", "PRIVACY_URL": "/privacy",
 	} {
@@ -106,7 +109,7 @@ func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 		t.Fatal("Load accepted a broken configuration")
 	}
 	for _, name := range []string{"DB_HOST", "DB_PORT", "DB_SSLMODE", "DB_MAX_CONNS", "ISSUER_URL",
-		"KEY_ENCRYPTION_KEY", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
+		"KEY_ENCRYPTION_KEYS", "SESSION_IDLE_TIMEOUT", "SESSION_MAX_LIFETIME",
 		"TRUSTED_PROXY_HOPS", "LOG_FORMAT", "LOG_LEVEL", "HELP_URL", "PRIVACY_URL"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("the error does not mention %s:\n%v", name, err)
@@ -147,15 +150,35 @@ func TestIssuerURLMustBeAPlainHTTPURL(t *testing.T) {
 	}
 }
 
-func TestParseEncryptionKey(t *testing.T) {
-	if key, err := ParseEncryptionKey(validKey); err != nil || len(key) != 32 {
-		t.Fatalf("valid key: len %d, err %v", len(key), err)
+func TestTheKeyringComesFromAFileOrTheEnvironment(t *testing.T) {
+	setValid(t)
+	path := filepath.Join(t.TempDir(), "keys")
+	os.WriteFile(path, []byte("k2:"+validKey+",k1:"+validKey+"\n"), 0o600)
+	t.Setenv("KEY_ENCRYPTION_KEYS", "")
+	t.Setenv("KEY_ENCRYPTION_KEYS_FILE", path)
+	cfg, err := Load()
+	if err != nil || cfg.KeyringFile != path || !strings.HasPrefix(cfg.Keyring, "k2:") {
+		t.Fatalf("from a file: %+v, %v", cfg.KeyringFile, err)
 	}
-	short := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 16))
-	for name, raw := range map[string]string{"empty": "", "not base64": "%%%", "16 bytes": short} {
-		if _, err := ParseEncryptionKey(raw); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
+	t.Setenv("KEY_ENCRYPTION_KEYS", "k1:"+validKey)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("both: %v", err)
+	}
+	t.Setenv("KEY_ENCRYPTION_KEYS", "")
+	t.Setenv("KEY_ENCRYPTION_KEYS_FILE", path+".missing")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "KEY_ENCRYPTION_KEYS_FILE") {
+		t.Errorf("a missing file: %v", err)
+	}
+	t.Setenv("KEY_ENCRYPTION_KEYS_FILE", "")
+	t.Setenv("KEY_ENCRYPTION_KEY", validKey)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "KEY_ENCRYPTION_KEYS=k1:") {
+		t.Errorf("the old variable must say what replaced it: %v", err)
+	}
+	t.Setenv("KEY_ENCRYPTION_KEY", "")
+	t.Setenv("KEY_ENCRYPTION_KEYS", "k1:"+validKey)
+	t.Setenv("SIGNING_KEY_LIFETIME", "1h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SIGNING_KEY_LIFETIME") {
+		t.Errorf("a too short signing key lifetime: %v", err)
 	}
 }
 

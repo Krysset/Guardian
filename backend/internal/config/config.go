@@ -4,7 +4,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -45,8 +44,14 @@ type Config struct {
 	HelpURL    string
 	PrivacyURL string
 
-	// KeyEncryptionKey is the 32-byte AES key that encrypts signing keys at rest.
-	KeyEncryptionKey []byte
+	// Keyring is the text of the encryption keyring ("k2:<base64>,k1:<base64>"), from KEY_ENCRYPTION_KEYS_FILE
+	// or KEY_ENCRYPTION_KEYS. The auth package parses it (auth.ParseKeyring).
+	Keyring string
+	// KeyringFile is KEY_ENCRYPTION_KEYS_FILE; Guardian reloads it every minute. Empty when the keyring
+	// came from KEY_ENCRYPTION_KEYS, which cannot change while Guardian runs.
+	KeyringFile string
+	// SigningKeyLifetime is how long a signing key signs before the next one takes over.
+	SigningKeyLifetime time.Duration
 	// AdminInitialPassword sets the seeded admin's first password. Empty means: generate one and log it once.
 	AdminInitialPassword string
 
@@ -122,6 +127,7 @@ func Load() (Config, error) {
 		SessionIdleTimeout:   7 * 24 * time.Hour,
 		SessionMaxLifetime:   30 * 24 * time.Hour,
 		DeletionGrace:        30 * 24 * time.Hour,
+		SigningKeyLifetime:   90 * 24 * time.Hour,
 	}
 
 	var err error
@@ -177,6 +183,10 @@ func Load() (Config, error) {
 	duration("SESSION_IDLE_TIMEOUT", &cfg.SessionIdleTimeout)
 	duration("SESSION_MAX_LIFETIME", &cfg.SessionMaxLifetime)
 	duration("DELETION_GRACE_PERIOD", &cfg.DeletionGrace)
+	duration("SIGNING_KEY_LIFETIME", &cfg.SigningKeyLifetime)
+	if cfg.SigningKeyLifetime < 24*time.Hour {
+		fail("SIGNING_KEY_LIFETIME must be at least 24h, got %s", cfg.SigningKeyLifetime)
+	}
 	if cfg.SessionIdleTimeout > cfg.SessionMaxLifetime {
 		fail("SESSION_IDLE_TIMEOUT (%s) must not be longer than SESSION_MAX_LIFETIME (%s)", cfg.SessionIdleTimeout, cfg.SessionMaxLifetime)
 	}
@@ -194,8 +204,23 @@ func Load() (Config, error) {
 		problems = append(problems, err)
 	}
 
-	if cfg.KeyEncryptionKey, err = ParseEncryptionKey(os.Getenv("KEY_ENCRYPTION_KEY")); err != nil {
-		problems = append(problems, err)
+	cfg.KeyringFile = strings.TrimSpace(os.Getenv("KEY_ENCRYPTION_KEYS_FILE"))
+	inline := os.Getenv("KEY_ENCRYPTION_KEYS")
+	switch {
+	case cfg.KeyringFile != "" && inline != "":
+		fail("set KEY_ENCRYPTION_KEYS_FILE or KEY_ENCRYPTION_KEYS, not both")
+	case cfg.KeyringFile != "":
+		if b, err := os.ReadFile(cfg.KeyringFile); err != nil {
+			fail("KEY_ENCRYPTION_KEYS_FILE: %v", err)
+		} else {
+			cfg.Keyring = string(b)
+		}
+	case inline != "":
+		cfg.Keyring = inline
+	case os.Getenv("KEY_ENCRYPTION_KEY") != "":
+		fail("KEY_ENCRYPTION_KEY was replaced by the keyring: set KEY_ENCRYPTION_KEYS=k1:<the same base64 key>")
+	default:
+		fail("KEY_ENCRYPTION_KEYS_FILE or KEY_ENCRYPTION_KEYS is not set (a keyring such as k1:<base64>; generate the key with: openssl rand -base64 32)")
 	}
 
 	return cfg, errors.Join(problems...)
@@ -243,18 +268,6 @@ func LoadDatabase() (Database, error) {
 		}
 	}
 	return d, errors.Join(problems...)
-}
-
-// ParseEncryptionKey decodes KEY_ENCRYPTION_KEY: 32 bytes, base64 encoded.
-func ParseEncryptionKey(raw string) ([]byte, error) {
-	if raw == "" {
-		return nil, errors.New("KEY_ENCRYPTION_KEY is not set (generate one with: openssl rand -base64 32)")
-	}
-	key, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil || len(key) != 32 {
-		return nil, errors.New("KEY_ENCRYPTION_KEY must be 32 bytes, base64 encoded (generate one with: openssl rand -base64 32)")
-	}
-	return key, nil
 }
 
 func loadMail() (Mail, error) {

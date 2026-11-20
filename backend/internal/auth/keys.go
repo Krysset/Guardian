@@ -10,49 +10,82 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sync"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	db "guardian/internal/store"
 )
 
-// Keys holds the active signing key plus every published public key (for verification and JWKS).
-// Keys are loaded once at startup; to rotate, insert a new 'active' key, set the old one to
-// 'retiring', and restart.
+// Keys holds the active signing key plus every published public key (for verification and JWKS). Reload
+// reads them again; the key maintenance (RunKeyMaintenance) does so every minute, so every replica follows
+// a rotation within a minute.
 type Keys struct {
+	mu   sync.RWMutex
+	set  keySet
+	load func() (keySet, error)
+}
+
+type keySet struct {
 	kid  string
 	priv *rsa.PrivateKey
 	pub  map[string]*rsa.PublicKey
 	jwks []byte
 }
 
-// LoadKeys makes sure an active signing key exists (creating one on first run) and loads it.
+// LoadKeys makes sure an active signing key exists (creating one on first run) and loads the keys.
 func LoadKeys() (*Keys, error) {
-	if err := db.EnsureSigningKey(generateSigningKey); err != nil {
+	if err := db.EnsureSigningKey(NewSigningKey); err != nil {
 		return nil, fmt.Errorf("ensuring signing key: %w", err)
 	}
+	k := &Keys{load: loadKeySet}
+	return k, k.Reload()
+}
+
+// Reload reads the keys from the database again. On failure the keys stay as they were.
+func (k *Keys) Reload() error {
+	set, err := k.load()
+	if err != nil {
+		return err
+	}
+	k.mu.Lock()
+	k.set = set
+	k.mu.Unlock()
+	return nil
+}
+
+func (k *Keys) current() keySet {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.set
+}
+
+// ActiveKID is the id of the key that signs.
+func (k *Keys) ActiveKID() string { return k.current().kid }
+
+func loadKeySet() (keySet, error) {
 	active, err := db.GetActiveSigningKey()
 	if err != nil {
-		return nil, err
+		return keySet{}, err
 	}
-	der, err := decrypt(active.PrivateKeyEncrypted)
+	der, err := Decrypt(active.PrivateKeyEncrypted, signingKeyAAD(active.KID))
 	if err != nil {
-		return nil, fmt.Errorf("decrypting signing key (wrong KEY_ENCRYPTION_KEY?): %w", err)
+		return keySet{}, fmt.Errorf("decrypting signing key %s: %w", active.KID, err)
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
-		return nil, err
+		return keySet{}, err
 	}
 	priv, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
-		return nil, errors.New("signing key is not RSA")
+		return keySet{}, errors.New("signing key is not RSA")
 	}
 
 	published, err := db.GetPublishedSigningKeys()
 	if err != nil {
-		return nil, err
+		return keySet{}, err
 	}
-	k := &Keys{kid: active.KID, priv: priv, pub: map[string]*rsa.PublicKey{}}
+	k := keySet{kid: active.KID, priv: priv, pub: map[string]*rsa.PublicKey{}}
 	var jwks []json.RawMessage
 	for _, pk := range published {
 		pub, err := jwkToPublicKey(pk.PublicJWK)
@@ -64,35 +97,39 @@ func LoadKeys() (*Keys, error) {
 		jwks = append(jwks, json.RawMessage(pk.PublicJWK))
 	}
 	if k.jwks, err = json.Marshal(map[string]any{"keys": jwks}); err != nil {
-		return nil, err
+		return keySet{}, err
 	}
 	return k, nil
 }
 
+func signingKeyAAD(kid string) string { return AAD("signing_key", "private_key_encrypted", kid) }
+
 // Sign signs claims with RS256. typ overrides the JWT "typ" header when non-empty
 // (e.g. "at+jwt" for access tokens, "logout+jwt" for back-channel logout tokens).
 func (k *Keys) Sign(claims jwt.MapClaims, typ string) (string, error) {
+	set := k.current()
 	t := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	t.Header["kid"] = k.kid
+	t.Header["kid"] = set.kid
 	if typ != "" {
 		t.Header["typ"] = typ
 	}
-	return t.SignedString(k.priv)
+	return t.SignedString(set.priv)
 }
 
 // Keyfunc is a jwt.Keyfunc that selects the public key by the token's kid header.
 func (k *Keys) Keyfunc(t *jwt.Token) (any, error) {
 	kid, _ := t.Header["kid"].(string)
-	if key, ok := k.pub[kid]; ok {
+	if key, ok := k.current().pub[kid]; ok {
 		return key, nil
 	}
 	return nil, errors.New("unknown signing key")
 }
 
 // JWKS returns the JSON served at jwks_uri.
-func (k *Keys) JWKS() []byte { return k.jwks }
+func (k *Keys) JWKS() []byte { return k.current().jwks }
 
-func generateSigningKey() (db.SigningKey, error) {
+// NewSigningKey makes a new RSA-2048 signing key, its private half encrypted with the keyring.
+func NewSigningKey() (db.SigningKey, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return db.SigningKey{}, err
@@ -101,11 +138,11 @@ func generateSigningKey() (db.SigningKey, error) {
 	if err != nil {
 		return db.SigningKey{}, err
 	}
-	enc, err := encrypt(der)
+	kid, err := RandomToken(12)
 	if err != nil {
 		return db.SigningKey{}, err
 	}
-	kid, err := RandomToken(12)
+	enc, err := Encrypt(der, signingKeyAAD(kid))
 	if err != nil {
 		return db.SigningKey{}, err
 	}

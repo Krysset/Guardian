@@ -13,12 +13,12 @@ import (
 // newTestKeys generates a signing key exactly as production does and builds a Keys value from it.
 func newTestKeys(t *testing.T) (*Keys, *rsa.PrivateKey, []byte) {
 	t.Helper()
-	useKey(t, 9)
-	sk, err := generateSigningKey()
+	useRing(t, "k1:"+keyB64(9))
+	sk, err := NewSigningKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	der, err := decrypt(sk.PrivateKeyEncrypted)
+	der, err := Decrypt(sk.PrivateKeyEncrypted, signingKeyAAD(sk.KID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func newTestKeys(t *testing.T) (*Keys, *rsa.PrivateKey, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Keys{kid: sk.KID, priv: priv, pub: map[string]*rsa.PublicKey{sk.KID: pub}}, priv, sk.PublicJWK
+	return &Keys{set: keySet{kid: sk.KID, priv: priv, pub: map[string]*rsa.PublicKey{sk.KID: pub}}}, priv, sk.PublicJWK
 }
 
 func TestGeneratedKeyPublishesOnlyPublicParameters(t *testing.T) {
@@ -67,7 +67,7 @@ func TestSignAndVerifyWithKeyfunc(t *testing.T) {
 	if err != nil || !tok.Valid {
 		t.Fatalf("valid token rejected: %v", err)
 	}
-	if tok.Header["kid"] != k.kid || tok.Header["typ"] != "JWT" {
+	if tok.Header["kid"] != k.ActiveKID() || tok.Header["typ"] != "JWT" {
 		t.Fatalf("unexpected header: %v", tok.Header)
 	}
 }
@@ -91,7 +91,7 @@ func TestVerificationRejectsForgeries(t *testing.T) {
 	// signed by an attacker's key but claiming our kid
 	attacker, _ := rsa.GenerateKey(rand.Reader, 2048)
 	forged := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": "admin"})
-	forged.Header["kid"] = k.kid
+	forged.Header["kid"] = k.ActiveKID()
 	s, _ := forged.SignedString(attacker)
 	if _, err := jwt.Parse(s, k.Keyfunc, opts...); err == nil {
 		t.Error("token signed by a foreign key was accepted")
@@ -107,7 +107,7 @@ func TestVerificationRejectsForgeries(t *testing.T) {
 
 	// alg=none
 	none := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"sub": "admin"})
-	none.Header["kid"] = k.kid
+	none.Header["kid"] = k.ActiveKID()
 	s, _ = none.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if _, err := jwt.Parse(s, k.Keyfunc, opts...); err == nil {
 		t.Error("unsigned (alg=none) token was accepted")
@@ -115,7 +115,7 @@ func TestVerificationRejectsForgeries(t *testing.T) {
 
 	// HS256 using the public key as the secret (algorithm confusion)
 	hs := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "admin"})
-	hs.Header["kid"] = k.kid
+	hs.Header["kid"] = k.ActiveKID()
 	s, _ = hs.SignedString([]byte("anything"))
 	if _, err := jwt.Parse(s, k.Keyfunc, opts...); err == nil {
 		t.Error("HS256 token was accepted")
