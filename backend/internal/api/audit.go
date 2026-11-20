@@ -19,13 +19,13 @@ func listAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	f := db.AuditFilter{EventType: q.Get("event"), AccountID: q.Get("account"), Limit: limit + 1}
+	f := db.AuditFilter{EventType: q.Get("event"), AccountID: q.Get("account"), About: q.Get("about"), Limit: limit + 1}
 	if f.EventType != "" && (len(f.EventType) > 64 || !eventTypeRe.MatchString(f.EventType)) {
 		httpx.Error(w, http.StatusBadRequest, "event must be an event type such as login.failure")
 		return
 	}
-	if f.AccountID != "" && !db.IsUUID(f.AccountID) {
-		httpx.Error(w, http.StatusBadRequest, "account must be an account id")
+	if (f.AccountID != "" && !db.IsUUID(f.AccountID)) || (f.About != "" && !db.IsUUID(f.About)) {
+		httpx.Error(w, http.StatusBadRequest, "account and about must be account ids")
 		return
 	}
 	if c := q.Get("cursor"); c != "" {

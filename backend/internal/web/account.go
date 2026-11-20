@@ -66,7 +66,7 @@ func CreateAccount(r *http.Request, username, password string, pending bool) (db
 		return db.Account{}, err
 	}
 	if n > signupLimit {
-		httpx.RateLimited.WithLabelValues("register").Inc()
+		httpx.CountRefused("register")
 		return db.Account{}, ErrTooManySignups
 	}
 	hash, err := auth.HashPassword(password)

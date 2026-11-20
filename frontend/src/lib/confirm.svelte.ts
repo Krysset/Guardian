@@ -6,6 +6,8 @@ export type ConfirmRequest = {
 	message?: string;
 	confirm: string;
 	danger?: boolean;
+	/** The confirm button stays off until this is typed exactly (a username before erasing an account). */
+	typeToConfirm?: string;
 };
 
 type Pending = ConfirmRequest & { done: (ok: boolean) => void };

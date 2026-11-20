@@ -6,6 +6,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { initial, maskEmail, messageOf, formatWhen } from '#lib/format.ts';
 	import { askConfirm } from '#lib/confirm.svelte.ts';
+	import { browserZone, localeOptions, zoneOptions } from '#lib/locales.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -48,28 +49,8 @@
 	);
 	const dirty = $derived(Object.keys(changes).length > 0);
 
-	// Languages people commonly choose, the account's own and the browser's; named in the browser's language.
-	const localeNames = new Intl.DisplayNames(undefined, { type: 'language' });
-	const locales = $derived.by(() => {
-		const tags = new Set(['en-GB', 'en-US', 'sv-SE', 'nb-NO', 'da-DK', 'fi-FI', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'nl-NL', 'pl-PL', 'pt-BR', 'pt-PT', 'ja-JP', 'ko-KR', 'zh-CN']);
-		for (const l of navigator.languages) if (l.includes('-')) tags.add(l);
-		if (saved.locale) tags.add(saved.locale);
-		const named = [...tags].map((tag) => {
-			let name = tag;
-			try {
-				name = localeNames.of(tag) ?? tag;
-			} catch {
-				// not a valid tag: show it as it is
-			}
-			return { tag, name };
-		});
-		return named.sort((a, b) => a.name.localeCompare(b.name));
-	});
-	const zones = $derived.by(() => {
-		const all = Intl.supportedValuesOf('timeZone');
-		return saved.zoneinfo && !all.includes(saved.zoneinfo) ? [saved.zoneinfo, ...all] : all;
-	});
-	const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const locales = $derived(localeOptions(saved.locale));
+	const zones = $derived(zoneOptions(saved.zoneinfo));
 
 	function validate(): boolean {
 		const f: typeof fieldError = {};

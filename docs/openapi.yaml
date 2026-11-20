@@ -608,7 +608,8 @@ paths:
           schema: { type: string, maxLength: 256 }
         - name: status
           in: query
-          schema: { type: string, enum: [active, disabled] }
+          description: must_change_password is active accounts with a temporary password.
+          schema: { type: string, enum: [active, disabled, must_change_password] }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -618,12 +619,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_cursor]
+                required: [items, next_cursor, total]
                 properties:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/Account' }
                   next_cursor: { type: [string, 'null'] }
+                  total: { type: integer, description: How many accounts match q and status, on all pages. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -732,6 +734,37 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: '#/components/schemas/DeletedAccount' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounts/{account}/sessions:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    delete:
+      tags: [accounts]
+      summary: Sign an account out everywhere
+      description: >-
+        Ends every session of the account and their apps' refresh tokens, and tells apps with back-channel
+        logout, without disabling the account. Administrators do not see the sessions themselves.
+      operationId: endAccountSessions
+      responses:
+        '204': { description: Signed out everywhere. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /overview:
+    get:
+      tags: [accounts]
+      summary: The admin area's figures
+      description: Aggregated counts only, nothing that identifies a person. "last_day" is the last 24 hours.
+      operationId: getOverview
+      responses:
+        '200':
+          description: The figures.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Overview' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -1284,6 +1317,10 @@ paths:
           in: query
           description: Only entries where this account acted.
           schema: { type: string, format: uuid }
+        - name: about
+          in: query
+          description: Only entries where this account acted or that were done to it (metadata "account" or "target").
+          schema: { type: string, format: uuid }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -1501,7 +1538,8 @@ components:
           type: string
           description: |
             invalid_request, unauthorized, forbidden, not_found, method_not_allowed, conflict, rate_limited,
-            server_error, unavailable, or a specific code: last_admin, wrong_password, invalid_token.
+            server_error, unavailable, or a specific code: last_admin, wrong_password, invalid_token,
+            reauth_required, mfa_required, email_required, username_taken, email_taken.
         message: { type: string }
 
     Username:
@@ -1539,6 +1577,7 @@ components:
         erase_after: { type: string, format: date-time }
         deleted_by: { type: string, format: uuid, description: The account that deleted it. }
         deleted_by_itself: { type: boolean }
+        deleted_by_username: { type: string, description: Who deleted it, while that account exists. }
     Account:
       type: object
       required: [id, username, email_verified, status, must_change_password, created_at, updated_at]
@@ -1593,6 +1632,41 @@ components:
                 required: { type: boolean, description: Every account must have an address (REQUIRE_EMAIL); it cannot be removed. }
                 pending: { type: string, description: A new address waiting for its confirmation link to be opened. }
                 pending_until: { type: string, format: date-time, description: When that link expires. }
+    Overview:
+      type: object
+      required: [accounts, groups, apps, last_day, admins]
+      properties:
+        accounts:
+          type: object
+          required: [active, disabled, must_change_password, waiting_for_erasure]
+          properties:
+            active: { type: integer }
+            disabled: { type: integer }
+            must_change_password: { type: integer }
+            waiting_for_erasure: { type: integer }
+        groups: { type: integer }
+        apps:
+          type: object
+          required: [enabled, disabled]
+          properties:
+            enabled: { type: integer }
+            disabled: { type: integer }
+        last_day:
+          type: object
+          required: [sign_ins, failed_sign_ins, rate_limited, honeypot]
+          properties:
+            sign_ins: { type: integer }
+            failed_sign_ins: { type: integer, description: Wrong passwords and wrong two-factor codes. }
+            rate_limited: { type: integer, description: Requests refused by a rate limit. }
+            honeypot: { type: integer, description: Forms a bot filled in. }
+        admins:
+          type: object
+          required: [total, with_two_factor, permanent, signed_in_last_day]
+          properties:
+            total: { type: integer, description: Active administrators. }
+            with_two_factor: { type: integer }
+            permanent: { type: integer, description: Administrators whose membership does not expire. }
+            signed_in_last_day: { type: integer }
     HomeApp:
       type: object
       required: [id, display_name, description, homepage_url]
@@ -1632,8 +1706,15 @@ components:
       allOf:
         - $ref: '#/components/schemas/Account'
         - type: object
-          required: [groups]
+          required: [groups, is_admin, mfa]
           properties:
+            is_admin: { type: boolean }
+            mfa:
+              type: object
+              properties:
+                totp: { type: boolean }
+                totp_added_at: { type: string, format: date-time }
+                recovery_codes_left: { type: integer }
             groups:
               type: array
               items: { $ref: '#/components/schemas/Membership' }
@@ -1722,6 +1803,7 @@ components:
         event_type: { type: string }
         actor_account_id: { type: string, format: uuid }
         actor_app_id: { type: string, format: uuid }
+        actor_username: { type: string, description: The acting account's username, while it exists. }
         ip_address: { type: string }
         metadata: { type: object, additionalProperties: true }
 

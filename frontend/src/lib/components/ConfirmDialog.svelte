@@ -5,13 +5,17 @@
 
 	let dialog: HTMLDialogElement | undefined = $state();
 	let cancelButton: HTMLButtonElement | undefined = $state();
+	let typedInput: HTMLInputElement | undefined = $state();
+	let typed = $state('');
 	const pending = $derived(confirmation.pending);
+	const blocked = $derived(!!pending?.typeToConfirm && typed.trim() !== pending.typeToConfirm);
 
 	$effect(() => {
 		if (pending && dialog && !dialog.open) {
+			typed = '';
 			dialog.showModal();
 			// The safe choice has the focus, so Enter does not confirm by accident.
-			tick().then(() => cancelButton?.focus());
+			tick().then(() => (pending.typeToConfirm ? typedInput : cancelButton)?.focus());
 		} else if (!pending && dialog?.open) {
 			dialog.close();
 		}
@@ -22,9 +26,13 @@
 	{#if pending}
 		<h2 id="confirm-h">{pending.title}</h2>
 		{#if pending.message}<p>{pending.message}</p>{/if}
+		{#if pending.typeToConfirm}
+			<label class="lbl typed" for="confirm-typed">Type <strong>{pending.typeToConfirm}</strong> to confirm</label>
+			<input bind:this={typedInput} bind:value={typed} class="in" id="confirm-typed" autocomplete="off" autocapitalize="none" spellcheck="false" />
+		{/if}
 		<div class="actions">
 			<button bind:this={cancelButton} class="btn alt" type="button" onclick={() => pending.done(false)}>Cancel</button>
-			<button class={pending.danger ? 'btn danger solid' : 'btn'} type="button" onclick={() => pending.done(true)}
+			<button class={pending.danger ? 'btn danger solid' : 'btn'} type="button" disabled={blocked} onclick={() => pending.done(true)}
 				>{pending.confirm}</button
 			>
 		</div>
@@ -53,6 +61,9 @@
 	p {
 		margin: 0;
 		color: var(--mute);
+	}
+	.typed {
+		margin-top: 16px;
 	}
 	.actions {
 		display: flex;

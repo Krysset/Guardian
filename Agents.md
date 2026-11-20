@@ -83,7 +83,16 @@ current: they are the hand-off between sessions.
 - **0.4 in progress**, in five parts (`docs/ROADMAP.md`): (1) foundation, (2) Home and the account area,
   (3) admin accounts and overview, with a two-factor step-up for the management UI (a session without
   two-factor gets `/mfa` with `return_to` instead of "sign out and in again"; decided 2026-11-20), (4) admin groups and apps, (5) audit log, a browser pass, docs.
-  - **Part 2, Home and the account area: built, uncommitted.** Pages `/` (H0), `/account` (AC1),
+  - **Part 3, admin overview and accounts: built, uncommitted.** Pages `/admin` (AD13), `/admin/accounts`
+    (AD1), `/admin/accounts/new` (AD3), `/admin/accounts/[account]` (AD2), `/admin/deleted` (AD12); the admin
+    layout loads `/overview` once (`depends('guardian:overview')`) for the start page and the A23 warning.
+    API: `api/overview.go` (`GET /overview`, `DELETE /accounts/{account}/sessions`), `store/overview.go`,
+    `CountAccounts`, audit `about` (actor, or metadata `account`/`target`) with `actor_username`,
+    `deleted_by_username`, AccountDetail `is_admin` and `mfa`. Web: `GET /mfa/stepup` in `web/mfa.go`. The API
+    client sends `403 mfa_required` there. `askConfirm` takes `typeToConfirm`. `lib/events.ts` words audit
+    events; `lib/locales.ts` has the language and time zone choices. e2e: `e2e/admin_area_test.go`.
+    Load files may only export `load` and Kit's options; other exports need a `_` prefix (`_pageSize`).
+  - **Part 2, Home and the account area: committed (`e3aee9c`).** Pages `/` (H0), `/account` (AC1),
     `/account/security|sessions|apps|groups|data`, `/account/groups/[group]` (AC6). API: `api/me.go` (home,
     sessions, connected apps, groups, email removal and cancel, add a member by login) on `store/me.go`;
     `api/useragent.go` ("Firefox on Windows"). e2e: `e2e/account_area_test.go`.
@@ -120,7 +129,7 @@ current: they are the hand-off between sessions.
     password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
     today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
     change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
-- Tests: 203, all passing with `-race` (`docs/TESTING.md`).
+- Tests: 206, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.

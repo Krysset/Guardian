@@ -59,7 +59,7 @@ func TestE2EAdminsListCreateAndEditAccounts(t *testing.T) {
 
 	// an account made by an administrator, with an email that counts as verified
 	made := admin.call("POST", "/api/v1/accounts", map[string]any{"username": "dan", "password": testutil.DefaultPassword, "email": "dan@example.com"}, 201)
-	if made["email"] != "dan@example.com" || made["email_verified"] != true {
+	if made["email"] != "dan@example.com" || made["email_verified"] != true || made["must_change_password"] != true {
 		t.Errorf("created = %v", made)
 	}
 	admin.call("POST", "/api/v1/accounts", map[string]any{"username": "DAN", "password": testutil.DefaultPassword}, 409)

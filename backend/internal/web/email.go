@@ -64,7 +64,7 @@ func mailAllowed(accountID string) (bool, error) {
 		return false, err
 	}
 	if n > mailsPerAccount {
-		httpx.RateLimited.WithLabelValues("mail").Inc()
+		httpx.CountRefused("mail")
 		return false, nil
 	}
 	return true, nil
@@ -252,7 +252,7 @@ func forgotSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > forgotPerIP {
-		httpx.RateLimited.WithLabelValues("forgot").Inc()
+		httpx.CountRefused("forgot")
 		page.Error = "Too many requests from your network. Try again in an hour."
 		page.CSRF = httpx.CSRFToken(w, r)
 		Render(w, http.StatusTooManyRequests, "forgot", page)

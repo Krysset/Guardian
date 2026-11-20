@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-20):** 203 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-20):** 206 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -63,6 +63,7 @@ over. Browser tests in the repository come with part 5 of 0.4.
 | The sign-in pages escape everything, keep a strict CSP and never show technical details | `TestEveryPageRendersAndEscapesUntrustedData`, `TestPagesHaveNoInlineStylesOrScripts`, `TestPagesSendSecurityHeaders`, `TestErrorPagesNeverShowDetails`, `TestE2EPagesRoutingAndStaticFiles` |
 | Home lists only the apps the account may use | `TestE2EHomeListsTheAppsTheAccountMayUse` |
 | The account area: Home's apps, connected apps and Remove access (consent, refresh tokens and the machine API's right gone), sessions (another account's not found, sign out one, everywhere else, or this one), the email address (pending, cancelled, removed), groups the user is in and manages, owners adding by exact username or email; each protected change needs re-authentication | `TestE2EHomeAndConnectedApps`, `TestE2EMySessions`, `TestE2EMyEmailAddress`, `TestE2EMyGroupsAndAddingMembersByLogin`, `TestDescribeUserAgent` |
+| The admin area: the overview counts without naming anyone (and only for administrators), accounts page with a total and filter by status, an account's details, signing it out everywhere, activity about it with who acted, who deleted it; the step-up asks a session without two-factor for a code and returns only to the management UI | `TestE2EAdminOverviewCountsWithoutNamingAnyone`, `TestE2EAdminAccountsPagesFiltersAndActivity`, `TestE2EStepUpForTheManagementUI` |
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |
 | Email links: sign-up waits for its confirmation, links work once and only the newest, the link signs in only the browser that signed up, the first account to confirm an address gets it, resets end every session, the reset answer never reveals an account | `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt`, `TestE2EPasswordResetByEmail`, `TestE2EChangingTheEmailAddress`, `TestE2EEmailOffAndEmailRequired` |
 | Emails are valid, escaped, and never sent in the clear when STARTTLS is asked for | `TestEveryEmailRendersBothPartsAndEscapes`, `TestComposeIsAValidMultipartMessage`, `TestSMTPSendsAndStartTLSIsRequired` |

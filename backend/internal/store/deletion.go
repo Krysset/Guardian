@@ -19,15 +19,18 @@ type DeletedAccount struct {
 	DeletedAt  time.Time `json:"deleted_at"`
 	EraseAfter time.Time `json:"erase_after"`
 	DeletedBy  string    `json:"deleted_by,omitempty"` // account id; the account itself when it deleted itself
-	ByItself   bool      `json:"deleted_by_itself"`
+	// DeletedByUsername is who deleted it, while that account exists.
+	DeletedByUsername string `json:"deleted_by_username,omitempty"`
+	ByItself          bool   `json:"deleted_by_itself"`
 }
 
-const deletedColumns = `id, username, deleted_at, erase_after, COALESCE(deleted_by::text, ''), deleted_by = id`
+const deletedColumns = `id, username, deleted_at, erase_after, COALESCE(deleted_by::text, ''), deleted_by = id,
+	COALESCE((SELECT b.username FROM account b WHERE b.id = account.deleted_by), '')`
 
 func scanDeleted(s scanner) (DeletedAccount, error) {
 	var d DeletedAccount
 	var self sql.NullBool
-	err := s.Scan(&d.ID, &d.Username, &d.DeletedAt, &d.EraseAfter, &d.DeletedBy, &self)
+	err := s.Scan(&d.ID, &d.Username, &d.DeletedAt, &d.EraseAfter, &d.DeletedBy, &self, &d.DeletedByUsername)
 	d.ByItself = self.Bool
 	return d, err
 }

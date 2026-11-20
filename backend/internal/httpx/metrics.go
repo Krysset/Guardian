@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,6 +32,15 @@ var (
 		Namespace: "guardian", Name: "rate_limited_total", Help: "Requests rejected by the rate limiter.",
 	}, []string{"endpoint"}) // login, register, reauth, mfa, mail, forgot, honeypot
 )
+
+// CountRefused records a request a rate limiter (or the honeypot) refused: in the metric, and in an hourly
+// counter in the database, so the admin area's overview can show the last 24 hours across all replicas.
+func CountRefused(endpoint string) {
+	RateLimited.WithLabelValues(endpoint).Inc()
+	if _, err := db.RateLimitHit(db.RefusedKeyPrefix+endpoint, time.Hour); err != nil {
+		slog.Warn("failed to count a refused request", "error", err)
+	}
+}
 
 // RegisterDBMetrics exposes connection-pool stats (open, in use, idle, wait count/duration) and the time of
 // the last backup. Backups run in their own process (kubectl exec), so the time is read from the audit log

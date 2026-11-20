@@ -144,12 +144,13 @@ func UpdateAccount(id string, u AccountUpdate) (Account, []LogoutNotice, error) 
 	return acct, notices, tx.Commit()
 }
 
-// CreateAccountWithEmail creates an account for an administrator. A non-empty email counts as verified.
+// CreateAccountWithEmail creates an account for an administrator. A non-empty email counts as verified. The
+// password is the administrator's choice, so the user must choose their own at the first sign-in (A3, U3).
 func CreateAccountWithEmail(username, passwordHash, email string) (Account, error) {
 	var id string
 	err := GetDatabaseConnection().QueryRow(
-		`INSERT INTO account (username, password_hash, email, email_verified_at)
-		 VALUES ($1, $2, NULLIF($3, ''), CASE WHEN $3 = '' THEN NULL ELSE now() END) RETURNING id`,
+		`INSERT INTO account (username, password_hash, email, email_verified_at, must_change_password)
+		 VALUES ($1, $2, NULLIF($3, ''), CASE WHEN $3 = '' THEN NULL ELSE now() END, true) RETURNING id`,
 		username, passwordHash, email).Scan(&id)
 	if err != nil {
 		return Account{}, err
@@ -187,26 +188,44 @@ func SetPasswordByAdmin(id, hash string) ([]LogoutNotice, error) {
 // AccountFilter selects accounts for ListAccounts.
 type AccountFilter struct {
 	Query  string // matched case-insensitively against username, display name and email
-	Status string // "" for any
+	Status string // "active", "disabled", "must_change_password" (active, with a temporary password), or "" for any
 	After  string // cursor: list accounts whose lower-case username sorts after this
 	Limit  int
 }
 
-// ListAccounts returns accounts ordered by lower-case username (byte order), at most f.Limit of them.
-func ListAccounts(f AccountFilter) ([]Account, error) {
-	// Byte order ("C"), so paging does not depend on the database's locale.
-	where := []string{"deleted_at IS NULL", `lower(username) COLLATE "C" > $1`}
-	args := []any{strings.ToLower(f.After)}
+// accountWhere is the WHERE clause (and its arguments) for the filter's query and status, without the cursor.
+func accountWhere(f AccountFilter, args []any) ([]string, []any) {
+	where := []string{"deleted_at IS NULL"}
 	if f.Query != "" {
 		args = append(args, "%"+likeEscape(strings.ToLower(f.Query))+"%")
 		p := "$" + strconv.Itoa(len(args))
 		where = append(where, "(lower(username) LIKE "+p+" OR lower(COALESCE(display_name, '')) LIKE "+p+
 			" OR lower(COALESCE(email, '')) LIKE "+p+")")
 	}
-	if f.Status != "" {
+	switch f.Status {
+	case "":
+	case "must_change_password":
+		where = append(where, "status = 'active' AND must_change_password")
+	default:
 		args = append(args, f.Status)
 		where = append(where, "status = $"+strconv.Itoa(len(args)))
 	}
+	return where, args
+}
+
+// CountAccounts returns how many accounts match the filter's query and status, on every page.
+func CountAccounts(f AccountFilter) (int, error) {
+	where, args := accountWhere(f, nil)
+	var n int
+	err := GetDatabaseConnection().QueryRow(`SELECT count(*) FROM account WHERE `+strings.Join(where, " AND "), args...).Scan(&n)
+	return n, err
+}
+
+// ListAccounts returns accounts ordered by lower-case username (byte order), at most f.Limit of them.
+func ListAccounts(f AccountFilter) ([]Account, error) {
+	// Byte order ("C"), so paging does not depend on the database's locale.
+	where, args := accountWhere(f, []any{strings.ToLower(f.After)})
+	where = append(where, `lower(username) COLLATE "C" > $1`)
 	args = append(args, f.Limit)
 	rows, err := GetDatabaseConnection().Query(
 		`SELECT `+accountColumns+` FROM account WHERE `+strings.Join(where, " AND ")+
@@ -378,6 +397,7 @@ type AuditEntry struct {
 	EventType      string         `json:"event_type"`
 	ActorAccountID string         `json:"actor_account_id,omitempty"`
 	ActorAppID     string         `json:"actor_app_id,omitempty"`
+	ActorUsername  string         `json:"actor_username,omitempty"` // "" once the account is erased
 	IPAddress      string         `json:"ip_address,omitempty"`
 	Metadata       map[string]any `json:"metadata"`
 }
@@ -386,6 +406,7 @@ type AuditEntry struct {
 type AuditFilter struct {
 	EventType string // exact event type, or "" for all
 	AccountID string // entries whose actor is this account, or "" for all
+	About     string // entries this account did or that were done to it (metadata "account" or "target"), or "" for all
 	Before    int64  // cursor: entries with a smaller id; 0 for the newest
 	Limit     int
 }
@@ -396,18 +417,24 @@ func ListAudit(f AuditFilter) ([]AuditEntry, error) {
 	var args []any
 	arg := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
 	if f.Before > 0 {
-		where = append(where, "id < "+arg(f.Before))
+		where = append(where, "l.id < "+arg(f.Before))
 	}
 	if f.EventType != "" {
-		where = append(where, "event_type = "+arg(f.EventType))
+		where = append(where, "l.event_type = "+arg(f.EventType))
 	}
 	if f.AccountID != "" {
-		where = append(where, "actor_account_id = "+arg(f.AccountID)+"::uuid")
+		where = append(where, "l.actor_account_id = "+arg(f.AccountID)+"::uuid")
+	}
+	if f.About != "" {
+		p := arg(f.About)
+		// One parameter used as text twice, so Postgres infers one type for it.
+		where = append(where, "(l.actor_account_id = "+p+"::text::uuid OR l.metadata->>'account' = "+p+"::text OR l.metadata->>'target' = "+p+"::text)")
 	}
 	rows, err := GetDatabaseConnection().Query(
-		`SELECT id, occurred_at, event_type, COALESCE(actor_account_id::text, ''), COALESCE(actor_app_id::text, ''),
-		        COALESCE(host(ip_address), ''), metadata
-		 FROM audit_log WHERE `+strings.Join(where, " AND ")+` ORDER BY id DESC LIMIT `+arg(f.Limit), args...)
+		`SELECT l.id, l.occurred_at, l.event_type, COALESCE(l.actor_account_id::text, ''), COALESCE(l.actor_app_id::text, ''),
+		        COALESCE(host(l.ip_address), ''), l.metadata, COALESCE(a.username, '')
+		 FROM audit_log l LEFT JOIN account a ON a.id = l.actor_account_id
+		 WHERE `+strings.Join(where, " AND ")+` ORDER BY l.id DESC LIMIT `+arg(f.Limit), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +443,7 @@ func ListAudit(f AuditFilter) ([]AuditEntry, error) {
 	for rows.Next() {
 		var e AuditEntry
 		var meta []byte
-		if err := rows.Scan(&e.ID, &e.OccurredAt, &e.EventType, &e.ActorAccountID, &e.ActorAppID, &e.IPAddress, &meta); err != nil {
+		if err := rows.Scan(&e.ID, &e.OccurredAt, &e.EventType, &e.ActorAccountID, &e.ActorAppID, &e.IPAddress, &meta, &e.ActorUsername); err != nil {
 			return nil, err
 		}
 		e.OccurredAt = e.OccurredAt.UTC()

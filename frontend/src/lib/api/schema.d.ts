@@ -456,6 +456,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account: components["parameters"]["AccountID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Sign an account out everywhere
+         * @description Ends every session of the account and their apps' refresh tokens, and tells apps with back-channel logout, without disabling the account. Administrators do not see the sessions themselves.
+         */
+        delete: operations["endAccountSessions"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin area's figures
+         * @description Aggregated counts only, nothing that identifies a person. "last_day" is the last 24 hours.
+         */
+        get: operations["getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account}/restore": {
         parameters: {
             query?: never;
@@ -908,6 +950,8 @@ export interface components {
              */
             deleted_by?: string;
             deleted_by_itself?: boolean;
+            /** @description Who deleted it */
+            deleted_by_username?: string;
         };
         Account: {
             /**
@@ -971,6 +1015,36 @@ export interface components {
                 pending_until?: string;
             };
         };
+        Overview: {
+            accounts: {
+                active: number;
+                disabled: number;
+                must_change_password: number;
+                waiting_for_erasure: number;
+            };
+            groups: number;
+            apps: {
+                enabled: number;
+                disabled: number;
+            };
+            last_day: {
+                sign_ins: number;
+                /** @description Wrong passwords and wrong two-factor codes. */
+                failed_sign_ins: number;
+                /** @description Requests refused by a rate limit. */
+                rate_limited: number;
+                /** @description Forms a bot filled in. */
+                honeypot: number;
+            };
+            admins: {
+                /** @description Active administrators. */
+                total: number;
+                with_two_factor: number;
+                /** @description Administrators whose membership does not expire. */
+                permanent: number;
+                signed_in_last_day: number;
+            };
+        };
         HomeApp: {
             /** Format: uuid */
             id: string;
@@ -1015,6 +1089,13 @@ export interface components {
             last_used_at: string;
         };
         AccountDetail: components["schemas"]["Account"] & {
+            is_admin: boolean;
+            mfa: {
+                totp?: boolean;
+                /** Format: date-time */
+                totp_added_at?: string;
+                recovery_codes_left?: number;
+            };
             groups: components["schemas"]["Membership"][];
         };
         Membership: {
@@ -1116,6 +1197,8 @@ export interface components {
             actor_account_id?: string;
             /** Format: uuid */
             actor_app_id?: string;
+            /** @description The acting account's username */
+            actor_username?: string;
             ip_address?: string;
             metadata: {
                 [key: string]: unknown;
@@ -1937,7 +2020,8 @@ export interface operations {
             query?: {
                 /** @description Text to find in the username, display name or email, ignoring case. */
                 q?: string;
-                status?: "active" | "disabled";
+                /** @description must_change_password is active accounts with a temporary password. */
+                status?: "active" | "disabled" | "must_change_password";
                 /** @description next_cursor from the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
@@ -1957,6 +2041,8 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["Account"][];
                         next_cursor: string | null;
+                        /** @description How many accounts match q and status */
+                        total: number;
                     };
                 };
             };
@@ -2101,6 +2187,51 @@ export interface operations {
                     "application/json": {
                         items?: components["schemas"]["DeletedAccount"][];
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    endAccountSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account: components["parameters"]["AccountID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out everywhere. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The figures. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Overview"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2802,6 +2933,8 @@ export interface operations {
                 event?: string;
                 /** @description Only entries where this account acted. */
                 account?: string;
+                /** @description Only entries where this account acted or that were done to it (metadata "account" or "target"). */
+                about?: string;
                 /** @description next_cursor from the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];

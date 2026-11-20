@@ -124,6 +124,6 @@ func signupSubmit(w http.ResponseWriter, r *http.Request) {
 
 // honeypotHit records a form whose hidden honeypot field was filled in: a bot, since people never see it.
 func honeypotHit(r *http.Request, form string) {
-	httpx.RateLimited.WithLabelValues("honeypot").Inc()
+	httpx.CountRefused("honeypot")
 	db.Audit("honeypot", "", "", httpx.ClientIP(r), map[string]any{"form": form})
 }

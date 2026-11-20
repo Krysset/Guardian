@@ -102,6 +102,10 @@ func accountFail(w http.ResponseWriter, err error) {
 	case errors.Is(err, db.ErrLastAdmin):
 		httpx.ErrorCode(w, http.StatusConflict, "last_admin",
 			"Guardian must keep at least one active administrator whose membership does not expire")
+	case db.UniqueViolationOn(err) == "ux_account_email":
+		httpx.ErrorCode(w, http.StatusConflict, "email_taken", "That email address is in use")
+	case db.UniqueViolationOn(err) == "ux_account_username":
+		httpx.ErrorCode(w, http.StatusConflict, "username_taken", "That username is taken")
 	case db.IsUniqueViolation(err):
 		httpx.Error(w, http.StatusConflict, "That username or email is already in use")
 	default:
@@ -256,7 +260,7 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 		accountFail(w, err)
 		return
 	} else if n >= reauthLimit {
-		httpx.RateLimited.WithLabelValues("reauth").Inc()
+		httpx.CountRefused("reauth")
 		w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
 		httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many wrong passwords. Try again in 15 minutes.")
 		return
@@ -354,20 +358,26 @@ func listAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	status := q.Get("status")
-	if status != "" && status != "active" && status != "disabled" {
-		httpx.Error(w, http.StatusBadRequest, "status must be active or disabled")
+	if status != "" && status != "active" && status != "disabled" && status != "must_change_password" {
+		httpx.Error(w, http.StatusBadRequest, "status must be active, disabled or must_change_password")
 		return
 	}
 	if len(q.Get("q")) > 256 {
 		httpx.Error(w, http.StatusBadRequest, "q may be up to 256 characters")
 		return
 	}
-	accounts, err := db.ListAccounts(db.AccountFilter{Query: q.Get("q"), Status: status, After: q.Get("cursor"), Limit: limit + 1})
+	filter := db.AccountFilter{Query: q.Get("q"), Status: status, After: q.Get("cursor"), Limit: limit + 1}
+	accounts, err := db.ListAccounts(filter)
 	if err != nil {
 		accountFail(w, err)
 		return
 	}
-	resp := map[string]any{"next_cursor": nil}
+	total, err := db.CountAccounts(filter)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	resp := map[string]any{"next_cursor": nil, "total": total}
 	if len(accounts) > limit {
 		accounts = accounts[:limit]
 		resp["next_cursor"] = accounts[limit-1].Username
@@ -424,10 +434,22 @@ func getAccount(w http.ResponseWriter, r *http.Request) {
 		accountFail(w, err)
 		return
 	}
+	mfa, err := db.GetMFAStatus(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	admin, err := db.IsAdmin(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, struct {
 		db.Account
-		Groups []db.Membership `json:"groups"`
-	}{acct, groups})
+		Groups  []db.Membership `json:"groups"`
+		IsAdmin bool            `json:"is_admin"`
+		MFA     db.MFAStatus    `json:"mfa"`
+	}{acct, groups, admin, mfa})
 }
 
 // updateAccount changes any profile field, the email (counts as verified; "" removes it) and the status.

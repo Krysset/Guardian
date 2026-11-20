@@ -3,6 +3,8 @@
 //
 // Every call shares three behaviours:
 // - 401 (not signed in, or the session ended): the browser goes to the sign-in page and comes back here.
+// - 403 mfa_required (an administrator's or owner's rights, from a session without two-factor): the browser
+//   goes to /mfa/stepup, which asks for a code and comes back here.
 // - 403 reauth_required (a protected change): the "Confirm it's you" dialog (AC8) opens; once the user
 //   confirms, the call is sent again. Cancelling rejects with ApiError code "cancelled".
 // - Any other failure rejects with an ApiError carrying the API's error code and message.
@@ -69,13 +71,16 @@ function url(template: string, path?: Record<string, unknown>, query?: Record<st
 	return base + p;
 }
 
-/** Sends the browser to the sign-in page, which brings it back to the current page. The promise never
- *  settles: the page is being left, so nothing should render an error meanwhile. */
-export function signIn(): Promise<never> {
+/** Sends the browser to a sign-in page that brings it back to the current page. The promise never settles:
+ *  the page is being left, so nothing should render an error meanwhile. */
+function leaveFor(path: string): Promise<never> {
 	const back = location.pathname + location.search;
-	location.assign('/login?return_to=' + encodeURIComponent(back));
+	location.assign(path + '?return_to=' + encodeURIComponent(back));
 	return new Promise(() => {});
 }
+
+/** Sign in again, then come back here. */
+export const signIn = () => leaveFor('/login');
 
 async function send(method: Method, template: string, opts: Options<unknown>, fetcher: typeof fetch): Promise<unknown> {
 	const init: RequestInit = {
@@ -111,6 +116,7 @@ async function send(method: Method, template: string, opts: Options<unknown>, fe
 			// not a JSON error (a proxy's page, say): keep the generic message
 		}
 		if (res.status === 401) return signIn();
+		if (res.status === 403 && code === 'mfa_required') return leaveFor('/mfa/stepup');
 		if (res.status === 403 && code === 'reauth_required' && attempt === 0) {
 			if (await confirmIdentity(opts.reason ?? 'make this change')) continue;
 			throw new ApiError(403, 'cancelled', 'Cancelled');
@@ -139,7 +145,6 @@ export type Schema<N extends keyof import('./schema.d.ts').components['schemas']
 
 /** Turns a failed call in a load function into SvelteKit's error page. */
 export function loadFailed(e: unknown): never {
-	if (e instanceof ApiError && e.code === 'mfa_required') error(403, 'mfa_required');
 	if (e instanceof ApiError) error(e.status || 500, e.message);
 	throw e;
 }

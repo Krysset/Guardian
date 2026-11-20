@@ -39,6 +39,7 @@ func Mount(r chi.Router) {
 	r.Post("/mfa", mfaSubmit)
 	r.Post("/mfa/cancel", mfaCancel)
 	r.Get("/mfa/setup", mfaSetupPage)
+	r.Get("/mfa/stepup", stepUpPage)
 	r.Post("/mfa/setup", mfaSetupSubmit)
 	r.Get("/static/*", serveStatic)
 	r.Head("/static/*", serveStatic)
@@ -137,7 +138,7 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 	userFails, _ := db.RateLimitCount(userKey, loginLimits.Window)
 	ipFails, _ := db.RateLimitCount(ipKey, loginLimits.Window)
 	if userFails >= loginLimits.PerAccountAndIP || ipFails >= loginLimits.PerIP {
-		httpx.RateLimited.WithLabelValues("login").Inc()
+		httpx.CountRefused("login")
 		auth.DummyVerify(password) // a refusal takes as long as a check
 		showError(http.StatusTooManyRequests, "Too many failed attempts. Try again in a few minutes.")
 		return

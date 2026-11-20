@@ -143,16 +143,16 @@ Everything an app admin has for every app, and everything a group owner has for 
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A1 | List and search accounts, filter by status. | 0.1 / 0.4 | API done |
-| A2 | View an account: profile, status, groups, last sign-in. | 0.1 / 0.4 | API done |
-| A3 | Create an account; an email set by an admin counts as confirmed. The user must choose their own password at the first sign-in (U3). | 0.1 / 0.4 | API done |
-| A4 | Change an account's profile, username and email. | 0.1 / 0.4 | API done |
-| A5 | Disable and re-enable an account; disabling signs it out everywhere. Refused for the last administrator. | 0.1 / 0.4 | API done |
-| A6 | Set a temporary password, typed twice, which signs the account out everywhere and must be changed at the next sign-in (U3). From 0.5 Guardian can also generate one and copy it to the clipboard. | 0.1 / 0.4 | API done |
-| A7 | Delete an account: disabled at once, erased after the grace period (0.3), or erased at once ("erase now", 0.3). | 0.1, grace and erase 0.3 / 0.4 | API done |
-| A8 | Restore a deleted account during its grace period. | 0.3 / 0.4 | API done |
-| A9 | Reset an account's two-factor, giving a reason; the user is emailed. | 0.3 / 0.4 | API done |
-| A10 | Sign an account out everywhere without disabling it. Admins do not see the account's sessions. | 0.1 / 0.4 | planned |
+| A1 | List and search accounts, filter by status. | 0.1 / 0.4 | done |
+| A2 | View an account: profile, status, groups, last sign-in. | 0.1 / 0.4 | done |
+| A3 | Create an account; an email set by an admin counts as confirmed. The user must choose their own password at the first sign-in (U3). | 0.1 / 0.4 | done |
+| A4 | Change an account's profile, username and email. | 0.1 / 0.4 | done |
+| A5 | Disable and re-enable an account; disabling signs it out everywhere. Refused for the last administrator. | 0.1 / 0.4 | done |
+| A6 | Set a temporary password, typed twice, which signs the account out everywhere and must be changed at the next sign-in (U3). From 0.5 Guardian can also generate one and copy it to the clipboard. | 0.1 / 0.4 | done |
+| A7 | Delete an account: disabled at once, erased after the grace period (0.3), or erased at once ("erase now", 0.3). | 0.1, grace and erase 0.3 / 0.4 | done |
+| A8 | Restore a deleted account during its grace period. | 0.3 / 0.4 | done |
+| A9 | Reset an account's two-factor, giving a reason; the user is emailed. | 0.3 / 0.4 | done |
+| A10 | Sign an account out everywhere without disabling it. Admins do not see the account's sessions. | 0.1 / 0.4 | done |
 
 **Groups**
 
@@ -177,8 +177,8 @@ Everything an app admin has for every app, and everything a group owner has for 
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A23 | A warning across the admin area while there is only one administrator. | 0.4 | planned |
-| A28 | An overview as the admin area's start page, with aggregated figures only and nothing that identifies a person: numbers of accounts by status, groups and apps, sign-ins and failed sign-ins over the last day, rate-limit hits, number of administrators (and, from 0.3, how many have two-factor), accounts waiting for erasure. Audit entries are not shown there, because they name accounts and IP addresses. | 0.4 / 0.4 | planned |
+| A23 | A warning across the admin area while there is only one administrator. | 0.4 | done |
+| A28 | An overview as the admin area's start page, with aggregated figures only and nothing that identifies a person: numbers of accounts by status, groups and apps, sign-ins and failed sign-ins over the last day, rate-limit hits, number of administrators (and, from 0.3, how many have two-factor), accounts waiting for erasure. Audit entries are not shown there, because they name accounts and IP addresses. | 0.4 / 0.4 | done |
 
 ## Operator
 

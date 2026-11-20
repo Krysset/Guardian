@@ -33,6 +33,15 @@ func scanAccount(s scanner, extra ...any) (Account, error) {
 	return a, err
 }
 
+// UniqueViolationOn reports which unique index a duplicate violated ("ux_account_email", say), or "".
+func UniqueViolationOn(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName
+	}
+	return ""
+}
+
 // IsUniqueViolation reports whether err is a Postgres unique-constraint violation.
 func IsUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError

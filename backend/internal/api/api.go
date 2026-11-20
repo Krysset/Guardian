@@ -83,6 +83,8 @@ func Router() http.Handler {
 				r.Put("/accounts/{account}/password", setAccountPassword)
 				r.Post("/accounts/{account}/mfa/reset", resetAccountMFA)
 				r.Get("/accounts/deleted", listDeletedAccounts)
+				r.Delete("/accounts/{account}/sessions", endAccountSessions)
+				r.Get("/overview", getOverview)
 				r.Post("/accounts/{account}/restore", restoreAccount)
 				r.Post("/accounts/{account}/erase", eraseAccount)
 

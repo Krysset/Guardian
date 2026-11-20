@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"time"
 
@@ -114,6 +115,28 @@ func StepUp(w http.ResponseWriter, r *http.Request, accountID, returnTo, appName
 		Reason: appName + " requires two-factor.", ReturnTo: returnTo})
 }
 
+// stepUpPage is where the management UI sends a signed-in user whose session has not passed two-factor
+// when a page needs it (an administrator's or group owner's rights, 403 mfa_required). It asks for a code,
+// or sets two-factor up first, and returns to return_to (a page of the management UI). Without a session it
+// is the sign-in page; a session that already passed two-factor goes straight back.
+func stepUpPage(w http.ResponseWriter, r *http.Request) {
+	returnTo := httpx.SafeReturnTo(r.URL.Query().Get("return_to"))
+	sess, ok := httpx.SessionFromRequest(r)
+	if !ok {
+		target := "/login"
+		if returnTo != "" {
+			target += "?return_to=" + url.QueryEscape(returnTo)
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+		return
+	}
+	if slices.Contains(sess.AMR, "otp") {
+		http.Redirect(w, r, continueTo(returnTo), http.StatusFound)
+		return
+	}
+	StepUp(w, r, sess.AccountID, returnTo, "This page")
+}
+
 // ErrTooManyAttempts means too many wrong codes; the account must wait.
 var ErrTooManyAttempts = errors.New("too many wrong codes")
 
@@ -126,7 +149,7 @@ func VerifySecondFactor(accountID, code string, recovery bool) (ok bool, method 
 		return false, "", 0, err
 	}
 	if n >= mfaAttempts {
-		httpx.RateLimited.WithLabelValues("mfa").Inc()
+		httpx.CountRefused("mfa")
 		return false, "", 0, ErrTooManyAttempts
 	}
 	if recovery {
