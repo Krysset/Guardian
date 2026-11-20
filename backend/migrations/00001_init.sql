@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS app (
 	-- 'anyone': every account. The default denies, so a new app is closed until it is opened on purpose.
 	access_rule                 TEXT NOT NULL DEFAULT 'groups'
 	                            CHECK (access_rule IN ('groups', 'anyone')),
+	-- Signing in to this app needs two-factor. Guardian asks for it, or has it set up, before the code.
+	require_mfa                 BOOLEAN NOT NULL DEFAULT FALSE,
 	created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -328,11 +330,13 @@ CREATE TABLE IF NOT EXISTS account_mfa (
 	secret         TEXT,                                -- encrypted TOTP secret, or hashed recovery code
 	credential_id  BYTEA,                               -- webauthn
 	public_key     BYTEA,                               -- webauthn
-	sign_count     BIGINT,
+	sign_count     BIGINT,                              -- webauthn counter, or the last TOTP time step used
 	created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	last_used_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS ix_account_mfa_account ON account_mfa (account_id);
+-- One authenticator app per account.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_mfa_totp ON account_mfa (account_id) WHERE type = 'totp';
 
 -- -----------------------------------------------------------------------------
 -- AUDIT LOG (append-only)

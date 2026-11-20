@@ -1,0 +1,22 @@
+{{define "content"}}
+      <h1>Two-factor</h1>
+      <p class="sub">{{if .Recovery}}Enter one of the recovery codes you saved. Each code works once.{{else}}Enter the 6-digit code from your authenticator app.{{end}}</p>
+      {{template "error-banner" .}}
+      <form method="post" action="/mfa">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        {{if .Recovery}}
+        <input type="hidden" name="method" value="recovery">
+        <label for="code">Recovery code</label>
+        <input class="text" id="code" name="code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="xxxx-xxxx" required autofocus{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{else}}
+        <label for="code">Code</label>
+        <input class="text code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" placeholder="000000" required autofocus{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{end}}
+        {{with .FieldErrors.code}}<p class="field-error" id="code-error">{{.}}</p>{{end}}
+        <button class="button" type="submit">Verify</button>
+      </form>
+      <p class="small">{{if .Recovery}}<a href="/mfa">Use the authenticator app</a>{{else}}<a href="/mfa?recovery">Use a recovery code</a>{{end}}</p>
+      <form class="small" method="post" action="/mfa/cancel">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link-button" type="submit">Sign out</button>
+      </form>
+{{end}}

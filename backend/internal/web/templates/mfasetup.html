@@ -1,0 +1,21 @@
+{{define "content"}}
+      <h1>Set up two-factor</h1>
+      <p class="sub">{{.Message}} It only takes a minute.</p>
+      {{template "error-banner" .}}
+      <form method="post" action="/mfa/setup">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="scan">
+        <input type="hidden" name="token" value="{{.Token}}">
+        <p class="step">1. Scan this with your authenticator app.</p>
+        {{with .QRCode}}<img class="qr" src="{{.}}" width="168" height="168" alt="QR code for your authenticator app">{{end}}
+        <p class="hint center">Can't scan it? Type this key instead:</p>
+        <div class="secret"><code id="secret">{{.SecretGroups}}</code><button class="button alt small-button" type="button" data-copy="secret" hidden>Copy</button></div>
+        <p class="step">2. Enter the code it shows.</p>
+        <label class="visually-hidden" for="code">Code</label>
+        <input class="text code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" placeholder="000000" required{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{with .FieldErrors.code}}<p class="field-error" id="code-error">{{.}}</p>{{end}}
+        <button class="button" type="submit">Continue</button>
+      </form>
+      <form class="small" method="post" action="/mfa/cancel">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link-button" type="submit">Sign out</button>
+      </form>
+{{end}}

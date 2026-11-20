@@ -140,7 +140,7 @@ func TestAdminEndpointsValidateInputBeforeTouchingTheDatabase(t *testing.T) {
 		{"account update: bad email", updateAccount, `{"email":"not-an-address"}`},
 		{"account update: bad username", updateAccount, `{"username":"x"}`},
 		{"account password: too short", setAccountPassword, `{"new_password":"short"}`},
-		{"own password: too short", changeMyPassword, `{"current_password":"x","new_password":"short"}`},
+		{"own password: too short", changeMyPassword, `{"new_password":"short"}`},
 	}
 	for _, c := range cases {
 		if rec := call(c.handler, jsonReq("POST", "/", c.body)); rec.Code != http.StatusBadRequest {

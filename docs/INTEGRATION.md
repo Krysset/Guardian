@@ -26,6 +26,9 @@ The answer contains `client_id` and, once, `client_secret`. Keep both in a Kuber
 
 - **`access_rule`:** with `groups` (the default) only members of a linked group can sign in to the app;
   Guardian refuses everyone else before your app sees them. With `anyone` every account can sign in.
+- **`require_mfa`:** `true` makes signing in to your app need two-factor. Guardian asks for the code, or walks
+  the user through setting up an authenticator app, before your app gets a code. The `amr` claim then holds
+  `otp`. Change it with `PATCH /api/v1/apps/{id}`.
 - **`group_ids`:** the groups your app is told about. Your app never sees any other group a user is in.
   Change both later with `PUT /api/v1/apps/{id}/access` (`{"access_rule", "group_ids"}`).
 - Groups are managed under `/api/v1/groups`. A group's `key` (for example `billing-approvers`) never changes;

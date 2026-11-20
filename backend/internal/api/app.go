@@ -33,6 +33,7 @@ type createAppRequest struct {
 	Scopes                 []string `json:"scopes"`                   // defaults to openid, profile, email, groups
 	AccessRule             string   `json:"access_rule"`              // "groups" (default) or "anyone"
 	GroupIDs               []string `json:"group_ids"`                // groups linked to the app
+	RequireMFA             bool     `json:"require_mfa"`              // signing in to the app needs two-factor
 }
 
 func validAccessRule(rule string) bool { return rule == "groups" || rule == "anyone" }
@@ -99,7 +100,7 @@ func createApp(w http.ResponseWriter, r *http.Request) {
 		LogoURL: req.LogoURL, HomepageURL: req.HomepageURL, ClientType: req.ClientType,
 		RedirectURIs: req.RedirectURIs, PostLogoutRedirectURIs: req.PostLogoutRedirectURIs,
 		BackchannelLogoutURI: req.BackchannelLogoutURI, IsFirstParty: req.IsFirstParty,
-		AccessTokenTTL: req.AccessTokenTTLSeconds, AccessRule: req.AccessRule, GroupIDs: req.GroupIDs,
+		AccessTokenTTL: req.AccessTokenTTLSeconds, AccessRule: req.AccessRule, GroupIDs: req.GroupIDs, RequireMFA: req.RequireMFA,
 	}, req.Scopes, secretHash)
 	if err != nil {
 		appFail(w, err)
@@ -231,6 +232,7 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 		AccessTokenTTLSeconds  *int      `json:"access_token_ttl_seconds"`
 		Scopes                 *[]string `json:"scopes"`
 		Enabled                *bool     `json:"enabled"`
+		RequireMFA             *bool     `json:"require_mfa"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -275,6 +277,7 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 		BackchannelLogoutURI: req.BackchannelLogoutURI, RedirectURIs: req.RedirectURIs,
 		PostLogoutRedirectURIs: req.PostLogoutRedirectURIs, Scopes: req.Scopes,
 		IsFirstParty: req.IsFirstParty, Enabled: req.Enabled, AccessTokenTTL: req.AccessTokenTTLSeconds,
+		RequireMFA: req.RequireMFA,
 	})
 	if err != nil {
 		appFail(w, err)
@@ -283,6 +286,9 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 	detail := map[string]any{"app": app.ID}
 	if req.Enabled != nil {
 		detail["enabled"] = *req.Enabled
+	}
+	if req.RequireMFA != nil {
+		detail["require_mfa"] = *req.RequireMFA
 	}
 	db.Audit("app.updated", httpx.AccountID(r), app.ID, httpx.ClientIP(r), detail)
 	httpx.JSON(w, http.StatusOK, app)

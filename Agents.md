@@ -80,8 +80,15 @@ current: they are the hand-off between sessions.
     (including the email settings) wait until the owner's cluster is.
 - **0.3 in progress**, in six parts (`docs/ROADMAP.md`): (1) email, (2) re-authentication, (3) two-factor,
   (4) account deletion and the deletion log, (5) signing keys and the keyring, (6) abuse protection.
-  - **Part 1, email: built, uncommitted.** See "Email" below.
-- Tests: 177, all passing with `-race` (`docs/TESTING.md`).
+  - **Part 1, email: committed (`17f8ad0`).** See "Email" below.
+  - **Part 3, two-factor: built, uncommitted.** See "Two-factor" below. `rsc.io/qr` vendored 2026-11-20.
+  - **Part 2, re-authentication: built, uncommitted.** `httpx.RequireReauth(w, r)` in a handler answers
+    `403 reauth_required` unless the session's `auth_time` is under 5 minutes old (`httpx.ReauthWindow`);
+    `Authenticate` puts `auth_time` in the context. `POST /api/v1/me/reauth` (`api/account.go`) checks the
+    password (5 failures per 15 minutes per account) and moves `auth_time` (`db.Reauthenticate`). Protected
+    today: username (`PATCH /me` only when `username` is in the body), email, password. **Every new protected
+    change (two-factor, recovery codes, sessions, connected apps, deletion) must call `RequireReauth`.**
+- Tests: 187, all passing with `-race` (`docs/TESTING.md`).
 
 ## Repository map
 - `backend/` — Go module `guardian` (Go 1.26): chi, pgx, goose, golang-jwt, prometheus.
@@ -182,9 +189,27 @@ current: they are the hand-off between sessions.
   account plus a `guardian_signup` cookie whose hash is in the token: the link signs in only in that browser.
   Pending accounts go after 48 hours (maintenance). `ConfirmEmail` gives the address to the first account that
   confirms it (`ErrEmailTaken` for the rest). `ResetPassword` ends every session.
-- `PUT /api/v1/me/email` sends E1 to the new address and E5 to the old one; no re-authentication yet (part 2
-  adds it). Password changes send E3 (S3, `PUT /me/password`, reset).
+- `PUT /api/v1/me/email` sends E1 to the new address and E5 to the old one; it needs re-authentication (part 2
+  added it). Password changes send E3 (S3, `PUT /me/password`, reset).
 - The cloud workspace tests real SMTP against a tiny Python sink (scratchpad `mailsink/sink.py`, port 2525).
+
+## Two-factor (0.3 part 3)
+- `auth/totp.go`: TOTP (RFC 6238, SHA-1, 6 digits, 30 s, one step of drift), recovery codes (`xxxx-xxxx`,
+  alphabet without i l o u, hashed with the account id). `auth.Seal`/`Open` encrypt with the key encryption key.
+- `store/mfa.go`: `account_mfa` rows: one `totp` (sealed secret; `sign_count` = last used time step, so a code
+  works once) and `recovery_code` rows (hash; deleted when used). `MFARequirement` (admins, owners).
+  `StepUpSession` adds `otp` to the session's `amr`. Schema: `app.require_mfa`, a unique TOTP per account.
+- `web/mfa.go`: after the password, `mfaAfterPassword` decides: the code (S13 `/mfa`), the required setup
+  (S15/S16 `/mfa/setup`), or straight in. The waiting state is the sealed `guardian_mfa` cookie (`mfaFlow`;
+  `signin` or `stepup`). `StepUp` is used by `/authorize` for apps with `require_mfa`. The setup logic
+  (`NewTOTPSetup`, `ConfirmTOTPSetup`, `FinishTOTPSetup`, recovery-code renewal) is shared with the API; its
+  state is a sealed setup token. 5 wrong codes per 15 minutes per account.
+- `api/mfa.go`: `/me/mfa/totp` (+ `/confirm`, `/finish`, DELETE), `/me/mfa/recovery-codes` (+ `/finish`),
+  `/accounts/{id}/mfa/reset`. `httpx.RequireMFASession` in `AdminOnly` and `groupAccess`.
+- Tests: `testutil.AdminAccount` gets an authenticator app (`EnableTOTP`); `testutil.TOTPCode` gives a current
+  code and forgets used steps; e2e `mustLoginWith` passes `/mfa` and sets up on `/mfa/setup` by itself;
+  `testutil.Session` makes `pwd otp` sessions. Sealed tokens in HTML are entity-escaped (`&#43;`): unescape.
+- **Schema changed** (fingerprint differs): the owner's local database must be recreated.
 
 ## Design board
 - https://claude.ai/artifact/V4Qwf5xMJg2fWKAGQm3QKJ ("Guardian page designs"). It holds every page in

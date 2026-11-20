@@ -44,3 +44,41 @@
     document.fonts.ready.then(place);
   }
 })();
+
+// Copy, download and print for the two-factor secret and the recovery codes. Without JavaScript the
+// buttons stay hidden and the codes can still be written down.
+(function () {
+  function text(id) {
+    var el = document.getElementById(id);
+    if (!el) return '';
+    var codes = el.querySelectorAll('code');
+    if (codes.length) return Array.prototype.map.call(codes, function (c) { return c.textContent; }).join('\n') + '\n';
+    return el.textContent.replace(/\s+/g, '');
+  }
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    if (!navigator.clipboard) return;
+    b.hidden = false;
+    b.addEventListener('click', function () {
+      navigator.clipboard.writeText(text(b.getAttribute('data-copy'))).then(function () {
+        var label = b.textContent;
+        b.textContent = 'Copied';
+        setTimeout(function () { b.textContent = label; }, 1500);
+      });
+    });
+  });
+  document.querySelectorAll('[data-download]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var blob = new Blob(['Guardian recovery codes. Each works once.\n\n' + text(b.getAttribute('data-download'))], { type: 'text/plain' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'guardian-recovery-codes.txt';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    });
+  });
+  document.querySelectorAll('[data-print]').forEach(function (b) {
+    b.addEventListener('click', function () { window.print(); });
+  });
+  document.querySelectorAll('.code-actions').forEach(function (row) { row.hidden = false; });
+})();

@@ -122,10 +122,25 @@ func getMe(w http.ResponseWriter, r *http.Request) {
 		accountFail(w, err)
 		return
 	}
+	mfa, err := db.GetMFAStatus(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	required, err := db.MFARequirement(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	type mfaInfo struct {
+		db.MFAStatus
+		Required bool `json:"required"`
+	}
 	httpx.JSON(w, http.StatusOK, struct {
 		db.Account
-		IsAdmin bool `json:"is_admin"`
-	}{acct, admin})
+		IsAdmin bool    `json:"is_admin"`
+		MFA     mfaInfo `json:"mfa"`
+	}{acct, admin, mfaInfo{mfa, required != ""}})
 }
 
 // updateMe changes the signed-in user's profile. Only fields present in the body change; "" clears one.
@@ -137,6 +152,10 @@ func updateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := req.check(); msg != "" {
 		httpx.Error(w, http.StatusBadRequest, msg)
+		return
+	}
+	// The username is a protected change; the rest of the profile is not.
+	if req.Username != nil && !httpx.RequireReauth(w, r) {
 		return
 	}
 	acct, _, err := db.UpdateAccount(httpx.AccountID(r), req.update())
@@ -157,6 +176,9 @@ func changeMyEmail(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !httpx.RequireReauth(w, r) {
 		return
 	}
 	if !mail.Enabled() {
@@ -196,12 +218,83 @@ func changeMyEmail(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusAccepted, map[string]string{"pending_email": req.Email})
 }
 
-// changeMyPassword needs the current password. It ends the user's other sessions, so a changed password
-// also locks out anyone who signed in with the old one.
+// reauthLimit is how many wrong passwords a session may send to /me/reauth in reauthWindow before it must
+// wait. The session is already signed in, so this only slows down someone guessing at an unattended screen.
+const (
+	reauthLimit  = 5
+	reauthWindow = 15 * time.Minute
+)
+
+// reauth confirms who the signed-in user is with their password, or a code from their authenticator app,
+// which opens the window for protected changes (httpx.ReauthWindow).
+func reauth(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	id, ip := httpx.AccountID(r), httpx.ClientIP(r)
+	key := "reauth:account:" + id
+	if n, err := db.RateLimitCount(key, reauthWindow); err != nil {
+		accountFail(w, err)
+		return
+	} else if n >= reauthLimit {
+		httpx.RateLimited.WithLabelValues("reauth").Inc()
+		w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
+		httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many wrong passwords. Try again in 15 minutes.")
+		return
+	}
+	if (req.Password == "") == (req.Code == "") {
+		httpx.Error(w, http.StatusBadRequest, "Send either password or code")
+		return
+	}
+	var ok bool
+	if req.Code != "" {
+		var err error
+		if ok, _, _, err = web.VerifySecondFactor(id, req.Code, false); errors.Is(err, web.ErrTooManyAttempts) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
+			httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many wrong codes. Try again in 15 minutes.")
+			return
+		} else if err != nil {
+			accountFail(w, err)
+			return
+		}
+	} else {
+		hash, err := db.GetPasswordHash(id)
+		if err != nil {
+			accountFail(w, err)
+			return
+		}
+		ok = hash != "" && len(req.Password) <= 1024 && auth.VerifyPassword(req.Password, hash)
+	}
+	if !ok {
+		db.RateLimitHit(key, reauthWindow)
+		db.Audit("reauth.failure", id, "", ip, nil)
+		if req.Code != "" {
+			httpx.ErrorCode(w, http.StatusForbidden, "wrong_code", "The code is not correct")
+		} else {
+			httpx.ErrorCode(w, http.StatusForbidden, "wrong_password", "The password is not correct")
+		}
+		return
+	}
+	db.RateLimitReset(key, reauthWindow)
+	t, err := db.Reauthenticate(httpx.SessionID(r))
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	db.Audit("reauth.success", id, "", ip, nil)
+	httpx.JSON(w, http.StatusOK, map[string]any{"reauthenticated_until": t.Add(httpx.ReauthWindow).UTC()})
+}
+
+// changeMyPassword is a protected change: the session must have proved who its user is within the last
+// few minutes (POST /me/reauth). It ends the user's other sessions, so a changed password also locks out
+// anyone who signed in with the old one.
 func changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
+		NewPassword string `json:"new_password"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -210,12 +303,10 @@ func changeMyPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, passwordRule)
 		return
 	}
-	id := httpx.AccountID(r)
-	hash, err := db.GetPasswordHash(id)
-	if err != nil || hash == "" || !auth.VerifyPassword(req.CurrentPassword, hash) {
-		httpx.ErrorCode(w, http.StatusForbidden, "wrong_password", "The current password is not correct")
+	if !httpx.RequireReauth(w, r) {
 		return
 	}
+	id := httpx.AccountID(r)
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")

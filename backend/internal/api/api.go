@@ -40,6 +40,13 @@ func Router() http.Handler {
 			r.Patch("/me", updateMe)
 			r.Put("/me/password", changeMyPassword)
 			r.Put("/me/email", changeMyEmail)
+			r.Post("/me/reauth", reauth)
+			r.Post("/me/mfa/totp", startTOTPSetup)
+			r.Post("/me/mfa/totp/confirm", confirmTOTPSetup)
+			r.Post("/me/mfa/totp/finish", finishTOTPSetup)
+			r.Delete("/me/mfa/totp", removeTOTP)
+			r.Post("/me/mfa/recovery-codes", renewRecoveryCodes)
+			r.Post("/me/mfa/recovery-codes/finish", finishRecoveryCodes)
 
 			// Groups: administrators may do everything; a group's owners may see it and manage its members.
 			r.Get("/groups", listGroups)
@@ -62,6 +69,7 @@ func Router() http.Handler {
 				r.Patch("/accounts/{account}", updateAccount)
 				r.Delete("/accounts/{account}", deleteAccount)
 				r.Put("/accounts/{account}/password", setAccountPassword)
+				r.Post("/accounts/{account}/mfa/reset", resetAccountMFA)
 
 				r.Get("/apps", listApps)
 				r.Post("/apps", createApp)

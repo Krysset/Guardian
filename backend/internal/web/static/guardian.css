@@ -20,6 +20,7 @@
 }
 
 html, body { margin: 0; height: 100%; }
+[hidden] { display: none !important; }
 
 body {
   font: 16px/1.5 Figtree, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -297,3 +298,23 @@ footer a { color: inherit; }
 /* Email (0.3): the result of a link, and the address on the check-your-inbox page. */
 .badge-icon.ok { color: var(--ok); }
 .sub .strong { color: var(--ink); overflow-wrap: anywhere; }
+
+/* Two-factor (0.3): S13, S15 and S16. */
+input.text.code { height: 56px; font: 600 26px ui-monospace, Menlo, Consolas, monospace; letter-spacing: .4em; text-align: center; }
+.step { margin: 20px 0 10px; font-size: 14px; }
+.center { text-align: center; }
+.qr { display: block; margin: 0 auto; width: 168px; height: 168px; background: #fff; border-radius: 8px; padding: 8px; box-sizing: content-box; image-rendering: pixelated; }
+.secret { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.secret code { flex: 1; font: 600 14px ui-monospace, Menlo, Consolas, monospace; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); letter-spacing: .06em; overflow-wrap: anywhere; }
+.button.small-button { width: auto; height: 38px; margin: 0; padding: 0 14px; font-size: 14px; }
+.codes { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; margin-top: 20px; padding: 14px; border: 1px dashed var(--hl); border-radius: 8px; background: var(--field); }
+.codes code { font: 600 15px ui-monospace, Menlo, Consolas, monospace; padding: 6px 0; text-align: center; }
+.code-actions { display: flex; gap: 8px; margin-top: 12px; }
+.code-actions .button { flex: 1; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+form.small { margin-top: 14px; }
+@media print {
+  body { background: #fff; color: #000; }
+  .bar::before, .bar::after, .logo, footer, form, .code-actions, .sub { display: none; }
+  .codes { border-color: #000; background: none; }
+}

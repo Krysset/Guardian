@@ -208,6 +208,10 @@ appear from that release; until then the page is drawn without them.
 - Fields: a 6-digit code from the authenticator app; or, after "Use a recovery code", a recovery code.
 - Actions: Verify. Switch between code and recovery code. "Use a security key" (0.5). Sign out.
 - States: wrong code; too many attempts.
+- Built in 0.3: the page comes between the password and the session (a sealed, 10-minute cookie holds the
+  waiting sign-in), and also when an app requires two-factor of a session that signed in without it. Five
+  wrong codes in 15 minutes make the account wait. "Sign out" drops the waiting sign-in (and ends a session
+  that was stepping up).
 
 **S14 Security key** (0.5)
 - Shows: "Use your security key or passkey", with what to do and a waiting state.
@@ -220,6 +224,9 @@ appear from that release; until then the page is drawn without them.
   as text (with copy) for typing in by hand, and a code to confirm.
 - Actions: Continue (to S16). Sign out. There is no way to skip it.
 - States: wrong code.
+- Built in 0.3: a wrong code shows a new QR code and secret (the first may have been scanned wrongly). The
+  method choice is left out until security keys exist (0.5). Voluntary setup is the API's until the account
+  area (0.4).
 
 **S16 Recovery codes** (0.3)
 - Shows:
@@ -228,6 +235,8 @@ appear from that release; until then the page is drawn without them.
   - Copy, Download as a text file, Print.
 - Fields: one of the codes, typed back, to prove they were saved.
 - Actions: Finish.
+- Built in 0.3: nothing is saved until Finish. Copy, Download and Print need JavaScript and are hidden without
+  it; printing shows only the codes.
 
 ### Home
 

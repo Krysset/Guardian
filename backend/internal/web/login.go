@@ -35,6 +35,11 @@ func Mount(r chi.Router) {
 	r.Post("/forgot", forgotSubmit)
 	r.Get("/reset", resetPage)
 	r.Post("/reset", resetSubmit)
+	r.Get("/mfa", mfaPage)
+	r.Post("/mfa", mfaSubmit)
+	r.Post("/mfa/cancel", mfaCancel)
+	r.Get("/mfa/setup", mfaSetupPage)
+	r.Post("/mfa/setup", mfaSetupSubmit)
 	r.Get("/static/*", serveStatic)
 	r.Head("/static/*", serveStatic)
 }
@@ -154,6 +159,17 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 			msg += " To get a new one, go back to the check-your-inbox page."
 		}
 		showError(http.StatusForbidden, msg)
+		return
+	}
+	next, reason, err := mfaAfterPassword(acct.ID)
+	if err != nil {
+		Error(w, ServerError)
+		return
+	}
+	if next != "" {
+		// The password was right; the session starts once the second factor is passed (or set up).
+		db.Audit("login.password_ok", acct.ID, "", ip, map[string]any{"next": next})
+		startMFAFlow(w, r, mfaFlow{Account: acct.ID, Purpose: "signin", Setup: next == "setup", Reason: reason, ReturnTo: returnTo})
 		return
 	}
 	loginsTotal.WithLabelValues("success").Inc()

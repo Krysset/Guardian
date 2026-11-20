@@ -55,6 +55,11 @@ type Page struct {
 	Icon   string // result pages: ok, warn or mail
 	Change bool   // the check-inbox page: show the form to change the address
 	Sent   bool   // the forgot-password page: the link was (or would have been) sent
+
+	Recovery     bool         // S13: asking for a recovery code instead of an authenticator code
+	QRCode       template.URL // S15: the QR code, a data: URI that html/template would otherwise refuse
+	SecretGroups string       // S15: the secret in groups of four
+	Codes        []string     // S16: the recovery codes, shown once
 }
 
 // Link is a button that leads somewhere.

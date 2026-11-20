@@ -29,8 +29,11 @@ func TestSessionLookupAndExpiry(t *testing.T) {
 	if err != nil || got.ID != sess.ID || got.AccountID != acct.ID {
 		t.Fatalf("lookup failed: %+v, %v", got, err)
 	}
-	if len(got.AMR) != 1 || got.AMR[0] != "pwd" {
-		t.Errorf("amr = %v, want [pwd]", got.AMR)
+	if strings.Join(got.AMR, " ") != "pwd otp" {
+		t.Errorf("amr = %v, want the test session's [pwd otp]", got.AMR)
+	}
+	if s, err := db.CreateSession(acct.ID, auth.HashToken("plain"), "", "", time.Hour); err != nil || strings.Join(s.AMR, " ") != "pwd" {
+		t.Errorf("a session without amr: %v %v, want [pwd]", s.AMR, err)
 	}
 	if byID, err := db.GetLiveSession(sess.ID, idle); err != nil || byID.ID != sess.ID {
 		t.Errorf("GetLiveSession: %+v, %v", byID, err)

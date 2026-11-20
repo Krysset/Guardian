@@ -59,3 +59,9 @@ func decrypt(encoded string) ([]byte, error) {
 	}
 	return gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
 }
+
+// Seal encrypts a small secret (a TOTP secret, a setup token) with the key encryption key.
+func Seal(plain []byte) (string, error) { return encrypt(plain) }
+
+// Open decrypts what Seal produced. Tampered or foreign ciphertext fails.
+func Open(sealed string) ([]byte, error) { return decrypt(sealed) }

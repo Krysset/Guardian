@@ -155,6 +155,16 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An app that requires two-factor gets a session that passed it, now or earlier.
+	if req.App.RequireMFA && !slices.Contains(sess.AMR, "otp") {
+		if slices.Contains(req.Prompts, "none") {
+			redirectWithError(w, r, req.RedirectURI, req.State, "interaction_required", "")
+			return
+		}
+		web.StepUp(w, r, sess.AccountID, "/authorize?"+r.URL.RawQuery, req.App.PrettyName)
+		return
+	}
+
 	// The app's access rule: with "groups", only members of a group linked to the app may sign in to it.
 	// Nobody else gets a code, so the app never has to notice and refuse them itself.
 	allowed, err := db.AccountMayUseApp(sess.AccountID, req.App)

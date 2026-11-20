@@ -138,7 +138,7 @@ func TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged(t *testing.T) {
 	if got := fresh.call("GET", "/api/v1/me", nil, 200); got["must_change_password"] != true {
 		t.Errorf("must_change_password = %v", got["must_change_password"])
 	}
-	fresh.call("PUT", "/api/v1/me/password", map[string]any{"current_password": "temporary-password-1", "new_password": "my-own-password-1"}, 204)
+	fresh.call("PUT", "/api/v1/me/password", map[string]any{"new_password": "my-own-password-1"}, 204)
 	if got := fresh.call("GET", "/api/v1/me", nil, 200); got["must_change_password"] != false {
 		t.Errorf("after the user's own change: must_change_password = %v", got["must_change_password"])
 	}

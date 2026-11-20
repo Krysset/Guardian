@@ -14,13 +14,17 @@ const touchInterval = 5 * time.Minute
 
 // CreateSession stores a new SSO session. sessionHash is the hash of the cookie value. The session ends
 // maxLifetime from now at the latest, whatever the activity.
-func CreateSession(accountID, sessionHash, ip, userAgent string, maxLifetime time.Duration) (Session, error) {
+// amr says how the user signed in (RFC 8176): "pwd", and "otp" after two-factor. Without it, {"pwd"}.
+func CreateSession(accountID, sessionHash, ip, userAgent string, maxLifetime time.Duration, amr ...string) (Session, error) {
 	s := Session{AccountID: accountID}
+	if len(amr) == 0 {
+		amr = []string{"pwd"}
+	}
 	err := GetDatabaseConnection().QueryRow(
-		`INSERT INTO session (session_hash, account_id, ip_address, user_agent, expires_at)
-		 VALUES ($1, $2, NULLIF($3, '')::inet, NULLIF($4, ''), $5)
+		`INSERT INTO session (session_hash, account_id, ip_address, user_agent, expires_at, amr)
+		 VALUES ($1, $2, NULLIF($3, '')::inet, NULLIF($4, ''), $5, $6)
 		 RETURNING id, auth_time, amr, expires_at, last_seen_at`,
-		sessionHash, accountID, ip, userAgent, time.Now().Add(maxLifetime)).
+		sessionHash, accountID, ip, userAgent, time.Now().Add(maxLifetime), strArray(amr)).
 		Scan(&s.ID, &s.AuthTime, scanArray(&s.AMR), &s.ExpiresAt, &s.LastSeenAt)
 	return s, err
 }
@@ -148,4 +152,13 @@ func Audit(eventType, accountID, appID, ip string, meta map[string]any) {
 	if err != nil {
 		slog.Error("failed to write the audit log", "error", err)
 	}
+}
+
+// Reauthenticate records that the session's user has just proved who they are again: it moves the
+// session's auth_time (the OIDC auth_time) to now, which opens the window for protected changes.
+func Reauthenticate(sessionID string) (time.Time, error) {
+	var t time.Time
+	err := GetDatabaseConnection().QueryRow(
+		`UPDATE session SET auth_time = now() WHERE id = $1 AND revoked_at IS NULL RETURNING auth_time`, sessionID).Scan(&t)
+	return t, err
 }

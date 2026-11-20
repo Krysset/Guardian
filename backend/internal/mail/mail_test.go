@@ -19,11 +19,14 @@ func TestEveryEmailRendersBothPartsAndEscapes(t *testing.T) {
 	when := time.Date(2026, 11, 15, 13, 2, 0, 0, time.UTC)
 	link := "https://auth.test/confirm?token=abc&x=<y>"
 	for name, m := range map[string]Message{
-		"confirm":  ConfirmAddress("a@b.test", link, when, "Europe/Stockholm", false),
-		"signup":   ConfirmAddress("a@b.test", link, when, "", true),
-		"reset":    ResetPassword("a@b.test", link, when, "Europe/Stockholm"),
-		"changed":  PasswordChanged("a@b.test", when, "Nowhere/Invalid"),
-		"changing": EmailChanging("a@b.test", "zelda@castle.example", when, ""),
+		"confirm":     ConfirmAddress("a@b.test", link, when, "Europe/Stockholm", false),
+		"signup":      ConfirmAddress("a@b.test", link, when, "", true),
+		"reset":       ResetPassword("a@b.test", link, when, "Europe/Stockholm"),
+		"changed":     PasswordChanged("a@b.test", when, "Nowhere/Invalid"),
+		"changing":    EmailChanging("a@b.test", "zelda@castle.example", when, ""),
+		"mfa added":   TwoFactorChanged("a@b.test", true, "Authenticator app", when, ""),
+		"mfa removed": TwoFactorChanged("a@b.test", false, "Authenticator app", when, ""),
+		"mfa reset":   TwoFactorReset("a@b.test", "Lost <phone>", when, ""),
 	} {
 		if m.To != "a@b.test" || m.Subject == "" {
 			t.Errorf("%s: to %q, subject %q", name, m.To, m.Subject)

@@ -16,7 +16,7 @@ const appColumns = `id, name, pretty_name, description, COALESCE(logo_url, ''), 
 	client_id, client_type, token_endpoint_auth_method, grant_types, redirect_uris, post_logout_redirect_uris,
 	COALESCE(backchannel_logout_uri, ''), require_pkce, is_first_party, access_token_ttl_seconds, refresh_mode, enabled,
 	ARRAY(SELECT scope_name FROM app_scope WHERE app_scope.app_id = app.id ORDER BY scope_name),
-	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1)`
+	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1), require_mfa`
 
 func scanApp(s scanner) (App, error) {
 	var a App
@@ -24,7 +24,7 @@ func scanApp(s scanner) (App, error) {
 		&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
 		scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
 		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
-		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs))
+		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &a.RequireMFA)
 	return a, err
 }
 
@@ -47,13 +47,13 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	err = tx.QueryRow(
 		`INSERT INTO app (name, pretty_name, description, logo_url, homepage_url, client_type, token_endpoint_auth_method,
 			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds, access_rule,
-			grant_types, refresh_mode)
+			grant_types, refresh_mode, require_mfa)
 		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 300),
-		         COALESCE(NULLIF($13, ''), 'groups'), $14, $15)
+		         COALESCE(NULLIF($13, ''), 'groups'), $14, $15, $16)
 		 RETURNING id`,
 		a.Name, a.PrettyName, a.Description, a.LogoURL, a.HomepageURL, a.ClientType, authMethod,
 		strArray(a.RedirectURIs), strArray(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
-		a.AccessTokenTTL, a.AccessRule, grants, refreshMode).Scan(&id)
+		a.AccessTokenTTL, a.AccessRule, grants, refreshMode, a.RequireMFA).Scan(&id)
 	if err != nil {
 		slog.Error("failed to create an app", "app", a.Name, "error", err)
 		return App{}, err
@@ -207,7 +207,7 @@ func AppsForHome(accountID string) ([]HomeApp, error) {
 			&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
 			scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
 			&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
-			scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &connected)
+			scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &a.RequireMFA, &connected)
 		if err != nil {
 			return nil, err
 		}

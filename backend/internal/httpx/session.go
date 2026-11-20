@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"slices"
 	"time"
 
 	"guardian/internal/auth"
@@ -15,7 +16,14 @@ type contextKey string
 const (
 	ctxAccountID contextKey = "account_id"
 	ctxSessionID contextKey = "session_id"
+	ctxAuthTime  contextKey = "auth_time"
+	ctxAMR       contextKey = "amr"
 )
+
+// ReauthWindow is how long after signing in, or confirming who they are again, a user may make protected
+// changes: username, email, password, two-factor, recovery codes, sessions, connected apps and deleting the
+// account. After it, those changes answer 403 reauth_required until POST /api/v1/me/reauth.
+const ReauthWindow = 5 * time.Minute
 
 // AccountID is the signed-in account of a request that passed Authenticate.
 func AccountID(r *http.Request) string {
@@ -45,12 +53,12 @@ func SessionFromRequest(r *http.Request) (db.Session, bool) {
 }
 
 // StartSession always creates a fresh session (never reuses an id, so no session fixation).
-func StartSession(w http.ResponseWriter, r *http.Request, accountID string) (db.Session, error) {
+func StartSession(w http.ResponseWriter, r *http.Request, accountID string, amr ...string) (db.Session, error) {
 	token, err := auth.RandomToken(32)
 	if err != nil {
 		return db.Session{}, err
 	}
-	sess, err := db.CreateSession(accountID, auth.HashToken(token), ClientIP(r), r.UserAgent(), SessionMaxLifetime)
+	sess, err := db.CreateSession(accountID, auth.HashToken(token), ClientIP(r), r.UserAgent(), SessionMaxLifetime, amr...)
 	if err != nil {
 		return db.Session{}, err
 	}
@@ -108,8 +116,44 @@ func Authenticate(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), ctxAccountID, sess.AccountID)
 		ctx = context.WithValue(ctx, ctxSessionID, sess.ID)
+		ctx = context.WithValue(ctx, ctxAuthTime, sess.AuthTime)
+		ctx = context.WithValue(ctx, ctxAMR, sess.AMR)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// RecentlyAuthenticated reports whether the request's session proved who its user is within ReauthWindow.
+func RecentlyAuthenticated(r *http.Request) bool {
+	t, ok := r.Context().Value(ctxAuthTime).(time.Time)
+	return ok && time.Since(t) < ReauthWindow
+}
+
+// RequireReauth answers 403 reauth_required, and returns false, unless the session proved who its user is
+// within ReauthWindow. Handlers of protected changes call it before changing anything.
+func RequireReauth(w http.ResponseWriter, r *http.Request) bool {
+	if RecentlyAuthenticated(r) {
+		return true
+	}
+	ErrorCode(w, http.StatusForbidden, "reauth_required",
+		"Confirm it is you first: send your password to POST /api/v1/me/reauth, then try again")
+	return false
+}
+
+// PassedMFA reports whether the request's session signed in, or stepped up, with two-factor.
+func PassedMFA(r *http.Request) bool {
+	amr, _ := r.Context().Value(ctxAMR).([]string)
+	return slices.Contains(amr, "otp")
+}
+
+// RequireMFASession answers 403 mfa_required, and returns false, unless the session passed two-factor.
+// Administrators and group owners must use two-factor; a session from before they set it up (or before
+// they became one) cannot use their rights until they sign in again.
+func RequireMFASession(w http.ResponseWriter, r *http.Request) bool {
+	if PassedMFA(r) {
+		return true
+	}
+	ErrorCode(w, http.StatusForbidden, "mfa_required", "Sign in again with two-factor to do this")
+	return false
 }
 
 // RequireAdmin requires a signed-in member of the built-in guardian-admins group.
@@ -127,6 +171,9 @@ func AdminOnly(next http.Handler) http.Handler {
 		}
 		if !ok {
 			Error(w, http.StatusForbidden, "Your account may not do this")
+			return
+		}
+		if !RequireMFASession(w, r) {
 			return
 		}
 		next.ServeHTTP(w, r)

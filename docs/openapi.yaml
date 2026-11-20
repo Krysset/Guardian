@@ -99,7 +99,9 @@ paths:
     patch:
       tags: [me]
       summary: Change the signed-in account's profile
-      description: Only fields present change; "" clears an optional field. The email is not here; it is set through verification (0.3).
+      description: >-
+        Only fields present change; "" clears an optional field. The email is not here: it changes through
+        PUT /me/email. Changing the username is a protected change (see POST /me/reauth); the other fields are not.
       operationId: updateMe
       requestBody:
         required: true
@@ -117,14 +119,196 @@ paths:
               schema: { $ref: '#/components/schemas/Account' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CrossOrigin' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/reauth:
+    post:
+      tags: [me]
+      summary: Confirm who the signed-in user is, before a protected change
+      description: >-
+        Protected changes (username, email, password; later also two-factor, recovery codes, sessions, connected
+        apps and deleting the account) need a session that signed in, or came here, within the last 5 minutes.
+        Otherwise they answer 403 with error reauth_required: ask for the password, send it here, and retry the
+        change. It also moves the session's auth_time, which apps see in new ID tokens. Five wrong passwords in
+        15 minutes make the session wait.
+      operationId: reauth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: Either the password or a code from the authenticator app.
+              properties:
+                password: { type: string }
+                code: { type: string, description: 'A 6-digit code from the authenticator app.' }
+      responses:
+        '200':
+          description: Confirmed; protected changes are allowed until reauthenticated_until.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reauthenticated_until: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The password or code is wrong (error wrong_password or wrong_code), or a cross-origin request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Too many wrong passwords (error rate_limited). Retry-After says when to try again.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/totp:
+    post:
+      tags: [me]
+      summary: Start setting up an authenticator app
+      description: >-
+        A protected change (see POST /me/reauth). Returns a new secret, its QR code and a setup_token; nothing
+        is saved yet. Continue with POST /me/mfa/totp/confirm within 15 minutes. An account that has an app
+        replaces it when the setup is finished.
+      operationId: startTOTPSetup
+      responses:
+        '200':
+          description: The secret to add to the app.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string, description: Base32, for typing in by hand. }
+                  otpauth_uri: { type: string }
+                  qr_code: { type: string, description: 'A data: URI of a PNG image of otpauth_uri.' }
+                  setup_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+    delete:
+      tags: [me]
+      summary: Remove the authenticator app and the recovery codes
+      description: A protected change. Refused for accounts that must use two-factor (administrators and group owners). The account is told by email.
+      operationId: removeTOTP
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: Two-factor is required for this account (error mfa_required), or there is none (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/totp/confirm:
+    post:
+      tags: [me]
+      summary: Confirm the app with its first code
+      description: Returns the 10 recovery codes to show once, and a setup_token for the last step. Nothing is saved yet.
+      operationId: confirmTOTPSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup_token, code]
+              properties:
+                setup_token: { type: string }
+                code: { type: string }
+      responses:
+        '200':
+          description: The recovery codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '400':
+          description: The code is wrong (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/totp/finish:
+    post:
+      tags: [me]
+      summary: Finish the setup by typing back one recovery code
+      description: Saves the app and the recovery codes, replacing any earlier ones, and emails the account. The session counts as signed in with two-factor from now on.
+      operationId: finishTOTPSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryCodeAnswer' }
+      responses:
+        '204': { description: Two-factor is on. }
+        '400':
+          description: That is not one of the codes (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/recovery-codes:
+    post:
+      tags: [me]
+      summary: Make new recovery codes
+      description: A protected change. Returns 10 new codes and a setup_token; the old codes keep working until POST /me/mfa/recovery-codes/finish.
+      operationId: renewRecoveryCodes
+      responses:
+        '200':
+          description: The new codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The account has no authenticator app (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/recovery-codes/finish:
+    post:
+      tags: [me]
+      summary: Put the new recovery codes in place by typing back one
+      operationId: finishRecoveryCodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryCodeAnswer' }
+      responses:
+        '204': { description: The new codes replace the old ones. }
+        '400':
+          description: That is not one of the codes (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The account has no authenticator app (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /me/password:
     put:
       tags: [me]
       summary: Change the signed-in account's password
-      description: Needs the current password. Ends the account's other sessions; this one stays.
+      description: A protected change (see POST /me/reauth). Ends the account's other sessions; this one stays.
       operationId: changeMyPassword
       requestBody:
         required: true
@@ -133,19 +317,14 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [current_password, new_password]
+              required: [new_password]
               properties:
-                current_password: { type: string }
                 new_password: { $ref: '#/components/schemas/Password' }
       responses:
         '204': { description: Changed. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403':
-          description: The current password is wrong (error wrong_password), or a cross-origin request.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
 
   /me/email:
     put:
@@ -154,7 +333,7 @@ paths:
       description: >-
         Emails a confirmation link (valid 24 hours) to the new address, and a notice to the current one. The
         address changes only when the link is opened; until then the account keeps its current address. At
-        most 5 emails per account per hour.
+        most 5 emails per account per hour. A protected change (see POST /me/reauth).
       operationId: changeMyEmail
       requestBody:
         required: true
@@ -177,7 +356,7 @@ paths:
                   pending_email: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CrossOrigin' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
         '409':
           description: The address is in use (error email_in_use), or this Guardian sends no email (error email_off).
           content:
@@ -334,6 +513,40 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts/{account}/mfa/reset:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Reset someone's two-factor
+      description: >-
+        The last step of the recovery ladder, for someone who lost their authenticator app and their recovery
+        codes. Removes the account's two-factor methods, signs it out everywhere, records the reason in the
+        audit log and emails it to the user. An account that must use two-factor sets it up again at its next
+        sign-in.
+      operationId: resetAccountMFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        '204': { description: Reset. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The account has no two-factor methods (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /groups:
     get:
@@ -581,6 +794,7 @@ paths:
                 scopes: { type: array, items: { type: string }, description: 'Must include openid. Default: openid, profile, email, groups.' }
                 access_rule: { $ref: '#/components/schemas/AccessRule' }
                 group_ids: { type: array, items: { type: string, format: uuid } }
+                require_mfa: { type: boolean, description: Signing in to the app needs two-factor. }
       responses:
         '201':
           description: The app, and its secret if it is confidential.
@@ -637,6 +851,7 @@ paths:
                 access_token_ttl_seconds: { $ref: '#/components/schemas/TokenTTL' }
                 scopes: { type: array, items: { type: string }, description: Replaces the allowed scopes; must include openid. }
                 enabled: { type: boolean }
+                require_mfa: { type: boolean }
       responses:
         '200':
           description: The updated app.
@@ -913,7 +1128,16 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Forbidden:
-      description: Signed in, but not allowed (error forbidden), or a cross-origin request.
+      description: >-
+        Signed in, but not allowed (error forbidden); an administrator or group owner whose session did not
+        pass two-factor (error mfa_required: sign in again); or a cross-origin request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ProtectedChange:
+      description: >-
+        The session did not sign in or confirm who its user is within the last 5 minutes (error reauth_required:
+        call POST /me/reauth, then retry), or a cross-origin request (error forbidden).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -998,13 +1222,32 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         last_login_at: { type: string, format: date-time }
+    RecoveryCodes:
+      type: object
+      properties:
+        recovery_codes: { type: array, items: { type: string }, minItems: 10, maxItems: 10 }
+        setup_token: { type: string }
+    RecoveryCodeAnswer:
+      type: object
+      additionalProperties: false
+      required: [setup_token, recovery_code]
+      properties:
+        setup_token: { type: string }
+        recovery_code: { type: string, description: One of the codes just shown, to prove they were saved. }
     Me:
       allOf:
         - $ref: '#/components/schemas/Account'
         - type: object
-          required: [is_admin]
+          required: [is_admin, mfa]
           properties:
             is_admin: { type: boolean }
+            mfa:
+              type: object
+              properties:
+                totp: { type: boolean, description: The account has an authenticator app. }
+                totp_added_at: { type: string, format: date-time }
+                recovery_codes_left: { type: integer }
+                required: { type: boolean, description: 'Administrators and group owners must use two-factor; they cannot remove it.' }
     AccountDetail:
       allOf:
         - $ref: '#/components/schemas/Account'
@@ -1088,6 +1331,7 @@ components:
         access_rule: { $ref: '#/components/schemas/AccessRule' }
         group_ids: { type: array, items: { type: string, format: uuid } }
         scopes: { type: array, items: { type: string } }
+        require_mfa: { type: boolean, description: 'Signing in to the app needs two-factor: Guardian asks for it, or has it set up, before issuing a code.' }
 
     AuditEntry:
       type: object

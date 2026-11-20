@@ -269,7 +269,7 @@ func AccountGroups(accountID string) ([]Membership, error) {
 type AppUpdate struct {
 	PrettyName, Description, LogoURL, HomepageURL, BackchannelLogoutURI *string
 	RedirectURIs, PostLogoutRedirectURIs, Scopes                        *[]string
-	IsFirstParty, Enabled                                               *bool
+	IsFirstParty, Enabled, RequireMFA                                   *bool
 	AccessTokenTTL                                                      *int
 }
 
@@ -317,6 +317,9 @@ func UpdateApp(id string, u AppUpdate) (App, error) {
 	}
 	if u.IsFirstParty != nil {
 		add("is_first_party", *u.IsFirstParty, "")
+	}
+	if u.RequireMFA != nil {
+		add("require_mfa", *u.RequireMFA, "")
 	}
 	if u.Enabled != nil {
 		add("enabled", *u.Enabled, "")

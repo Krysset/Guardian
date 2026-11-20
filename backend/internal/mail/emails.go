@@ -114,3 +114,28 @@ func EmailChanging(to, newAddress string, when time.Time, zone string) Message {
 		NotMe: "Change your password now and sign out everywhere else. Then tell your administrator.",
 	}.message(to)
 }
+
+// TwoFactorChanged is E4, sent when a two-factor method is added or removed by the account itself.
+func TwoFactorChanged(to string, added bool, method string, when time.Time, zone string) Message {
+	subject, line := "Two-factor was added to your account", "A two-factor method was added to your Guardian account."
+	if !added {
+		subject, line = "Two-factor was removed from your account", "A two-factor method was removed from your Guardian account."
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{line},
+		Facts:   []fact{{"Method", method}, {"When", When(when, zone)}},
+		NotMe:   "Change your password now and sign out everywhere else. Then tell your administrator.",
+	}.message(to)
+}
+
+// TwoFactorReset is E6, sent when an administrator removes the account's two-factor methods.
+func TwoFactorReset(to, reason string, when time.Time, zone string) Message {
+	return email{
+		Subject: "An administrator reset your two-factor",
+		Lines: []string{"An administrator removed the two-factor methods from your Guardian account. " +
+			"If your account must use two-factor, you will be asked to set it up again at the next sign-in."},
+		Facts: []fact{{"When", When(when, zone)}, {"Reason", reason}},
+		NotMe: "Tell your administrator at once and change your password.",
+	}.message(to)
+}

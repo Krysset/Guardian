@@ -41,6 +41,7 @@ type App struct {
 	RefreshMode             string   `json:"refresh_mode"`             // "stable" (apps with a secret) or "none"
 	Enabled                 bool     `json:"enabled"`
 	AccessRule              string   `json:"access_rule"`      // "groups" (only members of linked groups may sign in) or "anyone"
+	RequireMFA              bool     `json:"require_mfa"`      // signing in to the app needs two-factor
 	GroupIDs                []string `json:"group_ids"`        // groups linked to the app
 	Scopes                  []string `json:"scopes,omitempty"` // scopes the app may request (filled by GetAppByClientID)
 }

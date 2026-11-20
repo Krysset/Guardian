@@ -60,6 +60,9 @@ func groupAccess(w http.ResponseWriter, r *http.Request) (group db.Group, via st
 		return db.Group{}, "", false
 	}
 	if admin {
+		if !httpx.RequireMFASession(w, r) {
+			return db.Group{}, "", false
+		}
 		return group, "admin", true
 	}
 	ownerKey, owns, err := db.OwnsGroup(httpx.AccountID(r), group.ID)
@@ -69,6 +72,9 @@ func groupAccess(w http.ResponseWriter, r *http.Request) (group db.Group, via st
 	}
 	if !owns {
 		httpx.Error(w, http.StatusForbidden, "Only administrators and the group's owners may do this")
+		return db.Group{}, "", false
+	}
+	if !httpx.RequireMFASession(w, r) {
 		return db.Group{}, "", false
 	}
 	return group, "owner:" + ownerKey, true
@@ -83,6 +89,9 @@ func listGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	var groups []db.Group
 	if admin {
+		if !httpx.RequireMFASession(w, r) {
+			return
+		}
 		groups, err = db.ListGroups()
 	} else {
 		groups, err = db.ListGroupsOwnedBy(httpx.AccountID(r))

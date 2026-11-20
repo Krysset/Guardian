@@ -192,8 +192,13 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	admin.call("PATCH", "/api/v1/groups/"+adminGroup, map[string]any{"display_name": "Renamed"}, http.StatusForbidden)
 	admin.call("PATCH", "/api/v1/groups/"+adminGroup, map[string]any{"owner_group_id": team}, http.StatusForbidden)
 
-	// becoming an administrator opens the API at once, on the same session
+	// becoming an administrator opens the API once the account signs in with two-factor (administrators
+	// must use it): the old session is refused with mfa_required, a new one works
 	admin.call("PUT", members(adminGroup, plainAcct.ID), nil, 204)
+	if m := plain.call("GET", "/api/v1/apps", nil, http.StatusForbidden); m["error"] != "mfa_required" {
+		t.Errorf("a new administrator's session without two-factor: %v", m)
+	}
+	plain.mustLogin("plain")
 	plain.call("GET", "/api/v1/apps", nil, 200)
 	plain.call("POST", "/api/v1/groups", map[string]any{"key": "new-group", "display_name": "New"}, 201)
 	// ...and losing it closes it again
@@ -734,15 +739,15 @@ func TestE2EAccountSelfServiceAPI(t *testing.T) {
 		}
 	}
 
-	// password: needs the current one, enforces the length, takes effect immediately, and ends the
-	// user's other sessions but not this one
+	// password: enforces the length, takes effect immediately, and ends the user's other sessions but not
+	// this one (the session signed in moments ago, so it may make protected changes)
 	other := newBrowser(t)
 	other.mustLogin("alice2")
 	for _, c := range []struct {
-		cur, next string
-		want      int
-	}{{"wrong-current", "brand-new-password", 403}, {testutil.DefaultPassword, "short", 400}, {testutil.DefaultPassword, "brand-new-password", 204}} {
-		resp := br.sendJSON("PUT", "/api/v1/me/password", map[string]any{"current_password": c.cur, "new_password": c.next})
+		next string
+		want int
+	}{{"short", 400}, {"brand-new-password", 204}} {
+		resp := br.sendJSON("PUT", "/api/v1/me/password", map[string]any{"new_password": c.next})
 		if resp.StatusCode != c.want {
 			t.Errorf("password change %+v: %d", c, resp.StatusCode)
 		}

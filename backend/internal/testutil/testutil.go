@@ -289,11 +289,63 @@ func AddMember(t testing.TB, groupID, accountID string) {
 }
 
 // AdminAccount creates an account that is a member of the built-in administrators group.
+// AdminAccount creates a member of guardian-admins. Administrators must use two-factor, so it also gets an
+// authenticator app (EnableTOTP).
 func AdminAccount(t testing.TB, username string) db.Account {
 	t.Helper()
 	acct := CreateAccount(t, username)
 	AddMember(t, GroupID(t, db.AdminGroupKey), acct.ID)
+	EnableTOTP(t, acct.ID)
 	return acct
+}
+
+var (
+	totpMu      sync.Mutex
+	totpSecrets = map[string]string{}
+)
+
+// EnableTOTP gives the account an authenticator app with a known secret and returns the secret.
+func EnableTOTP(t testing.TB, accountID string) string {
+	t.Helper()
+	secret, err := auth.NewTOTPSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := auth.Seal([]byte(secret))
+	if err != nil {
+		// Package tests without a server have no key encryption key yet; any key will do for them.
+		if err := auth.SetEncryptionKey(make([]byte, 32)); err != nil {
+			t.Fatal(err)
+		}
+		if sealed, err = auth.Seal([]byte(secret)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SaveTOTP(accountID, sealed, nil, 0); err != nil {
+		t.Fatalf("enable TOTP: %v", err)
+	}
+	totpMu.Lock()
+	totpSecrets[accountID] = secret
+	totpMu.Unlock()
+	return secret
+}
+
+// TOTPCode returns a code that the account's authenticator app (from EnableTOTP) accepts now. It forgets
+// which codes were used, so tests may sign in again within the same 30 seconds.
+func TOTPCode(t testing.TB, accountID string) string {
+	t.Helper()
+	totpMu.Lock()
+	secret, ok := totpSecrets[accountID]
+	totpMu.Unlock()
+	if !ok {
+		t.Fatalf("the account %s has no authenticator app from EnableTOTP", accountID)
+	}
+	Exec(t, `UPDATE account_mfa SET sign_count = NULL WHERE account_id = $1 AND type = 'totp'`, accountID)
+	code, err := auth.TOTPCode(secret, auth.TOTPStep(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
 }
 
 // Session creates an SSO session directly and returns it with the raw cookie value.
@@ -303,7 +355,8 @@ func Session(t testing.TB, accountID string) (db.Session, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := db.CreateSession(accountID, auth.HashToken(cookie), "", "test", time.Hour)
+	// As if signed in with two-factor, so administrators may use their rights.
+	s, err := db.CreateSession(accountID, auth.HashToken(cookie), "", "test", time.Hour, "pwd", "otp")
 	if err != nil {
 		t.Fatal(err)
 	}

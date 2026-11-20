@@ -75,6 +75,9 @@ func Enabled() bool {
 	return sender != nil
 }
 
+// SiteName is what this Guardian is called in emails and authenticator apps.
+func SiteName() string { return currentSite().Name }
+
 func currentSite() Site {
 	mu.RLock()
 	defer mu.RUnlock()

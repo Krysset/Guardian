@@ -1,6 +1,6 @@
 # Testing Guardian
 
-> **Status (2026-11-19):** 177 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
+> **Status (2026-11-19):** 187 tests, all passing with `-race` against PostgreSQL 16 and Go 1.26, none skipped.
 > When something fails, read the message first: it may be a bug in the test, not in Guardian.
 
 ## Running
@@ -61,6 +61,8 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 | A single-app group can never be linked to another app | `TestSingleAppGroupsAreBoundToOneAppForGood`, `TestE2ESingleAppGroupsThroughTheAPI` |
 | Email links: sign-up waits for its confirmation, links work once and only the newest, the link signs in only the browser that signed up, the first account to confirm an address gets it, resets end every session, the reset answer never reveals an account | `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt`, `TestE2EPasswordResetByEmail`, `TestE2EChangingTheEmailAddress`, `TestE2EEmailOffAndEmailRequired` |
 | Emails are valid, escaped, and never sent in the clear when STARTTLS is asked for | `TestEveryEmailRendersBothPartsAndEscapes`, `TestComposeIsAValidMultipartMessage`, `TestSMTPSendsAndStartTLSIsRequired` |
+| Two-factor: no session before the code; codes and recovery codes work once; setup saves nothing until one recovery code is typed back; administrators, group owners and apps that require it get the setup or a step-up; attempts are limited; the admin reset ends sessions and emails the reason | `TestE2ETwoFactorThroughTheAPIAndAtSignIn`, `TestE2ETwoFactorAttemptsAreLimitedAndCanBeCancelled`, `TestE2EAdministratorsAndOwnersMustUseTwoFactor`, `TestE2EAppsThatRequireTwoFactor`, `TestE2EAdministratorsResetTwoFactor`, `TestTOTPMatchesTheRFC` |
+| Protected changes need a sign-in or re-authentication within 5 minutes, per session; wrong passwords are limited | `TestE2EProtectedChangesNeedARecentSignIn`, `TestE2EReauthIsLimited` |
 | A backup restores exactly into a new installation, and never over one in use | `TestBackupRestoresIntoAFreshInstallationExactly`, `TestBackupWithoutAuditLogAndDryRun`, `TestEveryTableIsBackedUpOrLeftOutOnPurpose`, `TestFormatDetectsDamage`, `TestBackupCommandLine` |
 | Metrics available for the Prometheus scrape | `TestE2EInternalListenerProbesAndMetrics`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
 
@@ -73,7 +75,7 @@ CI: `.github/workflows/backend.yml` (at the repository root) runs everything aga
 * Kubernetes manifests and the NetworkPolicy.
 * Load and latency: use `guardian_http_request_duration_seconds{route="/token"}` and `guardian_token_requests_total` from a staging deployment.
 * Delivery through a real mail server with TLS (tests use a fake SMTP server without TLS; Mailpit by hand).
-* MFA (not implemented).
+* Security keys and passkeys (0.5).
 * Real off-the-shelf apps: Grafana is checked by hand (`docs/LOCAL-GRAFANA.md`).
 
 ## Known fragile spots

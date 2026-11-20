@@ -184,6 +184,12 @@ func (b *browser) cookie(name string) string {
 	return ""
 }
 
+// setCookie puts a cookie into the browser, such as a session made with testutil.Session.
+func (b *browser) setCookie(name, value string) {
+	u, _ := url.Parse(pubSrv.URL)
+	b.c.Jar.SetCookies(u, []*http.Cookie{{Name: name, Value: value, Path: "/"}})
+}
+
 var (
 	csrfRe = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 	reqRe  = regexp.MustCompile(`name="req" value="([^"]*)"`)
@@ -210,11 +216,37 @@ func (b *browser) mustLogin(username string) {
 	b.mustLoginWith(username, testutil.DefaultPassword)
 }
 
+// mustLoginWith signs in, passing two-factor when Guardian asks for it: with the account's code from
+// testutil.EnableTOTP, which it calls first if Guardian asks to set two-factor up.
 func (b *browser) mustLoginWith(username, password string) {
 	b.t.Helper()
 	resp := b.login(username, password, "")
 	wantStatus(b.t, resp, http.StatusSeeOther)
 	drain(resp)
+	switch resp.Header.Get("Location") {
+	case "/mfa/setup":
+		acct, _, err := db.GetAccountForLogin(username)
+		if err != nil {
+			b.t.Fatal(err)
+		}
+		testutil.EnableTOTP(b.t, acct.ID)
+		b.mustLoginWith(username, password)
+	case "/mfa":
+		b.passMFA(username)
+	}
+}
+
+// passMFA answers the two-factor page with the account's current code.
+func (b *browser) passMFA(username string) *http.Response {
+	b.t.Helper()
+	acct, _, err := db.GetAccountForLogin(username)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	resp := b.postForm("/mfa", url.Values{"csrf": {b.csrf()}, "code": {testutil.TOTPCode(b.t, acct.ID)}})
+	wantStatus(b.t, resp, http.StatusSeeOther)
+	drain(resp)
+	return resp
 }
 
 func (b *browser) logout() *http.Response {
@@ -278,6 +310,9 @@ func (b *browser) authorizeCallback(v url.Values, username string) *url.URL {
 		lr := b.login(username, testutil.DefaultPassword, returnTo)
 		wantStatus(b.t, lr, http.StatusSeeOther)
 		drain(lr)
+		if lr.Header.Get("Location") == "/mfa" {
+			b.passMFA(username)
+		}
 		resp = b.get(returnTo)
 		loc, status = resp.Header.Get("Location"), resp.StatusCode
 		drain(resp)
