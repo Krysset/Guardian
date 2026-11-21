@@ -50,6 +50,7 @@ func expireMembership(t *testing.T, groupID, accountID string) {
 
 // ---- Membership and app links -----------------------------------------------
 
+// Covers: M1
 func TestAnAppOnlySeesTheGroupsLinkedToIt(t *testing.T) {
 	testutil.Reset(t)
 	finance := testutil.Group(t, "finance", "")
@@ -97,6 +98,7 @@ func TestAnAppOnlySeesTheGroupsLinkedToIt(t *testing.T) {
 	}
 }
 
+// Covers: A13, O2
 func TestExpiredMembershipsDoNotCount(t *testing.T) {
 	testutil.Reset(t)
 	staff := testutil.Group(t, "staff", "")
@@ -191,6 +193,7 @@ func TestAppAccessRule(t *testing.T) {
 
 // ---- Group rules ------------------------------------------------------------
 
+// Covers: A12
 func TestBuiltInGroupsAreProtected(t *testing.T) {
 	testutil.Reset(t)
 	admins := testutil.GroupID(t, db.AdminGroupKey)
@@ -211,6 +214,7 @@ func TestBuiltInGroupsAreProtected(t *testing.T) {
 	}
 }
 
+// Covers: A12, A14
 func TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups(t *testing.T) {
 	testutil.Reset(t)
 	a := testutil.Group(t, "alpha", "")
@@ -248,6 +252,7 @@ func TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups(t *testing.T) {
 	}
 }
 
+// Covers: O1, A14
 func TestGroupOwnersAreTheMembersOfTheOwnerGroup(t *testing.T) {
 	testutil.Reset(t)
 	leads := testutil.Group(t, "billing-leads", "")
@@ -291,6 +296,7 @@ func TestGroupOwnersAreTheMembersOfTheOwnerGroup(t *testing.T) {
 	}
 }
 
+// Covers: A12
 func TestDeletingAGroupRemovesItsMembershipsAndAppLinks(t *testing.T) {
 	testutil.Reset(t)
 	g := testutil.Group(t, "temps", "")
@@ -456,6 +462,7 @@ func TestLeavingAGroupNotifiesOnlyTheAppsLinkedToIt(t *testing.T) {
 	}
 }
 
+// Covers: A27
 func TestSingleAppGroupsAreBoundToOneAppForGood(t *testing.T) {
 	testutil.Reset(t)
 	grafana, _ := testutil.CreateApp(t, "grafana", testutil.AppOptions{})

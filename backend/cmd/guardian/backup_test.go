@@ -34,6 +34,7 @@ func plainBackup(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// Covers: P2
 func TestBackupCommandLine(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "b.gbk")
 	if err := os.WriteFile(file, plainBackup(t), 0o600); err != nil {
@@ -96,6 +97,7 @@ func TestOutputFileIsRemovedWhenTheCommandFails(t *testing.T) {
 	}
 }
 
+// Covers: P3, P4
 func TestKeysCommandLine(t *testing.T) {
 	noConfig := func() (config.Config, error) { return config.Config{}, errors.New("ISSUER_URL is required") }
 	for _, c := range []struct {
@@ -119,6 +121,7 @@ func TestKeysCommandLine(t *testing.T) {
 	}
 }
 
+// Covers: P2
 func TestPruneBackupsKeepsTheNewestWithTheirDeletionLogs(t *testing.T) {
 	dir := t.TempDir()
 	stamps := []string{"20261101T020000Z", "20261102T020000Z", "20261103T020000Z", "20261104T020000Z"}

@@ -15,11 +15,21 @@ import (
 // argon2id parameters (OWASP-recommended range). Stored in the hash, so they can be raised later.
 const (
 	argonIterations = 2
-	argonMemoryKiB  = 64 * 1024
 	argonThreads    = 2
 	argonKeyLen     = 32
 	argonSaltLen    = 16
 )
+
+// argonMemoryKiB is 64 MiB. Only UseCheapHashesInTests lowers it.
+var argonMemoryKiB uint32 = 64 * 1024
+
+// UseCheapHashesInTests makes new password hashes use 1 MiB instead of 64 MiB, for end-to-end tests that
+// hash and check hundreds of passwords under the race detector. Verification still reads the parameters
+// from each stored hash, so nothing else changes. Never call it outside tests.
+func UseCheapHashesInTests() {
+	argonMemoryKiB = 1024
+	dummyHash, _ = HashPassword("guardian-dummy-password")
+}
 
 // maxConcurrentHashes bounds simultaneous argon2 runs: each needs argonMemoryKiB of RAM, so an
 // unbounded login burst would exceed a Kubernetes memory limit and get the pod OOM-killed.

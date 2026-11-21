@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
+	"guardian/internal/api"
+	"guardian/internal/httpx"
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
 )
@@ -32,6 +37,8 @@ func members(group, account string) string { return "/api/v1/groups/" + group + 
 
 // Group changes made through the API reach the app at its next refresh. The app's refresh token stays
 // the same; what it returns is decided at refresh time.
+//
+// Covers: M1
 func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	testutil.Reset(t)
 	svc, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
@@ -125,6 +132,7 @@ func TestE2EGroupChangesReachTheAppAtItsNextRefresh(t *testing.T) {
 	}
 }
 
+// Covers: A11, A12, A13
 func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	testutil.Reset(t)
 	plainAcct := testutil.CreateAccount(t, "plain")
@@ -206,6 +214,7 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	plain.call("GET", "/api/v1/apps", nil, http.StatusForbidden)
 }
 
+// Covers: O2, O3
 func TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -269,6 +278,7 @@ func TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups(t *testing.T) {
 	lead.call("PUT", members(users, newcomer.ID), nil, http.StatusForbidden)
 }
 
+// Covers: A23, A5
 func TestE2ETheLastAdministratorIsProtected(t *testing.T) {
 	testutil.Reset(t)
 	root := testutil.AdminAccount(t, "root")
@@ -297,6 +307,7 @@ func TestE2ETheLastAdministratorIsProtected(t *testing.T) {
 	admin.call("GET", "/api/v1/groups/"+adminGroup, nil, http.StatusForbidden)
 }
 
+// Covers: U2, A18
 func TestE2EAppAccessRuleDecidesWhoMaySignIn(t *testing.T) {
 	testutil.Reset(t)
 	team := testutil.Group(t, "team", "")
@@ -363,6 +374,7 @@ func TestE2EAppAccessRuleDecidesWhoMaySignIn(t *testing.T) {
 	}
 }
 
+// Covers: M1
 func TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens(t *testing.T) {
 	testutil.Reset(t)
 	user := testutil.CreateAccount(t, "alice")
@@ -452,6 +464,7 @@ func TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens(t *testing.T) 
 	}
 }
 
+// Covers: A20
 func TestE2EDisablingAnAppStopsItsRefreshesAndLogins(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -512,6 +525,7 @@ func TestE2ELeavingAGroupEndsAccessAndNotifiesTheApp(t *testing.T) {
 	drain(me)
 }
 
+// Covers: V3
 func TestE2ESignUpIsOpenButRateLimited(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -552,6 +566,7 @@ func TestE2ESignUpIsOpenButRateLimited(t *testing.T) {
 	}
 }
 
+// Covers: V3
 func TestE2ESignUpValidation(t *testing.T) {
 	testutil.Reset(t)
 	anon := newBrowser(t)
@@ -589,6 +604,7 @@ func TestE2ESignUpValidation(t *testing.T) {
 	br.mustLogin("alice")
 }
 
+// Covers: V2
 func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "carol")
@@ -640,6 +656,7 @@ func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 	}
 }
 
+// Covers: V4
 func TestE2ECSRFProtections(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -698,6 +715,7 @@ func TestE2ELoginRedirectsCannotLeaveGuardian(t *testing.T) {
 	}
 }
 
+// Covers: U7, U10
 func TestE2EAccountSelfServiceAPI(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -780,6 +798,7 @@ func TestE2EAccountSelfServiceAPI(t *testing.T) {
 	drain(ok)
 }
 
+// Covers: A7
 func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	testutil.Reset(t)
 	victim := testutil.CreateAccount(t, "victim")
@@ -830,6 +849,7 @@ func TestE2EAdminDeletionLocksTheUserOutImmediately(t *testing.T) {
 	drain(ok)
 }
 
+// Covers: A15, A16, A21
 func TestE2EAppRegistrationAPI(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "plain")
@@ -914,6 +934,7 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	}
 }
 
+// Covers: P6
 func TestE2EInternalListenerProbesAndMetrics(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -982,6 +1003,7 @@ func machineGet(t *testing.T, token, path string) (int, string) {
 	return resp.StatusCode, readBody(t, resp)
 }
 
+// Covers: A18, M2
 func TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -1074,5 +1096,53 @@ func TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers(t *testing.T) {
 	admin.call("PUT", "/api/v1/apps/"+spa.ID+"/access", map[string]any{"access_rule": "anyone", "group_ids": []string{}, "machine_api": true}, 400)
 	if fresh, _ := db.GetApp(spa.ID); fresh.AccessRule != "groups" {
 		t.Error("a refused request changed the app's access rule")
+	}
+}
+
+// Every route of /api/v1, called over HTTP: without a session each answers 401 (sign-up aside), and every
+// administrators' route refuses a signed-in user who is not one with 403. The routes come from the router,
+// so a new one is checked without being listed here.
+//
+// Covers: A1, A11, A15, U16
+func TestE2EEveryAPIRouteRefusesWhoMayNotUseIt(t *testing.T) {
+	newTestEnv(t)
+	testutil.CreateAccount(t, "plain")
+	anon := newBrowser(t)
+	user := newBrowser(t)
+	user.mustLogin("plain")
+	admin := map[string]bool{}
+	var routes [][2]string
+	chi.Walk(api.Router().(chi.Routes), func(method, route string, _ http.Handler, mws ...func(http.Handler) http.Handler) error {
+		route = strings.TrimSuffix(strings.ReplaceAll(route, "/*/", "/"), "/")
+		path := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(route, "00000000-0000-4000-8000-000000000000")
+		routes = append(routes, [2]string{method, path})
+		p := reflect.ValueOf(httpx.AdminOnly).Pointer()
+		for _, mw := range mws {
+			if reflect.ValueOf(mw).Pointer() == p {
+				admin[method+" "+path] = true
+			}
+		}
+		return nil
+	})
+	if len(routes) < 40 || len(admin) < 20 {
+		t.Fatalf("walked %d routes, %d for administrators", len(routes), len(admin))
+	}
+	for _, r := range routes {
+		method, path := r[0], r[1]
+		if path == "/signup" {
+			continue
+		}
+		resp := anon.sendJSON(method, "/api/v1"+path, map[string]any{})
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s without a session: %d, want 401", method, path, resp.StatusCode)
+		}
+		drain(resp)
+		if admin[method+" "+path] {
+			resp := user.sendJSON(method, "/api/v1"+path, map[string]any{})
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("%s %s by a user who is not an administrator: %d, want 403", method, path, resp.StatusCode)
+			}
+			drain(resp)
+		}
 	}
 }

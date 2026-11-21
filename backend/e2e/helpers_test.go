@@ -41,6 +41,9 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Hundreds of passwords are hashed and checked here; at 64 MiB each the race detector makes that most of
+	// the run. The hashing code is the same, and auth's own tests keep the real parameters.
+	auth.UseCheapHashesInTests()
 	if testutil.Enabled() {
 		if err := testutil.Setup(); err != nil {
 			fmt.Fprintln(os.Stderr, "test setup:", err)

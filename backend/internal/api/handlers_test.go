@@ -49,6 +49,7 @@ func TestSignupValidation(t *testing.T) {
 	}
 }
 
+// Covers: U7
 func TestProfileChangesAreValidated(t *testing.T) {
 	long := strings.Repeat("x", 129)
 	for _, body := range []string{`{"username":"x"}`, `{"username":"has space"}`, `nope`, `{"email":"a@b.test"}`,

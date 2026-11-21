@@ -61,7 +61,7 @@ Every admin page carries the one-administrator warning (A23) while it applies. T
 | AD3 New account | Username, password, email. | A3 | Guardian admin | 0.4 |
 | AD4 Groups | All groups: key, name, members, owner group, built-in, bound app (single-app), hidden (1.x), linked apps. | A11, A26, A27 | Guardian admin | 0.4 |
 | AD5 Group | Name, description, owner group, the app it is bound to (single-app), hidden (1.x), copy (1.x), members and expiry, linked apps; delete. | A12, A13, A14, A26, A27, A29, O5 | Guardian admin | 0.4 |
-| AD6 New group | Key (never changes), name, description, owner group, "Is this group for one app only?" (no preselected answer; yes asks for the app), hidden (1.x). | A12, A26, A27 | Guardian admin | 0.4 |
+| AD6 New group | Name, key (suggested from the name; never changes), description, owner group, "Is this group for one app only?" (no preselected answer; yes asks for the app), hidden (1.x). | A12, A26, A27 | Guardian admin | 0.4 |
 | AD7 Apps | All apps (app admins in 1.x: their own). | A15 | App admin | 0.4 |
 | AD8 App | Settings, access (rule, linked groups, machine API for Guardian admins), credentials and secret rotation, setup details to copy, disable, delete (Guardian admins), the app's audit entries. | A17, A18, A19, A20, A21, A22, A25 | App admin | 0.4 |
 | AD9 New app | The settings and access of a new app. | A16 | Guardian admin | 0.4 |
@@ -370,8 +370,8 @@ appear from that release; until then the page is drawn without them.
 - States: built-in groups are read-only, with a note why.
 
 **AD6 New group**
-- Fields: key (live check of the rule, warning that it never changes); display name; description; owner
-  group (optional).
+- Fields: display name; key (suggested from the display name, "Test group" → `test-group`, until typed in
+  by hand; live check of the rule; warning that it never changes); description; owner group (optional).
 - Fields: "Is this group for one app only?" Yes or No, with neither preselected; Yes asks for the app.
 - Actions: Create (opens AD5).
 

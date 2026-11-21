@@ -338,6 +338,38 @@ kubectl -n auth exec deploy/guardian -- /guardian mfa reset-totp --all \
 Everyone with an address is emailed the reason; administrators and group owners set two-factor up again at
 their next sign-in.
 
+## Recovering a locked-out administrator
+
+When the only administrator can no longer sign in (lost password, lost two-factor and recovery codes, or the
+account was disabled), there is no break-glass command: an operator makes another account an administrator
+in the database, and that administrator then repairs the old account in the admin area.
+
+1. Sign up a new account on the sign-in page, or pick an existing account someone can sign in to.
+2. Run this in the database, with that account's username in place of `NEW-ADMIN` (both places). With the
+   bundled Postgres: `kubectl -n auth exec -it guardian-postgres-0 -- psql -U guardian guardian`.
+
+<!-- runbook:admin-recovery (run as-is by backend/internal/store/runbook_db_test.go) -->
+```sql
+BEGIN;
+-- Make NEW-ADMIN a member of guardian-admins, for good. Only an active account that is not deleted.
+INSERT INTO group_member (group_id, account_id)
+SELECT g.id, a.id FROM user_group g JOIN account a ON lower(a.username) = lower('NEW-ADMIN')
+WHERE g.key = 'guardian-admins' AND a.status = 'active' AND a.deleted_at IS NULL
+ON CONFLICT (group_id, account_id) DO UPDATE SET expires_at = NULL;
+-- Record it in the audit log.
+INSERT INTO audit_log (event_type, metadata)
+SELECT 'account.admin_recovered', jsonb_build_object('target', a.id::text, 'username', a.username, 'by', 'runbook')
+FROM account a WHERE lower(a.username) = lower('NEW-ADMIN') AND a.status = 'active' AND a.deleted_at IS NULL;
+-- Check: the new administrator is listed.
+SELECT a.username FROM group_member m JOIN user_group g ON g.id = m.group_id JOIN account a ON a.id = m.account_id
+WHERE g.key = 'guardian-admins';
+COMMIT;
+```
+
+3. Sign in with that account. Administrators must use two-factor, so Guardian asks to set it up first.
+4. In the admin area, repair the old account: reset its two-factor, set a temporary password, or enable it.
+   Then remove the extra account from administrators if it is not wanted there.
+
 ## Uninstalling
 
 `helm uninstall` (or deleting the Argo CD Application) leaves the bundled Postgres' disk claim in place, so the

@@ -10,6 +10,7 @@ import (
 	"guardian/internal/testutil"
 )
 
+// Covers: M2
 func TestMachineAccessIsOnlyForAppsWithASecret(t *testing.T) {
 	testutil.Reset(t)
 	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{})
@@ -46,6 +47,7 @@ func TestMachineAccessIsOnlyForAppsWithASecret(t *testing.T) {
 	}
 }
 
+// Covers: M2
 func TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers(t *testing.T) {
 	testutil.Reset(t)
 	linked := testutil.Group(t, "billing-users", "")
@@ -86,6 +88,7 @@ func TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers(t *testing.T) {
 	}
 }
 
+// Covers: M2
 func TestAnAppMayKnowItsGroupMembersAndItsUsersOnly(t *testing.T) {
 	testutil.Reset(t)
 	linked := testutil.Group(t, "staff", "")

@@ -34,12 +34,20 @@ func ring(t *testing.T, s string) *auth.Keyring {
 
 // The whole keyring rotation: add a key decrypt-only, promote it, let re-encryption move every value,
 // then drop the old key. Guardian refuses a keyring that lacks a key still in use.
+//
+// Covers: P3
 func TestKeyringRotationReencryptsEverything(t *testing.T) {
 	testutil.RequireTestDB(t)
 	testutil.Reset(t)
 	testutil.DeleteSigningKeys()
 	previous := auth.CurrentKeyring()
-	t.Cleanup(func() { auth.SetKeyring(previous) })
+	// Leave nothing encrypted under this test's keys: the next test process checks its keyring against
+	// the database before it starts.
+	t.Cleanup(func() {
+		auth.SetKeyring(previous)
+		testutil.DeleteSigningKeys()
+		testutil.Reset(t)
+	})
 	auth.SetKeyring(ring(t, spec("k1")))
 	keys, err := auth.LoadKeys()
 	if err != nil {
@@ -117,12 +125,20 @@ func TestKeyringRotationReencryptsEverything(t *testing.T) {
 
 // After an emergency rotation every replica signs with the new key within a minute, and tokens signed
 // with the revoked key no longer verify.
+//
+// Covers: P3
 func TestKeysFollowARotation(t *testing.T) {
 	testutil.RequireTestDB(t)
 	testutil.Reset(t)
 	testutil.DeleteSigningKeys()
 	previous := auth.CurrentKeyring()
-	t.Cleanup(func() { auth.SetKeyring(previous) })
+	// Leave nothing encrypted under this test's keys: the next test process checks its keyring against
+	// the database before it starts.
+	t.Cleanup(func() {
+		auth.SetKeyring(previous)
+		testutil.DeleteSigningKeys()
+		testutil.Reset(t)
+	})
 	auth.SetKeyring(ring(t, spec("k1")))
 	keys, err := auth.LoadKeys()
 	if err != nil {

@@ -101,6 +101,7 @@ func TestPagesSendSecurityHeaders(t *testing.T) {
 	}
 }
 
+// Covers: V4
 func TestErrorPagesNeverShowDetails(t *testing.T) {
 	for kind, e := range errorPages {
 		rec := httptest.NewRecorder()
@@ -114,6 +115,7 @@ func TestErrorPagesNeverShowDetails(t *testing.T) {
 	}
 }
 
+// Covers: V1
 func TestLoginPageStructure(t *testing.T) {
 	body := render(t, "login", Page{Title: "Sign in", CSRF: "csrf-token-value", ReturnTo: "/authorize?x=1", Login: "alice"})
 	for _, want := range []string{
@@ -133,6 +135,7 @@ func TestLoginPageStructure(t *testing.T) {
 	}
 }
 
+// Covers: V3
 func TestSignupPageStructure(t *testing.T) {
 	body := render(t, "signup", Page{CSRF: "tok", FieldErrors: map[string]string{"password2": "The passwords don't match."}})
 	for _, want := range []string{`action="/signup"`, `name="username"`, `name="password"`, `name="password2"`,
@@ -144,6 +147,7 @@ func TestSignupPageStructure(t *testing.T) {
 	}
 }
 
+// Covers: U1
 func TestConsentPageListsScopesAndEscapesHiddenRequest(t *testing.T) {
 	body := render(t, "consent", Page{
 		Title: "Allow", CSRF: "tok", Username: "alice", Req: `a=1&b="2"`, ReturnTo: "/authorize?a=1",
@@ -173,6 +177,7 @@ func TestScopeLinesPutTheStandardScopesFirst(t *testing.T) {
 	}
 }
 
+// Covers: U6
 func TestSignedInPageOffersLogoutForm(t *testing.T) {
 	body := render(t, "signedin", Page{Username: "alice", CSRF: "tok"})
 	for _, want := range []string{`action="/logout"`, `name="csrf" value="tok"`, "alice"} {

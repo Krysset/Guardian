@@ -16,6 +16,7 @@ const words: Record<string, string> = {
 	'account.erased': 'Account erased',
 	'account.exported': 'Data downloaded',
 	'account.signed_out_everywhere': 'Signed out everywhere by an administrator',
+	'account.admin_recovered': 'Made an administrator from the database (runbook)',
 	'password.changed': 'Password changed',
 	'password.set_by_admin': 'Temporary password set',
 	'password.reset_requested': 'Password reset asked for',

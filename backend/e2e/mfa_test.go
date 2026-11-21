@@ -64,6 +64,7 @@ func setUpTOTPByAPI(t *testing.T, br *browser) (secret string, codes []string, u
 	return secret, codes, used
 }
 
+// Covers: V7, U11, U17
 func TestE2ETwoFactorThroughTheAPIAndAtSignIn(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "sidon")
@@ -158,6 +159,7 @@ func TestE2ETwoFactorThroughTheAPIAndAtSignIn(t *testing.T) {
 	}
 }
 
+// Covers: V7
 func TestE2ETwoFactorAttemptsAreLimitedAndCanBeCancelled(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "kohga")
@@ -228,6 +230,7 @@ func setUpOnPage(t *testing.T, br *browser, wantReason string) *http.Response {
 	return resp
 }
 
+// Covers: U4, O4, A24
 func TestE2EAdministratorsAndOwnersMustUseTwoFactor(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "purah")
@@ -266,6 +269,7 @@ func TestE2EAdministratorsAndOwnersMustUseTwoFactor(t *testing.T) {
 	ob.call("GET", "/api/v1/groups", nil, 200)
 }
 
+// Covers: U4
 func TestE2EAppsThatRequireTwoFactor(t *testing.T) {
 	newTestEnv(t)
 	app, _ := testutil.CreateApp(t, "vault", testutil.AppOptions{FirstParty: true})
@@ -328,6 +332,7 @@ func TestE2EAppsThatRequireTwoFactor(t *testing.T) {
 	}
 }
 
+// Covers: A9, U17
 func TestE2EAdministratorsResetTwoFactor(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "zelda")

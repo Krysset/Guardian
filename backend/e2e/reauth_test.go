@@ -16,6 +16,7 @@ func ageSessions(t *testing.T, accountID string) {
 	testutil.Exec(t, `UPDATE session SET auth_time = now() - interval '10 minutes' WHERE account_id = $1`, accountID)
 }
 
+// Covers: U16
 func TestE2EProtectedChangesNeedARecentSignIn(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "mipha")
@@ -73,6 +74,7 @@ func TestE2EProtectedChangesNeedARecentSignIn(t *testing.T) {
 	drain(resp)
 }
 
+// Covers: U16
 func TestE2EReauthIsLimited(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "revali")

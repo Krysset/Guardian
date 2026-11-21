@@ -1,4 +1,4 @@
-<!-- AD6 New group: the key (checked as typed; it never changes), names, an optional owner group, and "Is
+<!-- AD6 New group: the display name, the key (suggested from the name, checked as typed; it never changes), an optional owner group, and "Is
      this group for one app only?" with neither answer chosen; Yes asks for the app. -->
 <script lang="ts">
 	import { goto, refreshAll } from '$app/navigation';
@@ -16,6 +16,23 @@
 	let app = $state('');
 	let errors = $state<{ key?: string; name?: string; oneApp?: string; app?: string; form?: string }>({});
 	let busy = $state(false);
+
+	// The key follows the display name ("Test group" → "test-group") until it is typed in by hand; clearing it
+	// makes it follow again.
+	let keyEdited = false;
+	function suggestKey(name: string): string {
+		return name
+			.normalize('NFD')
+			.replace(/[̀-ͯ]/g, '')
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+/, '')
+			.slice(0, 63)
+			.replace(/-+$/, '');
+	}
+	function nameTyped() {
+		if (!keyEdited) key = suggestKey(displayName);
+	}
 
 	const keyOk = $derived(/^[a-z0-9][a-z0-9._-]{1,62}$/.test(key));
 	const taken = $derived(data.groups.some((g) => g.key === key));
@@ -61,18 +78,18 @@
 	<h2 class="sec-h">Group</h2>
 	<div class="grid2 fields">
 		<div>
+			<label class="lbl" for="nn">Display name</label>
+			<input class="in" id="nn" maxlength="128" bind:value={displayName} oninput={nameTyped} aria-invalid={errors.name ? 'true' : undefined} />
+			{#if errors.name}<p class="err-t">{errors.name}</p>{/if}
+		</div>
+		<div>
 			<label class="lbl" for="nk">Key</label>
-			<input class="in" id="nk" bind:value={key} autocomplete="off" autocapitalize="none" spellcheck="false" aria-invalid={errors.key ? 'true' : undefined} aria-describedby="nk-rule nk-hint" />
+			<input class="in" id="nk" bind:value={key} oninput={() => (keyEdited = key !== '')} autocomplete="off" autocapitalize="none" spellcheck="false" aria-invalid={errors.key ? 'true' : undefined} aria-describedby="nk-rule nk-hint" />
 			{#if errors.key}<p class="err-t" id="nk-rule">{errors.key}</p>
 			{:else}<p class="hint rule" id="nk-rule" class:ok={key && keyOk && !taken} class:bad={key && (!keyOk || taken)}>
 					{key && taken ? 'A group already has that key.' : 'Lowercase letters, digits, dots, dashes and underscores.'}
 				</p>{/if}
-			<p class="hint" id="nk-hint"><strong>Never changes.</strong> Apps see this.</p>
-		</div>
-		<div>
-			<label class="lbl" for="nn">Display name</label>
-			<input class="in" id="nn" maxlength="128" bind:value={displayName} aria-invalid={errors.name ? 'true' : undefined} />
-			{#if errors.name}<p class="err-t">{errors.name}</p>{/if}
+			<p class="hint" id="nk-hint"><strong>Never changes.</strong> Used as an identifier for apps.</p>
 		</div>
 		<div>
 			<label class="lbl" for="nd">Description</label>

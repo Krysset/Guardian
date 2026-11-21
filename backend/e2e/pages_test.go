@@ -10,11 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"guardian/internal/config"
 	"guardian/internal/testutil"
+	"guardian/internal/web"
 )
 
 // The sign-in pages of 0.1 (docs/PAGES.md S1-S9), driven like a browser without JavaScript.
 
+// Covers: V3
 func TestE2ESignUpPageCreatesAnAccountAndSignsItIn(t *testing.T) {
 	newTestEnv(t)
 	testutil.CreateAccount(t, "taken")
@@ -99,6 +102,7 @@ func TestE2ESignUpPageCreatesAnAccountAndSignsItIn(t *testing.T) {
 	}
 }
 
+// Covers: U3, A6
 func TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "root")
@@ -180,6 +184,7 @@ func TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn(t *testing.T) {
 	newBrowser(t).mustLoginWith("hana", "my-own-password-1")
 }
 
+// Covers: V1
 func TestE2ESignInWithEmailAddress(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "root")
@@ -202,6 +207,7 @@ func TestE2ESignInWithEmailAddress(t *testing.T) {
 	}
 }
 
+// Covers: U6
 func TestE2ESignOutToSwitchAccountContinuesTheSignIn(t *testing.T) {
 	newTestEnv(t)
 	testutil.CreateAccount(t, "jo")
@@ -251,6 +257,7 @@ func TestE2ESignOutToSwitchAccountContinuesTheSignIn(t *testing.T) {
 	}
 }
 
+// Covers: V4
 func TestE2EPagesRoutingAndStaticFiles(t *testing.T) {
 	newTestEnv(t)
 	br := newBrowser(t)
@@ -321,6 +328,7 @@ func mustQuery(t *testing.T, rel string) url.Values {
 	return u.Query()
 }
 
+// Covers: U19, U20
 func TestE2EHomeListsTheAppsTheAccountMayUse(t *testing.T) {
 	newTestEnv(t)
 	user := testutil.CreateAccount(t, "mo")
@@ -387,12 +395,20 @@ func TestE2EHomeListsTheAppsTheAccountMayUse(t *testing.T) {
 }
 
 // The per-address limit counts failures across accounts; the honeypot catches form-filling bots.
+//
+// Covers: V2, V3
 func TestE2EAbuseProtection(t *testing.T) {
 	newTestEnv(t)
+	// A lower per-address limit than the default 50: every failure costs a full password check, which the
+	// race detector makes slow, and the rule is the same at any number.
+	limited := testConfig
+	limited.LoginLimits = config.LoginLimits{Window: 15 * time.Minute, PerAccountAndIP: 5, PerIP: 8}
+	web.Configure(limited)
+	t.Cleanup(func() { web.Configure(testConfig) })
 	testutil.CreateAccount(t, "kass")
 	bot := newBrowser(t)
 	bot.ip = "198.51.100.7"
-	for i := 0; i < 50; i++ {
+	for i := 0; i < limited.LoginLimits.PerIP; i++ {
 		resp := bot.login(fmt.Sprintf("guess%d", i), "wrong-password-1", "")
 		drain(resp)
 		if resp.StatusCode != http.StatusUnauthorized {

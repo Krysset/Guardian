@@ -426,6 +426,7 @@ func TestUsernamesAndEmailsAreUniqueCaseInsensitively(t *testing.T) {
 	}
 }
 
+// Covers: U9
 func TestChangingEmailClearsItsVerification(t *testing.T) {
 	testutil.Reset(t)
 	a := testutil.CreateAccount(t, "cara")
@@ -448,6 +449,7 @@ func TestChangingEmailClearsItsVerification(t *testing.T) {
 	}
 }
 
+// Covers: P5
 func TestSeededAdminHasNoPasswordUntilBootstrapped(t *testing.T) {
 	testutil.Reset(t)
 	admin, hash, err := db.GetAccountByUsername("admin")
@@ -804,6 +806,7 @@ func TestEnsureSigningKeyCreatesExactlyOneUnderConcurrency(t *testing.T) {
 	}
 }
 
+// Covers: P3
 func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
 	testutil.Reset(t)
 	testutil.DeleteSigningKeys()
@@ -950,6 +953,7 @@ func TestMaintenanceRemovesOnlyOldExpiredRows(t *testing.T) {
 
 const migrationOneRecords = `SELECT count(*) FROM goose_db_version WHERE version_id = 1 AND is_applied`
 
+// Covers: P1
 func TestMigrationsAreRecordedAndRunOnce(t *testing.T) {
 	testutil.RequireTestDB(t)
 	// Opening the database already migrated it.
@@ -965,6 +969,7 @@ func TestMigrationsAreRecordedAndRunOnce(t *testing.T) {
 	}
 }
 
+// Covers: P1
 func TestMigrateSurvivesConcurrentStartups(t *testing.T) {
 	testutil.Reset(t)
 	// Forget that migration 1 ran, so every "replica" below wants to apply it. The migration is
@@ -1039,6 +1044,7 @@ func TestLastBackupTimeComesFromTheAuditLog(t *testing.T) {
 	}
 }
 
+// Covers: A7
 func TestDeletedAccountsAreErasedAfterTheGracePeriod(t *testing.T) {
 	testutil.Reset(t)
 	due := testutil.CreateAccount(t, "due")
@@ -1061,6 +1067,7 @@ func TestDeletedAccountsAreErasedAfterTheGracePeriod(t *testing.T) {
 	}
 }
 
+// Covers: A27, A22
 func TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention(t *testing.T) {
 	testutil.Reset(t)
 	defer func(d time.Duration) { db.AuditRetention = d }(db.AuditRetention)

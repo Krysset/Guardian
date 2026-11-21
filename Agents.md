@@ -80,13 +80,23 @@ current: they are the hand-off between sessions.
     `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
   - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
     (including the email settings) wait until the owner's cluster is.
-- **0.5 in progress**, in four parts (`docs/ROADMAP.md`): (1) audit retention and single-app group clean-up,
+- **0.6 built, uncommitted** (2026-11-21): every done requirement in USERS.md names a test via `// Covers: X, Y`
+  in the test's doc comment; `backend/requirements_test.go` (package `guardian_test` at the module root) fails on
+  gaps and unknown ids and generates the table between the markers in TESTING.md
+  (`UPDATE_REQUIREMENTS=1 go test -run TestEveryDoneRequirementHasATest .`). **When adding a requirement or a
+  test, add `Covers:`.** Route permissions: `internal/api/permissions_test.go` (lists `openRoutes`, `userRoutes`;
+  everything else must be AdminOnly) and `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt`. e2e `TestMain` calls
+  `auth.UseCheapHashesInTests()`. Full suite ~30 s with `-race`. Runbook for a locked-out admin in INSTALL.md,
+  run by `internal/store/runbook_db_test.go`. `RemoveAllTOTP` keeps keys and the codes of accounts with a key.
+  Local Postgres data now in `/var/lib/postgresql/guardian/data` (the scratch folder's permissions can change
+  under a running Postgres and crash it).
+- **0.5 built** (committed `af5fb2d`; the real cluster install waits for the cluster), in four parts (`docs/ROADMAP.md`): (1) audit retention and single-app group clean-up,
   (2) security keys and passkeys (`github.com/go-webauthn/webauthn` v0.18.2, vendored 2026-11-20), (3) release
   workflow and SonarQube, (4) the cluster parts. Then 0.6: a review of the tests, and every requirement
   implemented with at least one test (owner's request, 2026-11-20).
   - **Passkeys (decided 2026-11-20):** a passkey signs in on its own, with no further step, and counts as
     two-factor (apps with `require_mfa` and administrators' rights accept it).
-  - **Part 4, the full chart (locally, no cluster yet): built, uncommitted.** Frontend image `frontend/Dockerfile`
+  - **Part 4, the full chart (locally, no cluster yet): committed (`af5fb2d`).** Frontend image `frontend/Dockerfile`
     (nginx-unprivileged 1.27, `frontend/nginx/default.conf` + `headers.conf`, probe `/_ui/health`, read-only with
     `/tmp` emptyDir). Chart: `templates/frontend/*`, routing split in `httproute.yaml`/`ingress.yaml`,
     `backend/hpa.yaml`, `backend/servicemonitor.yaml` (internal Service labelled `guardian.dev/service: internal`),
@@ -102,7 +112,7 @@ current: they are the hand-off between sessions.
     stand-in renderer `scratchpad/minihelm` (Go text/template + the few Sprig functions the chart uses;
     `check.py` renders every `ci/` file and asserts routing, Job, CronJob, policies) and the schema with
     `jsonschema`; the real `helm` runs in CI. SonarQube paused by the owner (2026-11-20).
-  - **Part 3, release workflow, SonarQube, Generate: built, uncommitted.** `.github/workflows/release.yml` (tag
+  - **Part 3, release workflow, SonarQube, Generate: committed (`af5fb2d`).** `.github/workflows/release.yml` (tag
     `vX.Y.Z` → checks via `workflow_call` of backend/frontend/chart workflows → `ghcr.io/krysset/guardian-backend`
     amd64+arm64, chart `oci://ghcr.io/krysset/charts/guardian`, GitHub release). Dockerfile cross-compiles
     (`--platform=$BUILDPLATFORM`) and takes `VERSION`; `server.Version` via ldflags, `guardian version`,

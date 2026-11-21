@@ -84,6 +84,7 @@ func sessionAMR(t *testing.T, accountID string) string {
 	return amr
 }
 
+// Covers: V8, U11
 func TestE2EPasskeySignsInWithoutAPassword(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "mipha")
@@ -142,6 +143,7 @@ func TestE2EPasskeySignsInWithoutAPassword(t *testing.T) {
 	}
 }
 
+// Covers: V8, U11
 func TestE2EPasskeyOfARemovedKeyIsRefused(t *testing.T) {
 	newTestEnv(t)
 	testutil.CreateAccount(t, "revali")
@@ -159,6 +161,7 @@ func TestE2EPasskeyOfARemovedKeyIsRefused(t *testing.T) {
 	}
 }
 
+// Covers: V7
 func TestE2ESecurityKeyIsASecondFactor(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "urbosa")
@@ -207,6 +210,7 @@ func TestE2ESecurityKeyIsASecondFactor(t *testing.T) {
 	}
 }
 
+// Covers: U11, U16
 func TestE2EKeysConfirmItsYouAndFollowTheRemovalRules(t *testing.T) {
 	newTestEnv(t)
 	admin := testutil.AdminAccount(t, "zelda")
@@ -242,6 +246,7 @@ func TestE2EKeysConfirmItsYouAndFollowTheRemovalRules(t *testing.T) {
 	}
 }
 
+// Covers: U4, A24
 func TestE2ERequiredSetupWithASecurityKey(t *testing.T) {
 	newTestEnv(t)
 	admin := testutil.AdminAccount(t, "impa")

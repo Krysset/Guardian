@@ -21,6 +21,7 @@ import (
 	"guardian/internal/testutil"
 )
 
+// Covers: M1
 func TestE2ELoginIssuesSignedAccessAndIDTokens(t *testing.T) {
 	testutil.Reset(t)
 	user := testutil.CreateAccount(t, "alice")
@@ -133,6 +134,7 @@ func TestE2ESessionCookieIsHardenedAndStoredHashed(t *testing.T) {
 	}
 }
 
+// Covers: V1, U5
 func TestE2ESingleSignOnAndLogoutEverywhere(t *testing.T) {
 	testutil.Reset(t)
 	user := testutil.CreateAccount(t, "alice")
@@ -205,6 +207,7 @@ func TestE2ESingleSignOnAndLogoutEverywhere(t *testing.T) {
 	drain(resp)
 }
 
+// Covers: M1
 func TestE2EAuthorizationCodeAndPKCE(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -441,6 +444,7 @@ func TestE2ESessionTimeoutsEndRefreshes(t *testing.T) {
 	refreshRefused(t, app, secret, tok.Refresh)
 }
 
+// Covers: V4
 func TestE2EAuthorizeRequestValidation(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -540,6 +544,7 @@ func TestE2EPromptAndMaxAgeForceReauthentication(t *testing.T) {
 	}
 }
 
+// Covers: U1
 func TestE2EConsentFlowForThirdPartyApps(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -614,6 +619,7 @@ func TestE2EConsentFlowForThirdPartyApps(t *testing.T) {
 	_ = secret
 }
 
+// Covers: U5
 func TestE2ERPInitiatedLogout(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -700,6 +706,7 @@ func TestE2ERPInitiatedLogout(t *testing.T) {
 	drain(resp)
 }
 
+// Covers: A21, M1
 func TestE2EDiscoveryAndJWKS(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")

@@ -2,6 +2,7 @@ package api
 
 import "testing"
 
+// Covers: U12
 func TestDescribeUserAgent(t *testing.T) {
 	for ua, want := range map[string]string{
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0":                                                        "Firefox on Windows",

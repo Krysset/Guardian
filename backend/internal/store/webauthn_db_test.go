@@ -9,6 +9,7 @@ import (
 	"guardian/internal/testutil"
 )
 
+// Covers: U11
 func TestSecurityKeysAreUniqueAndTheLastFactorIsKept(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "sidon")
@@ -60,5 +61,47 @@ func TestSecurityKeysAreUniqueAndTheLastFactorIsKept(t *testing.T) {
 	}
 	if err := db.ReplaceRecoveryCodes(acct.ID, codes); !errors.Is(err, db.ErrNoSecondFactor) {
 		t.Errorf("recovery codes without a method: %v", err)
+	}
+}
+
+// `guardian mfa reset-totp --all` (after a keyring key leaked) removes every authenticator app. Security keys
+// stay, and so do the recovery codes of accounts that keep one; an account left without a second factor
+// loses its codes too.
+//
+// Covers: P4
+func TestResettingEveryAuthenticatorAppKeepsSecurityKeys(t *testing.T) {
+	testutil.Reset(t)
+	appOnly := testutil.CreateAccount(t, "app-only")
+	both := testutil.CreateAccount(t, "both")
+	keyOnly := testutil.CreateAccount(t, "key-only")
+	testutil.EnableTOTP(t, appOnly.ID)
+	testutil.EnableTOTP(t, both.ID)
+	if _, err := db.AddSecurityKey(both.ID, "Key", []byte{1}, []byte(`{}`), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AddSecurityKey(keyOnly.ID, "Key", []byte{2}, []byte(`{}`), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []db.Account{appOnly, both, keyOnly} {
+		if err := db.ReplaceRecoveryCodes(a.ID, []string{"h1", "h2"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := db.TOTPAccounts()
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("accounts with an app: %d (%v)", len(listed), err)
+	}
+	if n, err := db.RemoveAllTOTP(); err != nil || n != 2 {
+		t.Fatalf("removed %d apps (%v), want 2", n, err)
+	}
+	for _, c := range []struct {
+		acct  db.Account
+		keys  int
+		codes int
+	}{{appOnly, 0, 0}, {both, 1, 2}, {keyOnly, 1, 2}} {
+		st, err := db.GetMFAStatus(c.acct.ID)
+		if err != nil || st.TOTP || len(st.SecurityKeys) != c.keys || st.RecoveryCodesLeft != c.codes {
+			t.Errorf("%s after the reset: %+v (%v)", c.acct.Username, st, err)
+		}
 	}
 }

@@ -313,6 +313,7 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - Every requirement in `docs/USERS.md` is implemented and named by at least one test; a table maps each requirement to its tests, and gaps are filled.
 - The tests are reviewed: slow or overlapping tests are made faster or merged, flaky ones fixed, and missing cases added (error paths, permissions, limits).
 - **Done when:** the requirement table has no gaps and the suite runs green and reasonably fast.
+- **Built 2026-11-21:** every done requirement names at least one test (`Covers:` in the test's doc comment); `backend/requirements_test.go` fails on a gap or an unknown id and generates the table in `TESTING.md`. New tests for the gaps: changing the username (U8), deleting an app and everything it held (A25), removing every authenticator app (P4, which also fixes that it took the recovery codes of accounts keeping a security key), and the locked-out administrator runbook, now written in `INSTALL.md` and run as printed (P7). Every `/api/v1` route is checked for its permission (structurally and over HTTP), so a new route cannot be left open by accident. The suite went from over two minutes to about 30 seconds with `-race`: the end-to-end tests hash with cheap parameters, and the abuse test uses a lower limit. Fixed: a keyring test that left the database unusable for the next test process, and a metrics test that failed when run twice. Statuses corrected in `USERS.md`: U4, U17, P3, P4 and P7 are done. Browser tests stay out of the repository (owner).
 
 ### 1.0: release
 - **M7 hardening:**
@@ -375,3 +376,4 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - 2026-11-20: security keys and passkeys built (0.5 part 2). The sign-in pages run the key dialogs with plain form posts (the options in the page, the answer in a form field), so their CSP stays without `connect-src`. Removing the password from an account is not part of 0.5.
 - 2026-11-20: passkey-only accounts (no password at all) moved to after 1.0 (owner's decision). SonarQube is integrated through oauth2-proxy and its HTTP header sign-in, since it no longer supports OIDC itself.
 - 2026-11-20: SonarQube paused (owner). The full chart built locally (0.5 part 4); the cluster install waits for the cluster, with a kind install in CI meanwhile. The migration Job needs an external Postgres.
+- 2026-11-21: 0.6 built: requirement coverage enforced by a test, the gaps filled, the suite four times faster. UI browser tests stay out of the repository (owner).

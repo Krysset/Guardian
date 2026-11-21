@@ -12,6 +12,7 @@ import (
 // The routes behind the admin area's overview and accounts (0.4 part 3), and the two-factor step-up the
 // management UI sends a session to when a page needs it.
 
+// Covers: A28, A23
 func TestE2EAdminOverviewCountsWithoutNamingAnyone(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "purah")
@@ -61,6 +62,7 @@ func TestE2EAdminOverviewCountsWithoutNamingAnyone(t *testing.T) {
 	other.call("GET", "/api/v1/overview", nil, 403)
 }
 
+// Covers: A1, A2, A10
 func TestE2EAdminAccountsPagesFiltersAndActivity(t *testing.T) {
 	newTestEnv(t)
 	admin := testutil.AdminAccount(t, "impa")
@@ -123,6 +125,8 @@ func TestE2EAdminAccountsPagesFiltersAndActivity(t *testing.T) {
 
 // A session that has not passed two-factor is refused admin rights; /mfa/stepup asks for a code and
 // returns to the management UI, after which the rights work.
+//
+// Covers: A24
 func TestE2EStepUpForTheManagementUI(t *testing.T) {
 	newTestEnv(t)
 	admin := testutil.AdminAccount(t, "zelda")
@@ -165,6 +169,8 @@ func TestE2EStepUpForTheManagementUI(t *testing.T) {
 }
 
 // The app page needs the standard scopes and the audit entries about one app.
+//
+// Covers: A17, A22
 func TestE2EScopesAndAppActivity(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "robbie")
@@ -202,6 +208,7 @@ func TestE2EScopesAndAppActivity(t *testing.T) {
 	br.call("GET", "/api/v1/audit?app=nope", nil, 400)
 }
 
+// Covers: A22
 func TestE2EAuditLogNamesAndUsernameFilter(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "purah")

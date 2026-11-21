@@ -64,12 +64,24 @@ func TOTPAccounts() ([]Account, error) {
 	return out, rows.Err()
 }
 
-// RemoveAllTOTP removes every authenticator app and recovery code (`guardian mfa reset-totp --all`).
+// RemoveAllTOTP removes every authenticator app (`guardian mfa reset-totp --all`, after a keyring key leaked:
+// the apps' secrets are encrypted with it). Security keys hold nothing secret and stay, and so do the recovery
+// codes of accounts that keep a key; the codes of accounts left without a second factor go. It returns how
+// many apps were removed.
 func RemoveAllTOTP() (int, error) {
-	res, err := GetDatabaseConnection().Exec(`DELETE FROM account_mfa WHERE type IN ('totp', 'recovery_code')`)
+	tx, err := GetDatabaseConnection().Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM account_mfa WHERE type = 'totp'`)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	return int(n), nil
+	if _, err := tx.Exec(`DELETE FROM account_mfa c WHERE c.type = 'recovery_code' AND NOT EXISTS (
+		SELECT 1 FROM account_mfa k WHERE k.account_id = c.account_id AND k.type = 'webauthn')`); err != nil {
+		return 0, err
+	}
+	return int(n), tx.Commit()
 }

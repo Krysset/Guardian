@@ -14,6 +14,7 @@ import (
 
 func strp(s string) *string { return &s }
 
+// Covers: A5
 func TestDisablingAnAccountEndsItsSessionsAndSparesTheLastAdmin(t *testing.T) {
 	testutil.Reset(t)
 	seeded, _, err := db.GetAccountByUsername("admin")
@@ -62,6 +63,7 @@ func TestDisablingAnAccountEndsItsSessionsAndSparesTheLastAdmin(t *testing.T) {
 	}
 }
 
+// Covers: A4
 func TestAccountUpdatesChangeOnlyWhatIsGiven(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "erin")
@@ -98,6 +100,7 @@ func TestAccountUpdatesChangeOnlyWhatIsGiven(t *testing.T) {
 	}
 }
 
+// Covers: U10
 func TestPasswordChangesEndTheRightSessions(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "hana")
@@ -131,6 +134,7 @@ func TestPasswordChangesEndTheRightSessions(t *testing.T) {
 	}
 }
 
+// Covers: A1
 func TestListingAccountsSearchesAndPages(t *testing.T) {
 	testutil.Reset(t)
 	for _, u := range []string{"Anna", "bob", "carl", "dan_1", "dan21"} {
@@ -177,6 +181,7 @@ func TestListingAccountsSearchesAndPages(t *testing.T) {
 	}
 }
 
+// Covers: U18, A2
 func TestAccountGroupsListsActiveMemberships(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "ines")
@@ -191,6 +196,7 @@ func TestAccountGroupsListsActiveMemberships(t *testing.T) {
 	}
 }
 
+// Covers: A17, A19
 func TestAppUpdatesAndSecretRotation(t *testing.T) {
 	testutil.Reset(t)
 	app, oldSecret := testutil.CreateApp(t, "notes", testutil.AppOptions{})
@@ -230,6 +236,7 @@ func TestAppUpdatesAndSecretRotation(t *testing.T) {
 	}
 }
 
+// Covers: A22
 func TestAuditLogFiltersAndPages(t *testing.T) {
 	testutil.Reset(t)
 	acct := testutil.CreateAccount(t, "jon")

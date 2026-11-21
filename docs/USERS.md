@@ -85,7 +85,7 @@ Everything a visitor has, plus:
 | U1 | Consent: which app asks, as whom the user is signed in, and what the app will get. Allow or deny. | 0.1 | done |
 | U2 | Be told plainly that their account has no access to an app, and what to do about it. | 0.1 | done |
 | U3 | Choose a new password after an admin set a temporary one, before going on. | 0.1 | done |
-| U4 | Set up two-factor when it is required (they are an admin or a group owner, or the app requires it), including saving recovery codes and confirming one before setup finishes. | 0.3, keys 0.5 | done (keys 0.5) |
+| U4 | Set up two-factor when it is required (they are an admin or a group owner, or the app requires it), including saving recovery codes and confirming one before setup finishes. | 0.3, keys 0.5 | done |
 | U5 | Confirm signing out when an app asks for it without proof it is them, and see that they are signed out of Guardian and all apps. | 0.1 | done |
 | U6 | When already signed in: see as whom, go to their account, or sign out to switch account. | 0.1 | done |
 
@@ -103,7 +103,7 @@ Everything a visitor has, plus:
 | U14 | Download their data as JSON. | 0.3 / 0.4 | done |
 | U15 | Delete their account, with the 30-day grace period explained. Refused for the last administrator. | 0.3 / 0.4 | done |
 | U16 | Confirm it is them (password or second factor) before a protected change: username, email, password, two-factor, recovery codes, sessions, connected apps, deletion. The change is then saved without starting over. | 0.3 / 0.4 | done |
-| U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | done for password and email changes; the two-factor ones come with two-factor |
+| U17 | Receive security emails when they have an address: password changed, two-factor added or removed, email being changed (to the old address), two-factor reset by an admin (with the reason). | 0.3 | done |
 | U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | done |
 | U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | done |
 | U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | done |
@@ -188,11 +188,11 @@ Works in the CLI and with Kubernetes, never in the management UI. Has no require
 |---|---|---|---|
 | P1 | Run database migrations (`guardian migrate`, or at startup). | 0.1 | done |
 | P2 | Back up, verify, restore, and export the deletion log. | 0.2 | done |
-| P3 | Rotate or emergency-revoke signing keys; add and promote encryption keys. | 0.3 | planned |
-| P4 | Reset two-factor for everyone (dry run by default, confirmation required). | 0.3 | planned |
+| P3 | Rotate or emergency-revoke signing keys; add and promote encryption keys. | 0.3 | done |
+| P4 | Reset two-factor for everyone (dry run by default, confirmation required). | 0.3 | done |
 | P5 | Set the first admin password through a Secret. | 0.1 | done |
 | P6 | Metrics for Prometheus, and health and readiness probes. | 0.1 | done |
-| P7 | Recover a locked-out sole admin with the documented SQL in the runbook. | 0.2 | planned |
+| P7 | Recover a locked-out sole admin with the documented SQL in the runbook. | 0.2 | done |
 
 ## App (machine)
 
@@ -219,3 +219,4 @@ Works in the CLI and with Kubernetes, never in the management UI. Has no require
   their password; temporary passwords typed by the admin, generated from 0.5; users see group display names only.
 - 2026-11-19: the account area start page became Home (`/`, U19), with the apps a user can use (U20):
   connected apps and available apps. The account area now opens on the profile.
+- 2026-11-21: every requirement that is done is named by at least one test (`Covers:` in the test, checked by `backend/requirements_test.go`). U4, U17, P3 and P4 were done already and are marked so; P7 is done with the runbook in `docs/INSTALL.md`, whose SQL a test runs as printed.

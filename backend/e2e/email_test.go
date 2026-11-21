@@ -44,6 +44,7 @@ func signupForm(br *browser, username, email, returnTo string) *http.Response {
 		"password": {"long-enough-pw-1"}, "password2": {"long-enough-pw-1"}, "return_to": {returnTo}})
 }
 
+// Covers: V3, V6
 func TestE2ESignUpWithAnEmailWaitsForItsConfirmation(t *testing.T) {
 	newTestEnv(t)
 	app, _ := testutil.CreateApp(t, "notes", testutil.AppOptions{FirstParty: true})
@@ -138,6 +139,7 @@ func TestE2ESignUpWithAnEmailWaitsForItsConfirmation(t *testing.T) {
 	}
 }
 
+// Covers: V6
 func TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn(t *testing.T) {
 	newTestEnv(t)
 	br := newBrowser(t)
@@ -159,6 +161,7 @@ func TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn(t *testing.T) {
 	br.mustLoginWith("malon", "long-enough-pw-1")
 }
 
+// Covers: V6
 func TestE2ETheFirstAccountToConfirmAnAddressGetsIt(t *testing.T) {
 	newTestEnv(t)
 	a, b := newBrowser(t), newBrowser(t)
@@ -207,6 +210,7 @@ func TestE2ETheFirstAccountToConfirmAnAddressGetsIt(t *testing.T) {
 	}
 }
 
+// Covers: V5, U17
 func TestE2EPasswordResetByEmail(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "impa")
@@ -291,6 +295,7 @@ func TestE2EPasswordResetByEmail(t *testing.T) {
 	}
 }
 
+// Covers: U9, U17
 func TestE2EChangingTheEmailAddress(t *testing.T) {
 	newTestEnv(t)
 	testutil.CreateAccount(t, "rauru")
@@ -326,6 +331,7 @@ func TestE2EChangingTheEmailAddress(t *testing.T) {
 	}
 }
 
+// Covers: V3
 func TestE2EEmailOffAndEmailRequired(t *testing.T) {
 	newTestEnv(t)
 	br := newBrowser(t)

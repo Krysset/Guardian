@@ -104,6 +104,7 @@ func takeBackup(t *testing.T, withAudit bool) (file []byte, identity string) {
 	return out.Bytes(), identity
 }
 
+// Covers: P2
 func TestBackupRestoresIntoAFreshInstallationExactly(t *testing.T) {
 	testutil.RequireTestDB(t)
 	ctx := context.Background()
@@ -206,6 +207,7 @@ func TestBackupRestoresIntoAFreshInstallationExactly(t *testing.T) {
 	}
 }
 
+// Covers: P2
 func TestBackupWithoutAuditLogAndDryRun(t *testing.T) {
 	testutil.RequireTestDB(t)
 	ctx := context.Background()
@@ -276,6 +278,7 @@ func TestEveryTableIsBackedUpOrLeftOutOnPurpose(t *testing.T) {
 	}
 }
 
+// Covers: P2
 func TestRestoreAppliesANewerDeletionLog(t *testing.T) {
 	testutil.RequireTestDB(t)
 	ctx := context.Background()

@@ -13,6 +13,7 @@ import (
 // Deleting accounts (0.3 part 4): self-service and by an administrator, the grace period, restoring,
 // erasing now, and "download my data".
 
+// Covers: U15, A8
 func TestE2EDeletingYourOwnAccountAndRestoringIt(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "zelda")
@@ -66,6 +67,7 @@ func TestE2EDeletingYourOwnAccountAndRestoringIt(t *testing.T) {
 	}
 }
 
+// Covers: A7
 func TestE2EErasingAnAccountNow(t *testing.T) {
 	newTestEnv(t)
 	testutil.AdminAccount(t, "zelda")
@@ -103,6 +105,7 @@ func TestE2EErasingAnAccountNow(t *testing.T) {
 	}
 }
 
+// Covers: U14
 func TestE2EDownloadMyData(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "teba")
@@ -127,6 +130,7 @@ func TestE2EDownloadMyData(t *testing.T) {
 	}
 }
 
+// Covers: U15
 func TestE2ETheLastAdministratorCannotDeleteItself(t *testing.T) {
 	newTestEnv(t)
 	// The seeded admin plus one more would make two; remove the seeded one's membership first.

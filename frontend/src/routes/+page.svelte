@@ -97,7 +97,7 @@
 			{#if me.is_admin}
 				<a class="tile-link" href="/admin">
 					<Icon name="shield" />
-					<span class="text"><strong>Admin area</strong><span>Accounts, groups, apps and the audit log. Only administrators see this.</span></span>
+					<span class="text"><strong>Admin area</strong><span>Accounts, groups, apps and the audit log.</span></span>
 				</a>
 			{/if}
 		</div>

@@ -34,6 +34,7 @@ func usernames(list []map[string]any) string {
 	return strings.Join(out, ",")
 }
 
+// Covers: A1, A3, A4
 func TestE2EAdminsListCreateAndEditAccounts(t *testing.T) {
 	testutil.Reset(t)
 	root := testutil.AdminAccount(t, "root")
@@ -88,6 +89,7 @@ func TestE2EAdminsListCreateAndEditAccounts(t *testing.T) {
 	}
 }
 
+// Covers: A5
 func TestE2EDisablingAnAccountLocksItOutAndEnablingLetsItBackIn(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -120,6 +122,7 @@ func TestE2EDisablingAnAccountLocksItOutAndEnablingLetsItBackIn(t *testing.T) {
 	}
 }
 
+// Covers: U3, A6
 func TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -144,6 +147,7 @@ func TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged(t *testing.T) {
 	}
 }
 
+// Covers: A15, A17, A19
 func TestE2EAdminsEditAppsAndRotateSecrets(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -189,6 +193,7 @@ func TestE2EAdminsEditAppsAndRotateSecrets(t *testing.T) {
 	admin.call("POST", "/api/v1/apps/"+spa.ID+"/secret", nil, 400)
 }
 
+// Covers: A22
 func TestE2EAuditLogAPI(t *testing.T) {
 	testutil.Reset(t)
 	root := testutil.AdminAccount(t, "root")
@@ -243,6 +248,7 @@ func TestE2EAPIErrorsAndUnknownRoutes(t *testing.T) {
 	}
 }
 
+// Covers: A27
 func TestE2ESingleAppGroupsThroughTheAPI(t *testing.T) {
 	testutil.Reset(t)
 	testutil.AdminAccount(t, "root")
@@ -299,5 +305,48 @@ func TestE2ESingleAppGroupsThroughTheAPI(t *testing.T) {
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'group.bound'`); n != 1 {
 		t.Errorf("%d bindings audited, want 1", n)
+	}
+}
+
+// Deleting an app removes its secrets, tokens, consents, scopes and group links, and its users and
+// sessions forget it; its single-app groups stay, marked as bound to a deleted app (A27).
+//
+// Covers: A25
+func TestE2EDeletingAnAppRemovesEverythingItHeld(t *testing.T) {
+	newTestEnv(t)
+	testutil.AdminAccount(t, "rauru")
+	testutil.CreateAccount(t, "tulin")
+	app, secret := testutil.CreateApp(t, "wiki", testutil.AppOptions{FirstParty: true})
+	user := newBrowser(t)
+	user.mustLogin("tulin")
+	tokens := user.signIn(app, secret, "tulin", "openid profile")
+	testutil.Exec(t, `INSERT INTO account_consent (account_id, app_id, scopes) SELECT id, $1, ARRAY['openid'] FROM account WHERE username = 'tulin'
+		ON CONFLICT DO NOTHING`, app.ID)
+
+	tables := []string{"app_secret", "app_scope", "account_consent", "app_group", "authorization_code", "refresh_token", "app_user", "session_app"}
+	held := func() map[string]int {
+		out := map[string]int{}
+		for _, table := range tables {
+			out[table] = testutil.Count(t, `SELECT count(*) FROM `+table+` WHERE app_id = $1`, app.ID)
+		}
+		return out
+	}
+	if h := held(); h["app_secret"] == 0 || h["refresh_token"] == 0 || h["account_consent"] == 0 {
+		t.Fatalf("before deleting, the app should hold a secret, a refresh token and a consent: %v", h)
+	}
+	admin := newBrowser(t)
+	admin.mustLogin("rauru")
+	admin.call("DELETE", "/api/v1/apps/"+app.ID, nil, 204)
+	for table, n := range held() {
+		if n != 0 {
+			t.Errorf("%d rows of %s remain after deleting the app", n, table)
+		}
+	}
+	if status, body := refreshRequest(t, app, secret, tokens.Refresh); status != http.StatusUnauthorized || body["error"] != "invalid_client" {
+		t.Errorf("a deleted app's refresh: %d %v", status, body)
+	}
+	admin.call("GET", "/api/v1/apps/"+app.ID, nil, 404)
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'app.removed'`); n != 1 {
+		t.Errorf("%d app removals audited", n)
 	}
 }

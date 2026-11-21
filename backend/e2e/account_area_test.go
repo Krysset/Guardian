@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"net/http"
 	"testing"
 
 	"guardian/internal/testutil"
@@ -17,6 +18,7 @@ func names(list []any, field string) []string {
 	return out
 }
 
+// Covers: U13, U20
 func TestE2EHomeAndConnectedApps(t *testing.T) {
 	newTestEnv(t)
 	notes, notesSecret := testutil.CreateApp(t, "notes", testutil.AppOptions{})
@@ -84,6 +86,7 @@ func equal(a, b []string) bool {
 	return true
 }
 
+// Covers: U12
 func TestE2EMySessions(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "riju")
@@ -158,6 +161,7 @@ func TestE2EMySessions(t *testing.T) {
 	}
 }
 
+// Covers: U9
 func TestE2EMyEmailAddress(t *testing.T) {
 	newTestEnv(t)
 	acct := testutil.CreateAccount(t, "kass")
@@ -200,6 +204,7 @@ func TestE2EMyEmailAddress(t *testing.T) {
 	}
 }
 
+// Covers: U18, O1, O2, O3, O5
 func TestE2EMyGroupsAndAddingMembersByLogin(t *testing.T) {
 	newTestEnv(t)
 	app, _ := testutil.CreateApp(t, "notes", testutil.AppOptions{})
@@ -250,5 +255,41 @@ func TestE2EMyGroupsAndAddingMembersByLogin(t *testing.T) {
 	if g := stranger.call("GET", "/api/v1/me/groups", nil, 200); len(g["manages"].([]any)) != 0 ||
 		!equal(names(g["member_of"].([]any), "id"), []string{team}) {
 		t.Errorf("a member's own groups: %v", g)
+	}
+}
+
+// A user changes their username: they sign in with the new one, the old one is free again, a taken or
+// malformed name is refused, and the change is audited. Apps keep knowing the account by its id.
+//
+// Covers: U8
+func TestE2EChangingYourUsername(t *testing.T) {
+	newTestEnv(t)
+	acct := testutil.CreateAccount(t, "kass")
+	testutil.CreateAccount(t, "teba")
+	app, secret := testutil.CreateApp(t, "notes", testutil.AppOptions{FirstParty: true})
+	br := newBrowser(t)
+	br.mustLogin("kass")
+	before := verifyAccessToken(t, app, br.signIn(app, secret, "kass", "openid profile").Access)
+
+	if got := br.call("PATCH", "/api/v1/me", map[string]any{"username": "Teba"}, 409); got["error"] != "username_taken" {
+		t.Errorf("a taken username (in other letter case): %v", got)
+	}
+	br.call("PATCH", "/api/v1/me", map[string]any{"username": "no spaces allowed"}, 400)
+	if got := br.call("PATCH", "/api/v1/me", map[string]any{"username": "kass-the-bard"}, 200); got["username"] != "kass-the-bard" {
+		t.Fatalf("after changing the username: %v", got)
+	}
+
+	other := newBrowser(t)
+	resp := other.login("kass", testutil.DefaultPassword, "")
+	wantStatus(t, resp, http.StatusUnauthorized)
+	drain(resp)
+	other.mustLogin("kass-the-bard")
+	after := verifyAccessToken(t, app, other.signIn(app, secret, "kass-the-bard", "openid profile").Access)
+	if before["sub"] != after["sub"] || after["sub"] != acct.ID {
+		t.Errorf("the account's id changed with its name: %v, %v", before["sub"], after["sub"])
+	}
+	testutil.CreateAccount(t, "kass") // the old name is free again
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'account.username_changed' AND metadata->>'username' = 'kass-the-bard'`); n != 1 {
+		t.Errorf("%d username changes audited", n)
 	}
 }

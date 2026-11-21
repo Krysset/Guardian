@@ -190,8 +190,9 @@ func runKeysCommand(args []string, stdout, stderr io.Writer, loadConfig func() (
 			return fail(err)
 		}
 		if !execute {
-			fmt.Fprintf(stderr, "Dry run: %d accounts would lose their authenticator app and recovery codes, and be emailed.\n"+
-				"Administrators and group owners set it up again at their next sign-in.\n", len(accounts))
+			fmt.Fprintf(stderr, "Dry run: %d accounts would lose their authenticator app, and be emailed. Security keys stay, and\n"+
+				"so do the recovery codes of accounts that keep one. Administrators and group owners without a key set\n"+
+				"two-factor up again at their next sign-in.\n", len(accounts))
 			return 0
 		}
 		if m := cfg.Mail; m.Enabled() {
@@ -202,7 +203,7 @@ func runKeysCommand(args []string, stdout, stderr io.Writer, loadConfig func() (
 		if err != nil {
 			return fail(err)
 		}
-		audit("mfa.reset_all", map[string]any{"accounts": len(accounts), "rows": n})
+		audit("mfa.reset_all", map[string]any{"accounts": len(accounts), "removed": n})
 		emailed := 0
 		for _, a := range accounts {
 			if a.Email != "" {
