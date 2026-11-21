@@ -1,0 +1,774 @@
+package e2e
+
+import (
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"html"
+	"math/big"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	"guardian/internal/auth"
+	db "guardian/internal/store"
+	"guardian/internal/testutil"
+)
+
+// Covers: M1
+func TestE2ELoginIssuesSignedAccessAndIDTokens(t *testing.T) {
+	testutil.Reset(t)
+	user := testutil.CreateAccount(t, "alice")
+	if _, err := db.UpdateProfile(db.Account{ID: user.ID, DisplayName: "Alice A", Email: "alice@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	b := newBrowser(t)
+	tok := b.signIn(app, secret, "alice", "openid profile email")
+
+	// the access token is a signed JWT the app checks by itself; nothing about it is stored
+	at := verifyAccessToken(t, app, tok.Access)
+	if at["sub"] != user.ID || at["client_id"] != app.ClientID || at["scope"] != "openid profile email" {
+		t.Errorf("access token claims = %v", at)
+	}
+	if exp, iat := at["exp"].(float64), at["iat"].(float64); exp-iat != 300 {
+		t.Errorf("access token lives %vs, want the default 300", exp-iat)
+	}
+	if amr := fmt.Sprint(at["amr"]); amr != "[pwd]" {
+		t.Errorf("amr = %v, want [pwd]", amr)
+	}
+	// an app with a secret gets a refresh token without having to ask for offline_access
+	if tok.Refresh == "" {
+		t.Error("no refresh token for a confidential app")
+	}
+	if testutil.Count(t, `SELECT count(*) FROM refresh_token WHERE token_hash = $1`, tok.Refresh) != 0 ||
+		testutil.Count(t, `SELECT count(*) FROM refresh_token WHERE token_hash = $1`, auth.HashToken(tok.Refresh)) != 1 {
+		t.Error("the refresh token must be stored hashed only")
+	}
+	if tok.Raw["token_type"] != "Bearer" || tok.Raw["expires_in"] != float64(300) || tok.Raw["scope"] != "openid profile email" {
+		t.Errorf("token response = %v", tok.Raw)
+	}
+
+	// the ID token verifies with Guardian's key and carries the right identity claims
+	idt := parseJWT(t, tok.ID, jwt.WithIssuer(testIssuer), jwt.WithAudience(app.ClientID))
+	claims := idt.Claims.(jwt.MapClaims)
+	if claims["sub"] != user.ID || claims["nonce"] != "n-1" || claims["email"] != "alice@example.com" ||
+		claims["email_verified"] != false || claims["name"] != "Alice A" || claims["preferred_username"] != "alice" {
+		t.Errorf("ID token claims = %v", claims)
+	}
+	if str(claims["sid"]) == "" || claims["sid"] != at["sid"] {
+		t.Error("ID token needs the session's sid for back-channel logout")
+	}
+	if authTime, _ := claims["auth_time"].(float64); time.Since(time.Unix(int64(authTime), 0)) > time.Minute {
+		t.Errorf("auth_time = %v", claims["auth_time"])
+	}
+
+	// userinfo honours the granted scopes and the response is not cacheable
+	status, info := userinfoStatus(t, tok.Access)
+	if status != 200 || info["sub"] != user.ID || info["email"] != "alice@example.com" || info["preferred_username"] != "alice" {
+		t.Errorf("userinfo = %d %v", status, info)
+	}
+	narrow := b.signIn(app, secret, "alice", "openid")
+	if status, only := userinfoStatus(t, narrow.Access); status != 200 || len(only) != 1 || only["sub"] != user.ID {
+		t.Errorf("a token with only the openid scope must reveal only sub, got %d %v", status, only)
+	}
+	if status, _ := userinfoStatus(t, "garbage"); status != http.StatusUnauthorized {
+		t.Errorf("userinfo with a bogus token = %d", status)
+	}
+	// an ID token is signed with the same key but is not an access token
+	if status, _ := userinfoStatus(t, tok.ID); status != http.StatusUnauthorized {
+		t.Errorf("userinfo accepted an ID token as an access token: %d", status)
+	}
+
+	// the session works against the JSON API
+	resp := b.get("/api/v1/me")
+	wantStatus(t, resp, 200)
+	if me := decodeMap(t, resp); me["username"] != "alice" {
+		t.Errorf("me = %v", me)
+	}
+}
+
+func TestE2ESessionCookieIsHardenedAndStoredHashed(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	b := newBrowser(t)
+	resp := b.login("alice", testutil.DefaultPassword, "")
+	wantStatus(t, resp, http.StatusSeeOther)
+	if resp.Header.Get("Location") != "/" {
+		t.Errorf("login without return_to goes to %q", resp.Header.Get("Location"))
+	}
+	var session *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == "guardian_session" {
+			session = c
+		}
+	}
+	drain(resp)
+	if session == nil {
+		t.Fatal("no session cookie")
+	}
+	if !session.HttpOnly || session.SameSite != http.SameSiteLaxMode || session.Path != "/" || session.Value == "" {
+		t.Errorf("cookie not hardened: %+v", session)
+	}
+	if session.MaxAge < 3500 || session.MaxAge > 3600 {
+		t.Errorf("cookie lifetime = %ds, want about SESSION_MAX_LIFETIME (1h)", session.MaxAge)
+	}
+	if testutil.Count(t, `SELECT count(*) FROM session WHERE session_hash = $1`, session.Value) != 0 {
+		t.Error("session cookie stored in plaintext")
+	}
+	if testutil.Count(t, `SELECT count(*) FROM session WHERE session_hash = $1`, auth.HashToken(session.Value)) != 1 {
+		t.Error("hashed session not stored")
+	}
+
+	// logging in again never reuses the session id (no session fixation)
+	first := b.cookie("guardian_session")
+	b.mustLogin("alice")
+	if second := b.cookie("guardian_session"); second == first || second == "" {
+		t.Error("a new login must issue a fresh session cookie")
+	}
+}
+
+// Covers: V1, U5
+func TestE2ESingleSignOnAndLogoutEverywhere(t *testing.T) {
+	testutil.Reset(t)
+	user := testutil.CreateAccount(t, "alice")
+	endpointA, tokensA := startReceiver(t)
+	endpointB, tokensB := startReceiver(t)
+	appA, secA := testutil.CreateApp(t, "appa", testutil.AppOptions{FirstParty: true, BackchannelURI: endpointA})
+	appB, secB := testutil.CreateApp(t, "appb", testutil.AppOptions{FirstParty: true, BackchannelURI: endpointB})
+	b := newBrowser(t)
+
+	a := b.signIn(appA, secA, "alice", "openid")
+	bb := b.signIn(appB, secB, "alice", "openid")
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'login.success'`); n != 1 {
+		t.Fatalf("%d password logins happened, want 1 (the second app must reuse the SSO session)", n)
+	}
+
+	infoA := map[string]any(verifyAccessToken(t, appA, a.Access))
+	infoB := map[string]any(verifyAccessToken(t, appB, bb.Access))
+	if infoA["sid"] == nil || infoA["sid"] != infoB["sid"] {
+		t.Fatalf("both apps must hang off the same SSO session: %v vs %v", infoA["sid"], infoB["sid"])
+	}
+
+	resp := b.logout()
+	wantStatus(t, resp, 200)
+	drain(resp)
+
+	// nothing issued under the session can be refreshed or used against userinfo any more
+	for _, tk := range []string{a.Access, bb.Access} {
+		if status, _ := userinfoStatus(t, tk); status != http.StatusUnauthorized {
+			t.Errorf("userinfo after logout = %d", status)
+		}
+	}
+	refreshRefused(t, appA, secA, a.Refresh)
+	refreshRefused(t, appB, secB, bb.Refresh)
+	r2 := b.get("/api/v1/me")
+	wantStatus(t, r2, http.StatusUnauthorized)
+	drain(r2)
+
+	// both apps are told, with a correct signed logout token
+	for _, c := range []struct {
+		app  db.App
+		ch   <-chan string
+		info map[string]any
+	}{{appA, tokensA, infoA}, {appB, tokensB, infoB}} {
+		raw := waitToken(t, c.ch)
+		lt := parseJWT(t, raw, jwt.WithIssuer(testIssuer), jwt.WithAudience(c.app.ClientID))
+		claims := lt.Claims.(jwt.MapClaims)
+		if lt.Header["typ"] != "logout+jwt" {
+			t.Errorf("typ = %v", lt.Header["typ"])
+		}
+		if claims["sub"] != user.ID || claims["sid"] != c.info["sid"] || str(claims["jti"]) == "" {
+			t.Errorf("logout token claims = %v", claims)
+		}
+		if _, has := claims["nonce"]; has {
+			t.Error("a logout token must not contain a nonce")
+		}
+		events, _ := claims["events"].(map[string]any)
+		if _, ok := events["http://schemas.openid.net/event/backchannel-logout"]; !ok {
+			t.Errorf("events = %v", claims["events"])
+		}
+		if exp, iat := claims["exp"].(float64), claims["iat"].(float64); exp-iat > 180 {
+			t.Errorf("logout token lives %vs, should be short", exp-iat)
+		}
+	}
+
+	// no SSO session left: the next authorization asks for a login again
+	resp = b.get("/authorize?" + authParams{app: appA, challenge: strings.Repeat("a", 43)}.values().Encode())
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/login?") {
+		t.Errorf("after logout /authorize redirected to %q", loc)
+	}
+	drain(resp)
+}
+
+// Covers: M1
+func TestE2EAuthorizationCodeAndPKCE(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	other, otherSecret := testutil.CreateApp(t, "other", testutil.AppOptions{FirstParty: true})
+	b := newBrowser(t)
+
+	newCode := func() (code, verifier string) {
+		v, ch := newPKCE(t)
+		cb := b.authorizeCallback(authParams{app: app, state: "s", challenge: ch}.values(), "alice")
+		return cb.Query().Get("code"), v
+	}
+	exchange := func(a db.App, sec, code, verifier, redirect string) (int, map[string]any) {
+		form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}}
+		if verifier != "" {
+			form.Set("code_verifier", verifier)
+		}
+		return tokenRequest(t, a, sec, form)
+	}
+	redirect := app.RedirectURIs[0]
+
+	// wrong verifier: rejected, and the code is burned
+	code, verifier := newCode()
+	if status, m := exchange(app, secret, code, verifier+"x", redirect); status != 400 || m["error"] != "invalid_grant" {
+		t.Errorf("wrong verifier: %d %v", status, m)
+	}
+	if status, _ := exchange(app, secret, code, verifier, redirect); status != 400 {
+		t.Error("a code must be unusable after a failed attempt")
+	}
+
+	// missing verifier
+	code, _ = newCode()
+	if status, _ := exchange(app, secret, code, "", redirect); status != 400 {
+		t.Error("exchange without the PKCE verifier succeeded")
+	}
+
+	// success once, never twice
+	code, verifier = newCode()
+	if status, m := exchange(app, secret, code, verifier, redirect); status != 200 || m["access_token"] == nil {
+		t.Fatalf("valid exchange: %d %v", status, m)
+	}
+	if status, m := exchange(app, secret, code, verifier, redirect); status != 400 || m["error"] != "invalid_grant" {
+		t.Errorf("code replay: %d %v", status, m)
+	}
+
+	// bound to the redirect_uri and to the client
+	code, verifier = newCode()
+	if status, _ := exchange(app, secret, code, verifier, "https://billing.test/other"); status != 400 {
+		t.Error("redirect_uri mismatch accepted")
+	}
+	code, verifier = newCode()
+	if status, _ := exchange(other, otherSecret, code, verifier, redirect); status != 400 {
+		t.Error("another client redeemed the code")
+	}
+
+	// unsupported grants
+	for _, g := range []string{"password", "client_credentials", "implicit", ""} {
+		if status, m := tokenRequest(t, app, secret, url.Values{"grant_type": {g}, "username": {"alice"}, "password": {testutil.DefaultPassword}}); status != 400 || m["error"] != "unsupported_grant_type" {
+			t.Errorf("grant %q: %d %v", g, status, m)
+		}
+	}
+}
+
+func TestE2ETokenEndpointResponsesAreNotCacheable(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	b := newBrowser(t)
+	verifier, ch := newPKCE(t)
+	cb := b.authorizeCallback(authParams{app: app, state: "s", challenge: ch}.values(), "alice")
+
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {cb.Query().Get("code")}, "redirect_uri": {app.RedirectURIs[0]}, "code_verifier": {verifier}}
+	req, _ := http.NewRequest("POST", pubSrv.URL+"/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(app.ClientID, secret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, resp, 200)
+	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Pragma") != "no-cache" {
+		t.Errorf("token responses must not be cached: %v", resp.Header)
+	}
+	drain(resp)
+}
+
+func TestE2EPublicClientsUsePKCEWithoutASecret(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	spa, _ := testutil.CreateApp(t, "spa", testutil.AppOptions{Public: true, FirstParty: true})
+	b := newBrowser(t)
+
+	tok := b.signIn(spa, "", "alice", "openid profile offline_access")
+	verifyAccessToken(t, spa, tok.Access)
+	if tok.Raw["refresh_token"] != nil {
+		t.Errorf("an app without a secret must get no refresh token, even when it asks: %v", tok.Raw)
+	}
+	// without a code_challenge a public client is refused at /authorize
+	cb := b.authorizeCallback(authParams{app: spa, state: "s"}.values(), "alice")
+	if cb.Query().Get("error") != "invalid_request" {
+		t.Errorf("missing PKCE: %s", cb)
+	}
+	// it cannot use the refresh grant or the revocation endpoint
+	if status, body := refreshRequest(t, spa, "", "anything"); status != http.StatusBadRequest || body["error"] != "unsupported_grant_type" {
+		t.Errorf("public client refresh = %d %v", status, body)
+	}
+	resp, err := http.Post(pubSrv.URL+"/revoke", "application/x-www-form-urlencoded",
+		strings.NewReader(url.Values{"client_id": {spa.ClientID}, "token": {"x"}}.Encode()))
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("public client revoke must be 401")
+	}
+	if resp != nil {
+		drain(resp)
+	}
+}
+
+func TestE2ERefreshTokensAreStableAndRecheckEverything(t *testing.T) {
+	testutil.Reset(t)
+	user := testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	other, otherSecret := testutil.CreateApp(t, "other", testutil.AppOptions{FirstParty: true})
+	b := newBrowser(t)
+
+	tok := b.signIn(app, secret, "alice", "openid profile")
+	if status, _ := refreshRequest(t, other, otherSecret, tok.Refresh); status != 400 {
+		t.Error("another client used the refresh token")
+	}
+
+	// the refresh token stays the same; each refresh gives a new access token and a new ID token
+	first := refreshed(t, app, secret, tok.Refresh)
+	if first.Refresh != "" {
+		t.Error("a refresh must not hand out another refresh token")
+	}
+	if first.Access == tok.Access || first.ID == "" {
+		t.Error("a refresh must issue a new access token and an ID token")
+	}
+	verifyAccessToken(t, app, first.Access)
+	id := parseJWT(t, first.ID, jwt.WithAudience(app.ClientID)).Claims.(jwt.MapClaims)
+	if id["sub"] != user.ID || id["preferred_username"] != "alice" {
+		t.Errorf("ID token from a refresh = %v", id)
+	}
+	if _, has := id["nonce"]; has {
+		t.Error("an ID token from a refresh must not repeat the nonce")
+	}
+
+	// several uses at the same moment all succeed: replicas of an app, or a retry after a lost answer
+	var wg sync.WaitGroup
+	statuses := make(chan int, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			status, _ := refreshRequest(t, app, secret, tok.Refresh)
+			statuses <- status
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	for s := range statuses {
+		if s != 200 {
+			t.Errorf("a concurrent refresh got %d", s)
+		}
+	}
+
+	// profile changes show up at the next refresh
+	if _, err := db.UpdateProfile(db.Account{ID: user.ID, DisplayName: "Alice Renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if id := parseJWT(t, refreshed(t, app, secret, tok.Refresh).ID).Claims.(jwt.MapClaims); id["name"] != "Alice Renamed" {
+		t.Errorf("the refreshed ID token still says %v", id["name"])
+	}
+
+	// the app can end its own refresh token (RFC 7009); unknown tokens get the same answer
+	revoke := func(token, secretToUse string) int {
+		req, _ := http.NewRequest("POST", pubSrv.URL+"/revoke", strings.NewReader(url.Values{"token": {token}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth(app.ClientID, secretToUse)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drain(resp)
+		return resp.StatusCode
+	}
+	if s := revoke(tok.Refresh, "wrong"); s != http.StatusUnauthorized {
+		t.Errorf("revoke with a wrong secret = %d", s)
+	}
+	refreshed(t, app, secret, tok.Refresh) // still fine
+	if s := revoke("not-a-real-token", secret); s != 200 {
+		t.Errorf("revoking an unknown token = %d, want 200", s)
+	}
+	if s := revoke(tok.Refresh, secret); s != 200 {
+		t.Errorf("revoke = %d", s)
+	}
+	refreshRefused(t, app, secret, tok.Refresh)
+	// ending one app's token leaves the Guardian session alone
+	me := b.get("/api/v1/me")
+	wantStatus(t, me, 200)
+	drain(me)
+
+	// a disabled account cannot refresh
+	fresh := b.signIn(app, secret, "alice", "openid")
+	testutil.Exec(t, `UPDATE account SET status = 'disabled' WHERE id = $1`, user.ID)
+	refreshRefused(t, app, secret, fresh.Refresh)
+}
+
+func TestE2ESessionTimeoutsEndRefreshes(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+
+	// idle: not used for longer than SESSION_IDLE_TIMEOUT (30 minutes in these tests)
+	b := newBrowser(t)
+	tok := b.signIn(app, secret, "alice", "openid")
+	sid := str(verifyAccessToken(t, app, tok.Access)["sid"])
+	testutil.Exec(t, `UPDATE session SET last_seen_at = now() - interval '31 minutes' WHERE id = $1`, sid)
+	refreshRefused(t, app, secret, tok.Refresh)
+	if status, _ := userinfoStatus(t, tok.Access); status != http.StatusUnauthorized {
+		t.Errorf("userinfo for an idle session = %d", status)
+	}
+
+	// refreshing counts as use: an app that keeps refreshing keeps the session alive
+	b = newBrowser(t)
+	tok = b.signIn(app, secret, "alice", "openid")
+	sid = str(verifyAccessToken(t, app, tok.Access)["sid"])
+	testutil.Exec(t, `UPDATE session SET last_seen_at = now() - interval '25 minutes' WHERE id = $1`, sid)
+	refreshed(t, app, secret, tok.Refresh)
+	if n := testutil.Count(t, `SELECT count(*) FROM session WHERE id = $1 AND last_seen_at > now() - interval '1 minute'`, sid); n != 1 {
+		t.Error("a refresh did not count as use of the session")
+	}
+
+	// absolute: past SESSION_MAX_LIFETIME nothing helps, however active the session is
+	testutil.Exec(t, `UPDATE session SET expires_at = now() - interval '1 second' WHERE id = $1`, sid)
+	refreshRefused(t, app, secret, tok.Refresh)
+}
+
+// Covers: V4
+func TestE2EAuthorizeRequestValidation(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	_, challenge := newPKCE(t)
+	b := newBrowser(t)
+	good := func() authParams { return authParams{app: app, state: "st-9", challenge: challenge} }
+
+	// problems with client_id / redirect_uri are shown to the user and NEVER redirected to
+	unredirectable := map[string]url.Values{
+		"unknown client": func() url.Values {
+			v := good().values()
+			v.Set("client_id", "11111111-1111-1111-1111-111111111111")
+			return v
+		}(),
+		"malformed client":         func() url.Values { v := good().values(); v.Set("client_id", "nope"); return v }(),
+		"unregistered redirect":    authParams{app: app, state: "s", challenge: challenge, redirect: "https://evil.example/cb"}.values(),
+		"redirect with extra path": authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback/x"}.values(),
+		"redirect with query":      authParams{app: app, state: "s", challenge: challenge, redirect: "https://billing.test/callback?x=1"}.values(),
+		"redirect with other case": authParams{app: app, state: "s", challenge: challenge, redirect: "https://BILLING.test/callback"}.values(),
+	}
+	for name, v := range unredirectable {
+		resp := b.get("/authorize?" + v.Encode())
+		if resp.StatusCode != http.StatusBadRequest || resp.Header.Get("Location") != "" {
+			t.Errorf("%s: status %d, Location %q (must be a 400 page, never a redirect)", name, resp.StatusCode, resp.Header.Get("Location"))
+		}
+		drain(resp)
+	}
+
+	// everything else is reported to the client's redirect_uri, with state and iss
+	redirected := map[string]struct {
+		mutate func(v url.Values)
+		want   string
+	}{
+		"implicit flow":         {func(v url.Values) { v.Set("response_type", "token") }, "unsupported_response_type"},
+		"missing openid scope":  {func(v url.Values) { v.Set("scope", "profile") }, "invalid_scope"},
+		"scope the app lacks":   {func(v url.Values) { v.Set("scope", "openid phone") }, "invalid_scope"},
+		"no PKCE challenge":     {func(v url.Values) { v.Del("code_challenge"); v.Del("code_challenge_method") }, "invalid_request"},
+		"plain PKCE":            {func(v url.Values) { v.Set("code_challenge_method", "plain") }, "invalid_request"},
+		"short challenge":       {func(v url.Values) { v.Set("code_challenge", "short") }, "invalid_request"},
+		"negative max_age":      {func(v url.Values) { v.Set("max_age", "-1") }, "invalid_request"},
+		"non-numeric max_age":   {func(v url.Values) { v.Set("max_age", "abc") }, "invalid_request"},
+		"prompt none, no login": {func(v url.Values) { v.Set("prompt", "none") }, "login_required"},
+	}
+	for name, c := range redirected {
+		v := good().values()
+		c.mutate(v)
+		resp := b.get("/authorize?" + v.Encode())
+		loc := resp.Header.Get("Location")
+		drain(resp)
+		u, err := url.Parse(loc)
+		if resp.StatusCode != http.StatusFound || err != nil || !strings.HasPrefix(loc, "https://billing.test/callback?") {
+			t.Errorf("%s: status %d, Location %q", name, resp.StatusCode, loc)
+			continue
+		}
+		q := u.Query()
+		if q.Get("error") != c.want || q.Get("state") != "st-9" || q.Get("iss") != testIssuer || q.Get("code") != "" {
+			t.Errorf("%s: callback query = %v, want error=%s with state and iss", name, q, c.want)
+		}
+	}
+}
+
+// The session signed in a moment before the request, so a leeway would wrongly count it as fresh.
+func TestE2EPromptAndMaxAgeForceReauthentication(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, _ := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	_, challenge := newPKCE(t)
+	b := newBrowser(t)
+	b.mustLogin("alice")
+
+	ok := b.get("/authorize?" + authParams{app: app, state: "s", challenge: challenge, extra: url.Values{"prompt": {"none"}}}.values().Encode())
+	if !strings.Contains(ok.Header.Get("Location"), "code=") {
+		t.Errorf("prompt=none with a session should issue a code, got %q", ok.Header.Get("Location"))
+	}
+	drain(ok)
+
+	for name, extra := range map[string]url.Values{"prompt=login": {"prompt": {"login"}}, "max_age=0": {"max_age": {"0"}}} {
+		resp := b.get("/authorize?" + authParams{app: app, state: "s", challenge: challenge, extra: extra}.values().Encode())
+		loc := resp.Header.Get("Location")
+		drain(resp)
+		if !strings.HasPrefix(loc, "/login?") {
+			t.Fatalf("%s: expected a login redirect, got %q", name, loc)
+		}
+		u, _ := url.Parse(loc)
+		returnTo := u.Query().Get("return_to")
+		if !strings.Contains(returnTo, "login_after=") {
+			t.Errorf("%s: return_to %q does not say when the sign-in was asked for, so it would loop", name, returnTo)
+		}
+		if !strings.Contains(loc, "again=1") {
+			t.Errorf("%s: the sign-in page is not told to show its form despite the session: %q", name, loc)
+		}
+		// Coming back without signing in again still asks for it: the session is older than the request.
+		if again := b.get(returnTo); !strings.HasPrefix(again.Header.Get("Location"), "/login?") {
+			t.Errorf("%s: the marked request went on without a fresh sign-in: %q", name, again.Header.Get("Location"))
+		} else {
+			drain(again)
+		}
+		lr := b.login("alice", testutil.DefaultPassword, returnTo)
+		wantStatus(t, lr, http.StatusSeeOther)
+		drain(lr)
+		final := b.get(returnTo)
+		if !strings.Contains(final.Header.Get("Location"), "code=") {
+			t.Errorf("%s: no code after re-authentication: %q", name, final.Header.Get("Location"))
+		}
+		drain(final)
+	}
+}
+
+// Covers: U1
+func TestE2EConsentFlowForThirdPartyApps(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "thirdparty", testutil.AppOptions{
+		Scopes: []string{"openid", "profile", "email", "groups"}})
+	b := newBrowser(t)
+	b.mustLogin("alice")
+	_, ch := newPKCE(t)
+	query := func(scope string, extra url.Values) string {
+		return "/authorize?" + authParams{app: app, scope: scope, state: "s", challenge: ch, extra: extra}.values().Encode()
+	}
+
+	// first request: a consent page that names the app and the data requested
+	resp := b.get(query("openid email", nil))
+	wantStatus(t, resp, 200)
+	page := readBody(t, resp)
+	for _, want := range []string{"App thirdparty", "Your email address", "Who you are: your account id"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("consent page lacks %q", want)
+		}
+	}
+	csrf := csrfRe.FindStringSubmatch(page)[1]
+	req := html.UnescapeString(reqRe.FindStringSubmatch(page)[1])
+
+	// consent forms are CSRF-protected
+	bad := b.postForm("/consent", url.Values{"req": {req}, "decision": {"allow"}})
+	wantStatus(t, bad, http.StatusForbidden)
+	drain(bad)
+
+	// deny: the client hears access_denied
+	deny := b.postForm("/consent", url.Values{"csrf": {csrf}, "req": {req}, "decision": {"deny"}})
+	loc := deny.Header.Get("Location")
+	drain(deny)
+	if !strings.Contains(loc, "error=access_denied") || !strings.Contains(loc, "state=s") {
+		t.Errorf("deny redirected to %q", loc)
+	}
+	if testutil.Count(t, `SELECT count(*) FROM account_consent`) != 0 {
+		t.Error("a denial must not store consent")
+	}
+
+	// allow: stored, then the flow continues and yields a code
+	allow := b.postForm("/consent", url.Values{"csrf": {csrf}, "req": {req}, "decision": {"allow"}})
+	wantStatus(t, allow, http.StatusSeeOther)
+	next := allow.Header.Get("Location")
+	drain(allow)
+	if !strings.HasPrefix(next, "/authorize?") {
+		t.Fatalf("after consent: %q", next)
+	}
+	done := b.get(next)
+	if !strings.Contains(done.Header.Get("Location"), "code=") {
+		t.Errorf("no code after consent: %q", done.Header.Get("Location"))
+	}
+	drain(done)
+
+	// the same scopes are not asked again; more scopes are; prompt=consent asks again
+	again := b.get(query("openid email", nil))
+	if !strings.Contains(again.Header.Get("Location"), "code=") {
+		t.Errorf("repeat request should not prompt, status %d", again.StatusCode)
+	}
+	drain(again)
+	more := b.get(query("openid email groups", nil))
+	wantStatus(t, more, 200)
+	drain(more)
+	forced := b.get(query("openid email", url.Values{"prompt": {"consent"}}))
+	wantStatus(t, forced, 200)
+	drain(forced)
+	silent := b.get(query("openid email groups", url.Values{"prompt": {"none"}}))
+	if !strings.Contains(silent.Header.Get("Location"), "error=consent_required") {
+		t.Errorf("prompt=none without consent: %q", silent.Header.Get("Location"))
+	}
+	drain(silent)
+	_ = secret
+}
+
+// Covers: U5
+func TestE2ERPInitiatedLogout(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	testutil.CreateAccount(t, "mallory")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	logoutURL := func(hint, redirect, state, clientID string) string {
+		v := url.Values{}
+		for k, val := range map[string]string{"id_token_hint": hint, "post_logout_redirect_uri": redirect, "state": state, "client_id": clientID} {
+			if val != "" {
+				v.Set(k, val)
+			}
+		}
+		return "/logout?" + v.Encode()
+	}
+	loggedIn := func(b *browser) bool {
+		resp := b.get("/api/v1/me")
+		defer drain(resp)
+		return resp.StatusCode == 200
+	}
+
+	// a valid hint for this user logs out immediately and redirects to the registered URI with state
+	b := newBrowser(t)
+	tok := b.signIn(app, secret, "alice", "openid")
+	resp := b.get(logoutURL(tok.ID, "https://billing.test/", "xyz", ""))
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "https://billing.test/?state=xyz" {
+		t.Errorf("status %d, Location %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	drain(resp)
+	if loggedIn(b) {
+		t.Error("still logged in after RP-initiated logout")
+	}
+
+	// an unregistered redirect URI is never followed (but the logout still happens)
+	b = newBrowser(t)
+	tok = b.signIn(app, secret, "alice", "openid")
+	resp = b.get(logoutURL(tok.ID, "https://evil.example/", "s", ""))
+	if resp.StatusCode != 200 || resp.Header.Get("Location") != "" {
+		t.Errorf("unregistered redirect: status %d, Location %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	drain(resp)
+	if loggedIn(b) {
+		t.Error("logout with a valid hint must still happen")
+	}
+
+	// a forged / foreign / access-token hint must not log anyone out without confirmation
+	b = newBrowser(t)
+	tok = b.signIn(app, secret, "alice", "openid")
+	mb := newBrowser(t)
+	mtok := mb.signIn(app, secret, "mallory", "openid")
+	for name, hint := range map[string]string{"garbage": "not.a.jwt", "someone else's ID token": mtok.ID, "an access token": tok.Access} {
+		resp := b.get(logoutURL(hint, "https://billing.test/", "s", ""))
+		page := readBody(t, resp)
+		if resp.StatusCode != 200 || !strings.Contains(page, `action="/logout"`) {
+			t.Errorf("%s: expected a confirmation page, got %d", name, resp.StatusCode)
+		}
+		if !loggedIn(b) {
+			t.Fatalf("%s: the session was ended without confirmation", name)
+		}
+	}
+
+	// an ID token that has expired is still a valid hint
+	b = newBrowser(t)
+	short := b.signIn(app, secret, "alice", "openid")
+	old := parseJWT(t, short.ID).Claims.(jwt.MapClaims)
+	old["iat"], old["exp"] = time.Now().Add(-2*time.Hour).Unix(), time.Now().Add(-time.Hour).Unix()
+	expiredHint, err := testKeys.Sign("RS256", old, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jwt.Parse(expiredHint, testKeys.Keyfunc, jwt.WithValidMethods([]string{"RS256"})); err == nil {
+		t.Fatal("test setup: the ID token should have expired")
+	}
+	resp = b.get(logoutURL(expiredHint, "https://billing.test/", "late", ""))
+	if resp.Header.Get("Location") != "https://billing.test/?state=late" {
+		t.Errorf("expired hint: Location %q", resp.Header.Get("Location"))
+	}
+	drain(resp)
+
+	// without a session, a registered redirect given via client_id still works
+	resp = newBrowser(t).get(logoutURL("", "https://billing.test/", "q", app.ClientID))
+	if resp.Header.Get("Location") != "https://billing.test/?state=q" {
+		t.Errorf("anonymous logout redirect: %q", resp.Header.Get("Location"))
+	}
+	drain(resp)
+}
+
+// Covers: A21, M1
+func TestE2EDiscoveryAndJWKS(t *testing.T) {
+	testutil.Reset(t)
+	testutil.CreateAccount(t, "alice")
+	app, secret := testutil.CreateApp(t, "billing", testutil.AppOptions{FirstParty: true})
+	b := newBrowser(t)
+
+	resp := b.get("/.well-known/openid-configuration")
+	wantStatus(t, resp, 200)
+	disc := decodeMap(t, resp)
+	if disc["issuer"] != testIssuer || disc["jwks_uri"] != testIssuer+"/jwks.json" ||
+		disc["revocation_endpoint"] != testIssuer+"/revoke" || disc["introspection_endpoint"] != nil {
+		t.Errorf("discovery = %v", disc)
+	}
+
+	resp = b.get("/jwks.json")
+	wantStatus(t, resp, 200)
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "max-age") {
+		t.Errorf("JWKS should be cacheable, Cache-Control = %q", cc)
+	}
+	var jwks struct {
+		Keys []map[string]string `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(readBody(t, resp)), &jwks); err != nil || len(jwks.Keys) == 0 {
+		t.Fatalf("JWKS: %v %v", jwks, err)
+	}
+	for _, k := range jwks.Keys {
+		for _, private := range []string{"d", "p", "q", "dp", "dq", "qi"} {
+			if _, leaked := k[private]; leaked {
+				t.Fatalf("JWKS leaks private key material (%s)", private)
+			}
+		}
+	}
+
+	// a relying party can verify an ID token using ONLY what is published
+	tok := b.signIn(app, secret, "alice", "openid")
+	idt, _, err := jwt.NewParser().ParseUnverified(tok.ID, jwt.MapClaims{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid, _ := idt.Header["kid"].(string)
+	var pub *rsa.PublicKey
+	for _, k := range jwks.Keys {
+		if k["kid"] == kid {
+			n, _ := base64.RawURLEncoding.DecodeString(k["n"])
+			e, _ := base64.RawURLEncoding.DecodeString(k["e"])
+			pub = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(e).Int64())}
+		}
+	}
+	if pub == nil {
+		t.Fatalf("the ID token's kid %q is not published in the JWKS", kid)
+	}
+	if _, err := jwt.Parse(tok.ID, func(*jwt.Token) (any, error) { return pub, nil }, jwt.WithValidMethods([]string{"RS256"})); err != nil {
+		t.Errorf("ID token does not verify against the published JWKS: %v", err)
+	}
+}

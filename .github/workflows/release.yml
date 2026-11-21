@@ -1,0 +1,116 @@
+name: release
+# A tag vX.Y.Z (or vX.Y.Z-rc.1 and the like) publishes Guardian, after the same checks that run on every
+# push: the backend and frontend images to GitHub's container registry for amd64 and arm64, and the chart as an OCI
+# artifact, both versioned X.Y.Z; then a GitHub release with generated notes. A tag with a "-" is a
+# prerelease and does not move the image's "latest" tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      owner: ${{ steps.v.outputs.owner }}
+    steps:
+      - id: v
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if ! echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$GITHUB_REF_NAME is not a release tag (vX.Y.Z or vX.Y.Z-suffix)"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$v" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+          # Registry paths must be lowercase.
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+  backend:
+    uses: ./.github/workflows/backend.yml
+  frontend:
+    uses: ./.github/workflows/frontend.yml
+  chart:
+    uses: ./.github/workflows/chart.yml
+
+  image:
+    strategy:
+      matrix:
+        part: [backend, frontend]
+    needs: [version, backend, frontend, chart]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ needs.version.outputs.owner }}/guardian-${{ matrix.part }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.version.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=guardian-${{ matrix.part }}
+            org.opencontainers.image.description=Guardian, an OIDC login service with accounts and groups
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.part }}
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ needs.version.outputs.version }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+  chart-publish:
+    needs: [version, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Package the chart with the release's version
+        run: helm package charts/guardian --version "${{ needs.version.outputs.version }}" --app-version "${{ needs.version.outputs.version }}" -d dist
+      - name: Push it to ghcr.io/<owner>/charts/guardian
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "dist/guardian-${{ needs.version.outputs.version }}.tgz" "oci://ghcr.io/${{ needs.version.outputs.owner }}/charts"
+
+  github-release:
+    needs: [version, chart-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ needs.version.outputs.owner }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          flags=""
+          if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then flags="--prerelease"; fi
+          notes=$(printf 'Images: `ghcr.io/%s/guardian-backend:%s`, `ghcr.io/%s/guardian-frontend:%s`\n\nChart: `helm install guardian oci://ghcr.io/%s/charts/guardian --version %s`\n' "$OWNER" "$VERSION" "$OWNER" "$VERSION" "$OWNER" "$VERSION")
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Guardian $VERSION" \
+            --notes "$notes" --generate-notes $flags

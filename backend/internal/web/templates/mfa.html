@@ -1,0 +1,38 @@
+{{define "content"}}
+      <h1>Two-factor</h1>
+      {{if .Key}}
+      <p class="sub">Use your security key or passkey. When your browser asks, touch the key, or unlock with your fingerprint, face or PIN.</p>
+      {{template "error-banner" .}}
+      <form method="post" action="/mfa" data-webauthn="get" data-options="{{.KeyOptions}}">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="method" value="key">
+        <input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="credential">
+        <button class="button" type="submit" autofocus>{{template "icon-key"}}Use security key</button>
+        <p class="field-error center" data-webauthn-error role="alert" hidden></p>
+        <noscript><p class="field-error center">Security keys need JavaScript. Use another way below.</p></noscript>
+      </form>
+      {{else}}
+      <p class="sub">{{if .Recovery}}Enter one of the recovery codes you saved. Each code works once.{{else}}Enter the 6-digit code from your authenticator app.{{end}}</p>
+      {{template "error-banner" .}}
+      <form method="post" action="/mfa">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        {{if .Recovery}}
+        <input type="hidden" name="method" value="recovery">
+        <label for="code">Recovery code</label>
+        <input class="text" id="code" name="code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="xxxx-xxxx" required autofocus{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{else}}
+        <label for="code">Code</label>
+        <input class="text code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" placeholder="000000" required autofocus{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{end}}
+        {{with .FieldErrors.code}}<p class="field-error" id="code-error">{{.}}</p>{{end}}
+        <button class="button" type="submit">Verify</button>
+      </form>
+      {{end}}
+      <p class="small others">
+        {{if and .HasKeys (not .Key)}}<a href="/mfa?key">Use a security key</a>{{end}}
+        {{if and .HasTOTP (or .Key .Recovery)}}<a href="/mfa?code">Use the authenticator app</a>{{end}}
+        {{if not .Recovery}}<a href="/mfa?recovery">Use a recovery code</a>{{end}}
+      </p>
+      <form class="small" method="post" action="/mfa/cancel">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link-button" type="submit">Sign out</button>
+      </form>
+{{end}}

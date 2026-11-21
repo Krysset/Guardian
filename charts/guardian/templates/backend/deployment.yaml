@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guardian.fullname" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "guardian.backendSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "guardian.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+        guardian.dev/database-client: "true"
+      annotations:
+        # Roll the pods when the non-secret settings change.
+        checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      # Draining (5 s), finishing requests (15 s) and flushing queued emails (10 s): see server.Run.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backend
+          image: {{ include "guardian.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "guardian.fullname" . }}
+          env:
+            # The keyring is a mounted file, so a changed Secret reaches Guardian without a restart
+            # (Kubernetes updates the file within a minute or two; Guardian rereads it every minute).
+            - name: KEY_ENCRYPTION_KEYS_FILE
+              value: /etc/guardian/keyring/keys
+            - name: ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.keys.adminInitialPassword }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardian.dbPasswordSecret" . }}
+                  key: {{ .Values.database.passwordKey }}
+            {{- if and .Values.config.mail.host .Values.config.mail.username }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.keys.smtpPassword }}
+            {{- end }}
+          ports:
+            - name: public
+              containerPort: 3001
+            - name: internal
+              containerPort: 3002
+          # The listeners start once the database is reachable and migrated (by the pod itself, or by the
+          # migration Job), which can take a while on a first install with the bundled Postgres.
+          startupProbe:
+            httpGet: { path: /healthz, port: internal }
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /healthz, port: internal }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: internal }
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: keyring
+              mountPath: /etc/guardian/keyring
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "guardian.keyringVolume" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

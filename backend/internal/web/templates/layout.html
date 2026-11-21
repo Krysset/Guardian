@@ -1,0 +1,47 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}} · Guardian</title>
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{asset "guardian.css"}}">
+</head>
+<body>
+<div class="root">
+  <main class="bar{{block "bar" .}}{{end}}">
+    <div class="logo" role="img" aria-label="Guardian"></div>
+    <div class="content">
+{{template "content" .}}
+    </div>
+    <footer>{{with footer}}{{if .HelpURL}}<a href="{{.HelpURL}}">Help</a>{{end}}{{if .PrivacyURL}}<a href="{{.PrivacyURL}}">Privacy</a>{{end}}{{end}}<span>Powered by Guardian</span></footer>
+  </main>
+</div>
+<script src="{{asset "guardian.js"}}"></script>
+</body>
+</html>
+{{end}}
+
+{{define "icon-warn"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"></path></svg>{{end}}
+
+{{define "icon-ok"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>{{end}}
+
+{{define "icon-info"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>{{end}}
+
+{{define "icon-key"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M10.8 12.2 20 3M17 6l3 3M14 9l2 2"></path></svg>{{end}}
+
+{{define "notice-banner"}}{{if .Notice}}<div class="message ok" role="status">{{template "icon-ok"}}<span>{{.Notice}}</span></div>{{end}}{{end}}
+
+{{define "error-banner"}}{{if .Error}}<div class="message error" role="alert">{{template "icon-warn"}}<span>{{.Error}}</span></div>{{end}}{{end}}
+
+{{define "pow"}}{{with .PoW}}<input type="hidden" name="pow" value="{{.Token}}" data-pow-salt="{{.Salt}}" data-pow-challenge="{{.Challenge}}" data-pow-max="{{.Max}}"><input type="hidden" name="pow_number" value="">
+        <p class="small pow" data-pow-status hidden>Checking that you're a person…</p>
+        <noscript><div class="message">{{template "icon-info"}}<span>This form needs JavaScript, which checks that a person and not a program sends it.</span></div></noscript>{{end}}{{end}}
+
+{{define "hidden-flow"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{if .ReturnTo}}<input type="hidden" name="return_to" value="{{.ReturnTo}}">{{end}}{{end}}
+
+{{define "password"}}<div class="password"><input class="text" id="{{.ID}}" name="{{.ID}}" type="password" autocomplete="{{.Autocomplete}}" required{{if .Error}} aria-invalid="true" aria-describedby="{{.ID}}-error"{{else if .Hint}} aria-describedby="{{.ID}}-hint"{{end}}></div>
+{{if .Error}}<p class="field-error" id="{{.ID}}-error">{{.Error}}</p>{{end}}{{if .Hint}}<p class="hint" id="{{.ID}}-hint">{{.Hint}}</p>{{end}}{{end}}
+
+{{define "signout-to-switch"}}<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="return_to" value="{{.ReturnTo}}">{{end}}

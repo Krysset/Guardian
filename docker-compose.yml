@@ -1,45 +1,199 @@
-version: "1.0"
+# Local development only. The passwords and keys below are throwaway values: never reuse them anywhere else.
+#
+#   docker compose up --build
+#
+# Guardian:  http://localhost:3001  (sign in as "admin" with ADMIN_INITIAL_PASSWORD below; the first sign-in
+#            asks for a new password. After `docker compose down -v` the initial password works again.)
+# Internal:  http://localhost:3002  (/metrics, /healthz, /readyz; bound to this machine only)
+# Management UI (0.4, while it is developed): run `npm install` once and then `npm run dev` in frontend/, and
+#            open http://localhost:3000. Vite serves /account and /admin and forwards everything else here.
+# Both images: http://localhost:3008  (docker compose --profile ui up --build: the frontend image behind a
+#            gateway that routes like the chart's HTTPRoute, so the images can be tried before a cluster)
+# Mailpit:   http://localhost:3003  (catches every email Guardian sends: confirmation and reset links)
+# Grafana:   http://localhost:3005  (optional test app: docker compose --profile grafana up; see docs/LOCAL-GRAFANA.md)
+# SonarQube: http://localhost:3006  (optional test app behind oauth2-proxy: docker compose --profile sonarqube up;
+#            see docs/LOCAL-SONARQUBE.md)
 
 services:
-  frontend:
-    container_name: guardian-frontend
-    image: guardian-frontend:latest
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
   backend:
     container_name: guardian-backend
-    image: guardian-backend:latest
+    image: guardian-backend:dev
     build:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      - GUARDIAN_DB_HOST=guardian-postgres
-      - GUARDIAN_DB_PORT=5432
-      - GUARDIAN_DB_USER=admin
-      - GUARDIAN_DB_PASSWORD=123
-      - GUARDIAN_DB_NAME=guardian
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: guardian
+      DB_PASSWORD: guardian-dev
+      DB_NAME: guardian
+      PUBLIC_ADDR: ":3001"
+      INTERNAL_ADDR: ":3002"
+      ISSUER_URL: http://localhost:3001
+      TRUSTED_PROXY_HOPS: "0"
+      # The management UI's dev server (npm run dev in frontend/) calls the API from this origin.
+      # The gateway of the "ui" profile (below) serves the frontend image from this one.
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3008
+      # Dev-only key (base64 of 32 bytes). Generate a real one with: openssl rand -base64 32
+      KEY_ENCRYPTION_KEYS: k1:ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtYW55d2hlcmU=
+      ADMIN_INITIAL_PASSWORD: guardian-dev-admin
+      # Email goes to Mailpit (http://localhost:3003), which catches everything and delivers nothing.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: none
+      MAIL_FROM: Local Guardian <no-reply@guardian.localhost>
     ports:
-      - "8010:8010"
+      - "3001:3001"
+      - "127.0.0.1:3002:3002"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
   postgres:
     container_name: guardian-postgres
-    image: postgres:latest
+    # Major version pinned on purpose: a new major cannot read the old data files.
+    image: postgres:16
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: 123
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: guardian-dev
       POSTGRES_DB: guardian
-      PGDATA: /data/postgres
     volumes:
-      - postgres-db:/data/postgres
+      - postgres-db:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    container_name: guardian-mailpit
+    image: axllent/mailpit:latest
+    ports:
+      # Host ports stay in the 3000 range next to Guardian. Windows often reserves ports such as 1025.
+      - "127.0.0.1:3003:8025"   # web UI
+      - "127.0.0.1:3004:1025"   # SMTP, for a backend run outside compose; inside compose use mailpit:1025
+
+  # The management UI's image (frontend/Dockerfile) and a gateway in front of both images, routing like the
+  # chart. Only started with --profile ui.
+  frontend:
+    container_name: guardian-frontend
+    image: guardian-frontend:dev
+    build:
+      context: ./frontend
+    profiles: ["ui"]
+    read_only: true
+    tmpfs: ["/tmp"]
+
+  gateway:
+    container_name: guardian-gateway
+    image: nginx:1.27-alpine
+    profiles: ["ui"]
+    volumes:
+      - ./docker/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:3008:8080"
+    depends_on:
+      - frontend
+      - backend
+
+  # A real app that signs in through Guardian, to check the whole flow by hand (docs/LOCAL-GRAFANA.md).
+  # Only started with --profile grafana, after the app is registered in Guardian and .env holds its client id
+  # and secret. The browser uses localhost:3001; Grafana's own server-to-server calls use backend:3001.
+  grafana:
+    container_name: guardian-grafana
+    image: grafana/grafana:11.3.0
+    profiles: ["grafana"]
+    environment:
+      GF_SERVER_ROOT_URL: http://localhost:3005
+      # Grafana's own built-in user is called "admin" too; rename it so Guardian's admin can sign in.
+      GF_SECURITY_ADMIN_USER: grafana-local-admin
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: Guardian
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${GRAFANA_CLIENT_ID:-set-GRAFANA_CLIENT_ID-in-.env}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_CLIENT_SECRET:-set-GRAFANA_CLIENT_SECRET-in-.env}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid profile email groups
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: http://localhost:3001/authorize
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://backend:3001/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: http://backend:3001/userinfo
+      GF_AUTH_GENERIC_OAUTH_AUTH_STYLE: InHeader
+      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH: preferred_username
+      GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH: name
+      # Guardian accounts may have no email; Grafana needs one, so fall back to a placeholder made from sub.
+      GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH: "email || join('@', [sub, 'guardian.invalid'])"
+      GF_AUTH_GENERIC_OAUTH_GROUPS_ATTRIBUTE_PATH: groups
+      # Members of grafana-admins become Grafana admins; everyone else Guardian lets in is a viewer.
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(groups[*], 'grafana-admins') && 'Admin' || 'Viewer'"
+      GF_AUTH_SIGNOUT_REDIRECT_URL: http://localhost:3001/logout?client_id=${GRAFANA_CLIENT_ID:-}&post_logout_redirect_uri=http://localhost:3005/login
+    ports:
+      - "127.0.0.1:3005:3000"
+    depends_on:
+      - backend
+
+  # SonarQube cannot sign in with OIDC itself any more, so oauth2-proxy signs in through Guardian and hands
+  # SonarQube the user in headers (docs/LOCAL-SONARQUBE.md). Only started with --profile sonarqube, after the
+  # app is registered in Guardian and .env holds its client id and secret. SonarQube has no port of its own:
+  # it must only be reachable through the proxy, or anyone could send the headers.
+  sonarqube-proxy:
+    container_name: guardian-sonarqube-proxy
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+    profiles: ["sonarqube"]
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_PROVIDER_DISPLAY_NAME: Guardian
+      OAUTH2_PROXY_CLIENT_ID: ${SONARQUBE_CLIENT_ID:-set-SONARQUBE_CLIENT_ID-in-.env}
+      OAUTH2_PROXY_CLIENT_SECRET: ${SONARQUBE_CLIENT_SECRET:-set-SONARQUBE_CLIENT_SECRET-in-.env}
+      # The browser uses localhost:3001; the proxy's own calls go to backend:3001, so discovery is skipped.
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://localhost:3001
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_LOGIN_URL: http://localhost:3001/authorize
+      OAUTH2_PROXY_REDEEM_URL: http://backend:3001/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://backend:3001/jwks.json
+      OAUTH2_PROXY_REDIRECT_URL: http://localhost:3006/oauth2/callback
+      OAUTH2_PROXY_SCOPE: openid profile email groups
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: groups
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      # Refresh through Guardian every minute: that is when group changes and lost access reach SonarQube.
+      OAUTH2_PROXY_COOKIE_REFRESH: 1m
+      OAUTH2_PROXY_COOKIE_NAME: _guardian_sonarqube
+      OAUTH2_PROXY_COOKIE_SECRET: dev-only-cookie-secret-32-bytes!
+      OAUTH2_PROXY_COOKIE_SECURE: "false"
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: http://sonarqube:9000
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+    ports:
+      - "127.0.0.1:3006:4180"
+    depends_on:
+      - backend
+      - sonarqube
+
+  sonarqube:
+    container_name: guardian-sonarqube
+    image: sonarqube:26.11.0.134175-community
+    profiles: ["sonarqube"]
+    environment:
+      # A throwaway local instance: skip Elasticsearch's production checks (vm.max_map_count) and use the
+      # embedded database.
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+      SONAR_WEB_SSO_ENABLE: "true"
+      SONAR_WEB_SSO_LOGINHEADER: X-Forwarded-Preferred-Username
+      SONAR_WEB_SSO_NAMEHEADER: X-Forwarded-Preferred-Username
+      SONAR_WEB_SSO_EMAILHEADER: X-Forwarded-Email
+      SONAR_WEB_SSO_GROUPSHEADER: X-Forwarded-Groups
+      # How often SonarQube rereads the name, email and groups from the headers (default 5 minutes).
+      SONAR_WEB_SSO_REFRESHINTERVALINMINUTES: "1"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
 
 volumes:
   postgres-db:
-    driver: local
+  sonarqube-data:

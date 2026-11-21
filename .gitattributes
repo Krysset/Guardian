@@ -1,0 +1,3 @@
+# Store text with LF in the repository on every platform; working copies follow each user's git settings.
+* text=auto
+*.png binary

@@ -1,0 +1,107 @@
+{{- if eq .Values.database.mode "bundled" }}
+{{- $pg := .Values.database.bundled }}
+# A single Postgres instance for development and small setups. Its disk claim is not deleted with the release.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "guardian.postgresName" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "guardian.postgresName" . }}-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "guardian.postgresSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "guardian.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ printf "%s:%s" $pg.image.repository $pg.image.tag | quote }}
+          imagePullPolicy: {{ $pg.image.pullPolicy }}
+          {{- with $pg.settings }}
+          args:
+            {{- range $name, $value := . }}
+            - "-c"
+            - {{ printf "%s=%v" $name $value | quote }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ $pg.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ $pg.name | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardian.dbPasswordSecret" . }}
+                  key: {{ .Values.database.passwordKey }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml $pg.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: run
+          emptyDir: {}
+      {{- with $pg.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pg.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pg.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  # Kept when the release is uninstalled (the default for StatefulSet claims); delete it by hand to wipe the data.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "guardian.postgresSelector" . | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $pg.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $pg.storage.size }}
+{{- end }}

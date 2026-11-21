@@ -1,0 +1,37 @@
+Guardian {{ .Chart.AppVersion }} is installed as "{{ include "guardian.fullname" . }}".
+
+Issuer (what apps use as the OIDC discovery base): {{ .Values.issuerURL }}
+  Discovery: {{ trimSuffix "/" .Values.issuerURL }}/.well-known/openid-configuration
+
+{{- if not (or .Values.httpRoute.enabled .Values.ingress.enabled) }}
+
+No route is enabled. Enable httpRoute or ingress, or try it with:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "guardian.fullname" . }} 3001
+{{- end }}
+{{- if .Values.frontend.enabled }}
+
+The management UI: {{ trimSuffix "/" .Values.issuerURL }}/ (Home), /account and /admin.
+{{- end }}
+{{- if eq .Values.migrations.mode "job" }}
+
+Migrations run in the Job "{{ include "guardian.fullname" . }}-migrate" before each install and upgrade.
+{{- end }}
+{{- if .Values.backup.enabled }}
+
+Backups: CronJob "{{ include "guardian.fullname" . }}-backup" ({{ .Values.backup.schedule }}), keeping {{ .Values.backup.keep }}.
+Copy them off the cluster, and keep the age private key and the keyring safe: a backup needs both.
+{{- end }}
+{{- if not .Values.config.mail.host }}
+
+Email is off (config.mail.host is empty): sign-up has no email field and only administrators reset passwords.
+{{- end }}
+
+Sign in as "admin" with the password in secret "{{ .Values.secrets.existingSecret }}"
+(key "{{ .Values.secrets.keys.adminInitialPassword }}"); the first sign-in asks for a new one.
+
+Metrics: svc/{{ include "guardian.fullname" . }}-internal, port 3002, path /metrics (inside the cluster only).
+{{- if eq .Values.database.mode "bundled" }}
+
+The bundled Postgres keeps its disk claim when the release is uninstalled. It is meant for development and
+small setups; use database.mode=external with a highly available Postgres for production.
+{{- end }}

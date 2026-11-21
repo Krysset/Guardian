@@ -1,0 +1,22 @@
+{{define "app-list"}}<ul class="apps">{{range .}}
+          <li><a class="app-link" href="{{.HomepageURL}}" rel="noopener">
+            <span class="app-logo small" aria-hidden="true">{{if .LogoURL}}<img src="{{.LogoURL}}" alt="">{{else}}{{initial .PrettyName}}{{end}}</span>
+            <span class="app-text"><strong>{{.PrettyName}}</strong>{{if .Description}}<span>{{.Description}}</span>{{end}}</span>
+          </a></li>{{end}}
+        </ul>{{end}}
+{{define "content"}}
+      <h1>Welcome to Guardian</h1>
+      <p class="who">Signed in as <strong>{{.Username}}</strong></p>
+      {{if .Connected}}
+      <div class="section"><div class="gets"><h2>Your connected apps</h2></div>
+        {{template "app-list" .Connected}}
+      </div>{{end}}
+      {{if .Available}}
+      <div class="section"><div class="gets"><h2>Available apps</h2></div>
+        <p class="hint">You may sign in to these but haven't yet.</p>
+        {{template "app-list" .Available}}
+      </div>{{end}}
+      {{if not (or .Connected .Available)}}
+      <div class="message note">No apps yet. Ask an administrator for access.</div>{{end}}
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="button alt" type="submit">Sign out</button></form>
+{{end}}

@@ -1,0 +1,2351 @@
+openapi: 3.1.0
+info:
+  title: Guardian API
+  version: 0.1.0
+  summary: Accounts, groups and apps of a Guardian deployment.
+  description: |
+    Guardian's JSON API. The OIDC endpoints (/authorize, /token, /userinfo, ...) are not part of it;
+    see docs/INTEGRATION.md and the discovery document at /.well-known/openid-configuration.
+
+    **Who may call what**
+    - Routes marked `sessionCookie` are for a signed-in browser (the management UI). State-changing requests
+      from another origin are refused unless the origin is listed in ALLOWED_ORIGINS.
+    - Most of them need membership of the `guardian-admins` group. Group owners (members of a group's
+      owner group) may see that group and manage its members.
+    - `/apps/self/...` is the machine API: an app calls it with its own client_credentials token.
+
+    **Conventions**
+    - JSON with snake_case names. Unknown request fields are refused with 400, so a misspelt field is
+      never silently ignored.
+    - Times are RFC 3339, in UTC.
+    - Lists are `{"items": [...]}`. Paged lists add `next_cursor`: pass it as `?cursor=` for the next
+      page; it is null on the last page.
+    - Errors are `{"error": "<code>", "message": "<text>"}`. Branch on `error`; `message` is for people.
+    - A successful DELETE, or a change with nothing to return, answers 204 without a body.
+    - Until 1.0 this API may change. From 1.0 it only changes in backwards-compatible ways within a
+      major version.
+  license:
+    name: See the repository
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+tags:
+  - name: me
+    description: The signed-in account.
+  - name: accounts
+    description: Accounts (administrators).
+  - name: groups
+    description: Groups and members (administrators, and group owners for members).
+  - name: apps
+    description: Apps, the OIDC clients (administrators).
+  - name: audit
+    description: The audit log (administrators).
+  - name: machine
+    description: An app's read-only view of its own groups and users, with a client_credentials token.
+
+paths:
+  /signup:
+    post:
+      tags: [me]
+      summary: Create an account
+      description: >-
+        Open to everyone, limited to 10 sign-ups per client IP per hour. Takes no email address: a sign-up with
+        one goes through the sign-up page, which waits for the confirmation link in the same browser. With
+        REQUIRE_EMAIL set, this route refuses every request (error email_required). It needs the answer to a
+        proof-of-work puzzle from GET /signup/challenge (error pow_failed otherwise).
+      operationId: signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password, pow_token, pow_number]
+              properties:
+                username: { $ref: '#/components/schemas/Username' }
+                password: { $ref: '#/components/schemas/Password' }
+                pow_token: { type: string, description: The token of a puzzle from GET /signup/challenge. }
+                pow_number: { type: string, description: 'The number, in decimal, such that the hex SHA-256 of salt + number is the challenge.' }
+      responses:
+        '201':
+          description: The new account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/CrossOrigin' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429':
+          description: Too many sign-ups from this address (error rate_limited). Retry-After says when to try again.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /signup/challenge:
+    get:
+      tags: [me]
+      summary: A proof-of-work puzzle for sign-up
+      description: >-
+        Find the number from 0 to max whose SHA-256, of the salt followed by the number in decimal, is the
+        challenge (hex). Send it with the token to POST /signup within 30 minutes. Each puzzle is accepted once.
+      operationId: signupChallenge
+      security: []
+      responses:
+        '200':
+          description: The puzzle.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [algorithm, salt, challenge, max, token]
+                properties:
+                  algorithm: { type: string, enum: [SHA-256] }
+                  salt: { type: string }
+                  challenge: { type: string }
+                  max: { type: integer }
+                  token: { type: string }
+
+  /me:
+    get:
+      tags: [me]
+      summary: The signed-in account
+      operationId: getMe
+      responses:
+        '200':
+          description: The account, and whether it is an administrator.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [me]
+      summary: Delete the signed-in account
+      description: >-
+        A protected change (see POST /me/reauth), confirmed by typing the username. The account is signed out
+        everywhere at once and erased after the grace period; an administrator can restore it until then.
+        Refused for the last administrator (409 last_admin).
+      operationId: deleteMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { type: string }
+      responses:
+        '200':
+          description: Deleted; the session cookie is cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  erase_after: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [me]
+      summary: Change the signed-in account's profile
+      description: >-
+        Only fields present change; "" clears an optional field. The email is not here: it changes through
+        PUT /me/email. Changing the username is a protected change (see POST /me/reauth); the other fields are not.
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ProfileUpdate'
+              unevaluatedProperties: false
+      responses:
+        '200':
+          description: The updated account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/export:
+    get:
+      tags: [me]
+      summary: Download my data
+      description: >-
+        Everything Guardian holds about the signed-in account, as a JSON file: the profile, two-factor status,
+        groups, consents, apps used, sessions, and its audit entries. Secrets (password hash, two-factor
+        secrets, tokens) are left out. A protected change (403 reauth_required), so nobody at an unlocked
+        computer walks off with it.
+      operationId: exportMe
+      responses:
+        '200':
+          description: The data, as an attachment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exported_at: { type: string, format: date-time }
+                  account: { $ref: '#/components/schemas/Account' }
+                  two_factor: { type: object }
+                  groups: { type: array, items: { type: object } }
+                  consents: { type: array, items: { type: object } }
+                  apps_used: { type: array, items: { type: object } }
+                  sessions: { type: array, items: { type: object } }
+                  audit_log: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/reauth:
+    post:
+      tags: [me]
+      summary: Confirm who the signed-in user is, before a protected change
+      description: >-
+        Protected changes (username, email, password; later also two-factor, recovery codes, sessions, connected
+        apps and deleting the account) need a session that signed in, or came here, within the last 5 minutes.
+        Otherwise they answer 403 with error reauth_required: ask for the password, send it here, and retry the
+        change. It also moves the session's auth_time, which apps see in new ID tokens. Five wrong passwords in
+        15 minutes make the session wait.
+      operationId: reauth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: One of the password, a code from the authenticator app, or a security key's answer.
+              properties:
+                password: { type: string }
+                code: { type: string, description: 'A 6-digit code from the authenticator app.' }
+                key:
+                  type: object
+                  description: The answer to the options from POST /me/reauth/key.
+                  required: [token, credential]
+                  properties:
+                    token: { type: string }
+                    credential: { $ref: '#/components/schemas/WebAuthnCredential' }
+      responses:
+        '200':
+          description: Confirmed; protected changes are allowed until reauthenticated_until.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reauthenticated_until: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The password, code or key is wrong (error wrong_password, wrong_code or key_not_recognised), or a cross-origin request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Too many wrong passwords (error rate_limited). Retry-After says when to try again.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/reauth/key:
+    post:
+      tags: [me]
+      summary: Start confirming who the user is with a security key
+      description: Returns the options for navigator.credentials.get (with the account's keys allowed) and a token; send the answer to POST /me/reauth as key.
+      operationId: startKeyReauth
+      responses:
+        '200':
+          description: The ceremony.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [options, token]
+                properties:
+                  options: { $ref: '#/components/schemas/WebAuthnOptions' }
+                  token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account has no security keys (error no_keys).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/totp:
+    post:
+      tags: [me]
+      summary: Start setting up an authenticator app
+      description: >-
+        A protected change (see POST /me/reauth). Returns a new secret, its QR code and a setup_token; nothing
+        is saved yet. Continue with POST /me/mfa/totp/confirm within 15 minutes. An account that has an app
+        replaces it when the setup is finished.
+      operationId: startTOTPSetup
+      responses:
+        '200':
+          description: The secret to add to the app.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string, description: Base32, for typing in by hand. }
+                  otpauth_uri: { type: string }
+                  qr_code: { type: string, description: 'A data: URI of a PNG image of otpauth_uri.' }
+                  setup_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+    delete:
+      tags: [me]
+      summary: Remove the authenticator app
+      description: A protected change. The recovery codes go too when it was the last two-factor method. An account that must use two-factor (administrators and group owners) keeps at least one method. The account is told by email.
+      operationId: removeTOTP
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: It is the last method of an account that must use two-factor (error mfa_required), or there is no app (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/totp/confirm:
+    post:
+      tags: [me]
+      summary: Confirm the app with its first code
+      description: Returns the 10 recovery codes to show once, and a setup_token for the last step. Nothing is saved yet.
+      operationId: confirmTOTPSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup_token, code]
+              properties:
+                setup_token: { type: string }
+                code: { type: string }
+      responses:
+        '200':
+          description: The recovery codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '400':
+          description: The code is wrong (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/finish:
+    post:
+      tags: [me]
+      summary: Finish setting up the authenticator app, or a first security key, by typing back one recovery code
+      description: Saves the app or the key with the recovery codes, replacing any earlier codes, and emails the account. The session counts as signed in with two-factor from now on.
+      operationId: finishSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryCodeAnswer' }
+      responses:
+        '204': { description: Two-factor is on. }
+        '400':
+          description: That is not one of the codes (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/keys:
+    post:
+      tags: [me]
+      summary: Start adding a security key or passkey
+      description: >-
+        A protected change. Returns the options for navigator.credentials.create (the account's keys are
+        excluded) and a setup_token; continue with POST /me/mfa/keys/finish within 5 minutes.
+      operationId: startKeySetup
+      responses:
+        '200':
+          description: The ceremony.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [options, setup_token]
+                properties:
+                  options: { $ref: '#/components/schemas/WebAuthnOptions' }
+                  setup_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/mfa/keys/finish:
+    post:
+      tags: [me]
+      summary: Add the security key from the browser's answer
+      description: >-
+        An account that has a two-factor method gets the key saved at once (201). For the first method, the
+        answer is the recovery codes to show and a setup_token (200); nothing is saved until one code is typed
+        back to POST /me/mfa/finish.
+      operationId: finishKeySetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup_token, credential]
+              properties:
+                setup_token: { type: string }
+                credential: { $ref: '#/components/schemas/WebAuthnCredential' }
+                name: { type: string, maxLength: 64, description: 'So the user can tell keys apart; "Security key" when empty.' }
+      responses:
+        '200':
+          description: 'The first two-factor method: the recovery codes.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key]
+                properties:
+                  key: { $ref: '#/components/schemas/SecurityKey' }
+        '400':
+          description: The answer could not be checked (error key_not_recognised), the setup expired (error setup_expired), or the name is too long.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The key is already registered (error key_registered).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/keys/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [me]
+      summary: Rename a security key
+      operationId: renameKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '200':
+          description: Renamed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [me]
+      summary: Remove a security key
+      description: A protected change, with the same rules as removing the authenticator app. The account is told by email.
+      operationId: removeKey
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: It is the last method of an account that must use two-factor (error mfa_required).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/recovery-codes:
+    post:
+      tags: [me]
+      summary: Make new recovery codes
+      description: A protected change. Returns 10 new codes and a setup_token; the old codes keep working until POST /me/mfa/recovery-codes/finish.
+      operationId: renewRecoveryCodes
+      responses:
+        '200':
+          description: The new codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The account has no two-factor method (error no_second_factor).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/mfa/recovery-codes/finish:
+    post:
+      tags: [me]
+      summary: Put the new recovery codes in place by typing back one
+      operationId: finishRecoveryCodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoveryCodeAnswer' }
+      responses:
+        '204': { description: The new codes replace the old ones. }
+        '400':
+          description: That is not one of the codes (error wrong_code), or the setup expired (error setup_expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The account has no two-factor method (error no_second_factor).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/password:
+    put:
+      tags: [me]
+      summary: Change the signed-in account's password
+      description: A protected change (see POST /me/reauth). Ends the account's other sessions; this one stays.
+      operationId: changeMyPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [new_password]
+              properties:
+                new_password: { $ref: '#/components/schemas/Password' }
+      responses:
+        '204': { description: Changed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/email:
+    put:
+      tags: [me]
+      summary: Change the signed-in account's email address
+      description: >-
+        Emails a confirmation link (valid 24 hours) to the new address, and a notice to the current one. The
+        address changes only when the link is opened; until then the account keeps its current address. At
+        most 5 emails per account per hour. A protected change (see POST /me/reauth).
+      operationId: changeMyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202':
+          description: The link was sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_email: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409':
+          description: The address is in use (error email_in_use), or this Guardian sends no email (error email_off).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Too many emails for this account (error too_many_emails).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [me]
+      summary: Remove the signed-in account's email address
+      description: >-
+        Removes the address and voids links for a new one. A protected change (see POST /me/reauth). Refused
+        when this Guardian requires an address on every account (error email_required).
+      operationId: removeMyEmail
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/email/pending:
+    delete:
+      tags: [me]
+      summary: Cancel a change of address
+      description: Voids the confirmation links for a new address; the account keeps its current one.
+      operationId: cancelMyPendingEmail
+      responses:
+        '204': { description: Cancelled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/home:
+    get:
+      tags: [me]
+      summary: What Home shows
+      description: >-
+        This Guardian's name, the apps the signed-in user has signed in to (connected), and the apps they may
+        sign in to but have not yet (available). Only enabled apps with a homepage are listed.
+      operationId: getHome
+      responses:
+        '200':
+          description: Home's content.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site_name, connected, available]
+                properties:
+                  site_name: { type: string }
+                  connected: { type: array, items: { $ref: '#/components/schemas/HomeApp' } }
+                  available: { type: array, items: { $ref: '#/components/schemas/HomeApp' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/notifications:
+    get:
+      tags: [me]
+      summary: How my notifications come
+      description: >-
+        The notifications that are not about security, for the kinds this account can receive (requests to
+        join the groups it owns; for Guardian administrators, requests to join groups without owners), each
+        sent right away (now), in the daily summary (daily) or not at all (off). Security emails always come
+        and are not listed. email is the confirmed address they go to, or "" when there is none.
+      operationId: getMyNotifications
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notifications' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [me]
+      summary: Change how my notifications come
+      description: >-
+        Only the kinds sent change, and only kinds the account can receive may be sent. summary_hour is when
+        the daily summary comes, in the account's time zone (UTC without one). Notifications waiting for a
+        summary are dropped when their kind stops being daily.
+      operationId: updateMyNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                summary_hour: { type: integer, minimum: 0, maximum: 23 }
+                settings:
+                  type: object
+                  additionalProperties: { $ref: '#/components/schemas/Delivery' }
+      responses:
+        '200':
+          description: The settings now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notifications' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CrossOrigin' }
+
+  /me/sessions:
+    get:
+      tags: [me]
+      summary: The signed-in user's sessions
+      description: Live sessions (not signed out, expired or idle too long), most recently used first.
+      operationId: listMySessions
+      responses:
+        '200':
+          description: The sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/MySession' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [me]
+      summary: Sign out everywhere else
+      description: >-
+        Ends every session but the current one, and their apps' refresh tokens; apps with back-channel logout
+        are told. A protected change (see POST /me/reauth).
+      operationId: endMyOtherSessions
+      responses:
+        '204': { description: Signed out everywhere else. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+
+  /me/sessions/{session}:
+    parameters:
+      - name: session
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [me]
+      summary: Sign out one session
+      description: >-
+        Ends one of the user's sessions; ending the current one signs out (the cookie is cleared). A
+        protected change (see POST /me/reauth).
+      operationId: endMySession
+      responses:
+        '204': { description: Signed out. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/apps:
+    get:
+      tags: [me]
+      summary: The signed-in user's connected apps
+      description: Apps the user has signed in to, what each can see, and when they were first and last used.
+      operationId: listMyApps
+      responses:
+        '200':
+          description: The apps, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ConnectedApp' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/apps/{app}:
+    parameters:
+      - $ref: '#/components/parameters/AppID'
+    delete:
+      tags: [me]
+      summary: Remove an app's access
+      description: >-
+        Forgets the consent, ends the app's refresh tokens for the user, removes the app's right to look the
+        user up in the machine API, and tells the app with back-channel logout. Signing in to it again asks
+        for consent again. A protected change (see POST /me/reauth).
+      operationId: removeMyApp
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ProtectedChange' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/groups:
+    get:
+      tags: [me]
+      summary: The signed-in user's groups
+      description: Groups the user is in (memberships that have not expired), and groups they manage as an owner.
+      operationId: listMyGroups
+      responses:
+        '200':
+          description: The groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member_of, manages]
+                properties:
+                  member_of:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        expires_at: { type: string, format: date-time }
+                  manages:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description, member_count, apps, open_requests]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        member_count: { type: integer }
+                        apps: { type: array, items: { type: string }, description: The linked apps' display names. }
+                        open_requests: { type: integer, description: Requests to join waiting for a decision. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/group-requests:
+    get:
+      tags: [me]
+      summary: The signed-in user's requests to join groups
+      description: Their requests (open, and decided in the last 30 days), and the groups they may ask to join (requestable groups they are not in). Hidden groups are never requestable.
+      operationId: listMyGroupRequests
+      responses:
+        '200':
+          description: Requests and requestable groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests, requestable]
+                properties:
+                  requests: { type: array, items: { $ref: '#/components/schemas/GroupRequest' } }
+                  requestable:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description, requested]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        requested: { type: boolean, description: An open request exists. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [me]
+      summary: Ask to join a group
+      description: Only requestable groups the user is not in (not_requestable), one open request per group (409 already_requested), 10 an hour (429). The group's owners, or Guardian admins when it has none, are emailed.
+      operationId: askToJoinGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [group_id]
+              properties:
+                group_id: { type: string, format: uuid }
+                message: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/BadRequest' }
+
+  /me/group-requests/{request}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    delete:
+      tags: [me]
+      summary: Withdraw a request to join a group
+      operationId: withdrawMyGroupRequest
+      responses:
+        '204': { description: Withdrawn. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: List and search accounts
+      description: Ordered by lower-case username. Deleted accounts are not listed.
+      operationId: listAccounts
+      parameters:
+        - name: q
+          in: query
+          description: Text to find in the username, display name or email, ignoring case.
+          schema: { type: string, maxLength: 256 }
+        - name: status
+          in: query
+          description: must_change_password is active accounts with a temporary password.
+          schema: { type: string, enum: [active, disabled, must_change_password] }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Account' }
+                  next_cursor: { type: [string, 'null'] }
+                  total: { type: integer, description: How many accounts match q and status, on all pages. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [accounts]
+      summary: Create an account for someone
+      description: An email set here counts as verified.
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username: { $ref: '#/components/schemas/Username' }
+                password: { $ref: '#/components/schemas/Password' }
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '201':
+          description: The new account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /accounts/{account}:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    get:
+      tags: [accounts]
+      summary: One account, with its groups
+      operationId: getAccount
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [accounts]
+      summary: Change an account
+      description: |
+        Only fields present change. An email set here counts as verified; "" removes it. Disabling ends all of
+        the account's sessions and sends back-channel logout; the last administrator cannot be disabled
+        (409 last_admin). Changing email or status is a protected change (403 reauth_required).
+      operationId: updateAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ProfileUpdate'
+              unevaluatedProperties: false
+              properties:
+                email: { type: string, maxLength: 254, description: 'An address such as alice@example.com, or "" to remove it.' }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: The updated account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [accounts]
+      summary: Delete an account
+      description: >-
+        The account is disabled at once, all of its sessions end, apps with back-channel logout are told, and
+        it leaves its groups. It is erased after the grace period (DELETION_GRACE_PERIOD, 30 days by default),
+        and can be restored until then (POST /accounts/{account}/restore). The last administrator cannot be
+        deleted (409 last_admin). A protected change (403 reauth_required).
+      operationId: deleteAccount
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /accounts/deleted:
+    get:
+      tags: [accounts]
+      summary: Accounts waiting to be erased
+      description: Deleted accounts in their grace period, the soonest to be erased first.
+      operationId: listDeletedAccounts
+      responses:
+        '200':
+          description: The deleted accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/DeletedAccount' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounts/{account}/sessions:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    delete:
+      tags: [accounts]
+      summary: Sign an account out everywhere
+      description: >-
+        Ends every session of the account and their apps' refresh tokens, and tells apps with back-channel
+        logout, without disabling the account. Administrators do not see the sessions themselves.
+      operationId: endAccountSessions
+      responses:
+        '204': { description: Signed out everywhere. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /overview:
+    get:
+      tags: [accounts]
+      summary: The admin area's figures
+      description: Aggregated counts only, nothing that identifies a person. "last_day" is the last 24 hours.
+      operationId: getOverview
+      responses:
+        '200':
+          description: The figures.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Overview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /scopes:
+    get:
+      tags: [apps]
+      summary: The standard scopes
+      description: The scopes an app may be allowed, with the description shown on the consent page and the claims each releases.
+      operationId: listScopes
+      responses:
+        '200':
+          description: The scopes, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description, claims]
+                      properties:
+                        name: { type: string }
+                        description: { type: string }
+                        claims: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounts/{account}/restore:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Restore a deleted account
+      description: >-
+        During the grace period only. The account is active again and gets back its group memberships, except
+        in groups deleted since and memberships that expired since. It signs in again; its sessions stay ended.
+      operationId: restoreAccount
+      responses:
+        '200':
+          description: The restored account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts/{account}/erase:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Erase an account now
+      description: >-
+        "Erase now": deletes the account for good, without waiting for the grace period, deleting it first if
+        it is not deleted yet (refused for the last administrator). Its IP addresses and personal details are
+        removed from its audit entries, and its id goes into the deletion log. Confirmed by typing its username;
+        a protected change (403 reauth_required).
+      operationId: eraseAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { type: string }
+      responses:
+        '204': { description: Erased. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /accounts/{account}/password:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    put:
+      tags: [accounts]
+      summary: Set someone's password
+      description: For someone who cannot reset their own password, for example an account without an email. All of the account's sessions end, and the user must choose a new password at their next sign-in (must_change_password). A protected change (403 reauth_required).
+      operationId: setAccountPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [new_password]
+              properties:
+                new_password: { $ref: '#/components/schemas/Password' }
+      responses:
+        '204': { description: Set. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts/{account}/mfa/reset:
+    parameters:
+      - $ref: '#/components/parameters/AccountID'
+    post:
+      tags: [accounts]
+      summary: Reset someone's two-factor
+      description: >-
+        The last step of the recovery ladder, for someone who lost their authenticator app and their recovery
+        codes. Removes the account's two-factor methods, signs it out everywhere, records the reason in the
+        audit log and emails it to the user. An account that must use two-factor sets it up again at its next
+        sign-in. A protected change (403 reauth_required).
+      operationId: resetAccountMFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        '204': { description: Reset. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The account has no two-factor methods (error no_totp).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /groups:
+    get:
+      tags: [groups]
+      summary: List groups
+      description: Administrators get every group; anyone else gets the groups they own.
+      operationId: listGroups
+      responses:
+        '200':
+          description: The groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [groups]
+      summary: Create a group
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key, display_name]
+              properties:
+                key: { $ref: '#/components/schemas/GroupKey' }
+                display_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                owner_group_id: { type: string, format: uuid, description: The group whose members manage this group's members. }
+                bound_app_id:
+                  type: string
+                  format: uuid
+                  description: Makes a single-app group, bound to this app for good and linked to it. It can never be linked to another app.
+                hidden: { type: boolean }
+                requestable: { type: boolean }
+                join_by_default: { type: boolean }
+      responses:
+        '201':
+          description: The new group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /groups/{group}:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    get:
+      tags: [groups]
+      summary: One group
+      description: For administrators and the group's owners.
+      operationId: getGroup
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [groups]
+      summary: Change a group
+      description: The key never changes, because apps match on it. Built-in groups cannot be changed.
+      operationId: updateGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                display_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                owner_group_id: { type: string, description: 'A group id, or "" to remove the owner.' }
+                hidden: { type: boolean, description: "Leave it out of its members' own group list. Not with requestable (hidden_requestable)." }
+                requestable: { type: boolean, description: Let people ask to join. Turning it off withdraws the open requests. }
+                join_by_default: { type: boolean, description: Every account created from now on joins it. }
+      responses:
+        '200':
+          description: The updated group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [groups]
+      summary: Delete a group
+      description: Removes its memberships and app links. Built-in groups cannot be deleted.
+      operationId: deleteGroup
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group}/bind:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    post:
+      tags: [groups]
+      summary: Bind a group to one app
+      description: |
+        Makes the group a single-app group: bound to the app for good, and linked to it. Refused for built-in
+        groups, for a group that is already bound (already_bound), and for a group linked to any other app
+        (linked_elsewhere). A binding can never be removed or moved.
+      operationId: bindGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [app_id]
+              properties:
+                app_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The bound group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /groups/{group}/requests:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    get:
+      tags: [groups]
+      summary: Open requests to join a group
+      description: For the group's owners and Guardian admins. Oldest first.
+      operationId: listGroupRequests
+      responses:
+        '200':
+          description: The open requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GroupRequest' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group}/requests/{request}:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      tags: [groups]
+      summary: Approve or deny a request to join
+      description: An approval adds the membership (until expires_at, if given). The requester is emailed. A request already decided or withdrawn answers 409 request_not_open.
+      operationId: decideGroupRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [approve]
+              properties:
+                approve: { type: boolean }
+                expires_at: { type: string, format: date-time, description: With an approval only. }
+      responses:
+        '200':
+          description: The decided request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /groups/{group}/copy:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    post:
+      tags: [groups]
+      summary: Copy a group
+      description: |
+        Makes a new group with the given key, names and owner group, starting with the current members of this
+        one and their expiry dates. The copy is linked to no app and bound to none; from then on the two groups
+        are unrelated. Administrators only.
+      operationId: copyGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key, display_name]
+              properties:
+                key: { $ref: '#/components/schemas/GroupKey' }
+                display_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                owner_group_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: The new group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /groups/{group}/members:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    get:
+      tags: [groups]
+      summary: List a group's members
+      description: Memberships that have not expired. For administrators and the group's owners.
+      operationId: listGroupMembers
+      responses:
+        '200':
+          description: The members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/GroupMember' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [groups]
+      summary: Add a member by exact username or email
+      description: >-
+        For administrators and the group's owners, who never search accounts: the answer is the member
+        added, or 404 "No user found". An existing member gets the new expiry.
+      operationId: addGroupMemberByLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [login]
+              properties:
+                login: { type: string, description: An exact username or email address. }
+                expires_at: { type: string, format: date-time, description: Omit to keep the member until removed. }
+      responses:
+        '200':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account_id: { type: string, format: uuid }
+                  username: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group}/members/{account}:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+      - $ref: '#/components/parameters/AccountID'
+    put:
+      tags: [groups]
+      summary: Add a member, or change when the membership expires
+      description: The body is optional; without expires_at the membership does not expire. For administrators and the group's owners.
+      operationId: addGroupMember
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expires_at: { type: string, format: date-time, description: Must be in the future. }
+      responses:
+        '204': { description: Added or changed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [groups]
+      summary: Remove a member
+      description: Apps linked to the group are sent a back-channel logout for the user. For administrators and the group's owners.
+      operationId: removeGroupMember
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /apps:
+    get:
+      tags: [apps]
+      summary: List apps
+      description: Guardian admins get every app; anyone else the apps they are an admin of (members of the app's owner group), possibly none.
+      operationId: listApps
+      responses:
+        '200':
+          description: The apps, by display name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/App' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [apps]
+      summary: Register an app
+      description: A confidential app gets its client secret in this answer, once; only its hash is stored. A new app's access rule is "groups" with no linked groups, so nobody can sign in until it is opened on purpose.
+      operationId: createApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, pretty_name, redirect_uris]
+              properties:
+                name: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{1,62}$', description: Machine name; never changes. }
+                pretty_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                logo_url: { $ref: '#/components/schemas/URL' }
+                homepage_url: { $ref: '#/components/schemas/URL' }
+                client_type: { type: string, enum: [confidential, public], default: confidential }
+                redirect_uris: { type: array, minItems: 1, items: { $ref: '#/components/schemas/URL' } }
+                post_logout_redirect_uris: { type: array, items: { $ref: '#/components/schemas/URL' } }
+                backchannel_logout_uri: { $ref: '#/components/schemas/URL' }
+                is_first_party: { type: boolean, description: Skips the consent screen. }
+                access_token_ttl_seconds: { $ref: '#/components/schemas/TokenTTL' }
+                scopes: { type: array, items: { type: string }, description: 'Must include openid. Default: openid, profile, email, groups.' }
+                access_rule: { $ref: '#/components/schemas/AccessRule' }
+                group_ids: { type: array, items: { type: string, format: uuid } }
+                require_mfa: { type: boolean, description: Signing in to the app needs two-factor. }
+                signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+                owner_group_id: { type: string, format: uuid, description: "Its members become the app's admins." }
+      responses:
+        '201':
+          description: The app, and its secret if it is confidential.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app]
+                properties:
+                  app: { $ref: '#/components/schemas/App' }
+                  client_secret: { type: string, description: Shown once. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /apps/{app}:
+    parameters:
+      - $ref: '#/components/parameters/AppID'
+    get:
+      tags: [apps]
+      summary: One app
+      description: For Guardian admins and the app's admins. linked_groups names the linked groups, which an app admin cannot list.
+      operationId: getApp
+      responses:
+        '200':
+          description: The app.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/App'
+                  - type: object
+                    required: [linked_groups]
+                    properties:
+                      linked_groups:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, key, display_name]
+                          properties:
+                            id: { type: string, format: uuid }
+                            key: { type: string }
+                            display_name: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [apps]
+      summary: Change an app's settings
+      description: Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party, scopes and backchannel_logout_uri (an app admin may send their current values).
+      operationId: updateApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                pretty_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                logo_url: { type: string, description: 'An https URL, or "" to remove it.' }
+                homepage_url: { type: string, description: 'An https URL, or "" to remove it.' }
+                redirect_uris: { type: array, minItems: 1, items: { $ref: '#/components/schemas/URL' } }
+                post_logout_redirect_uris: { type: array, items: { $ref: '#/components/schemas/URL' } }
+                backchannel_logout_uri: { type: string, description: 'An https URL, or "" to remove it.' }
+                is_first_party: { type: boolean }
+                access_token_ttl_seconds: { $ref: '#/components/schemas/TokenTTL' }
+                scopes: { type: array, items: { type: string }, description: Replaces the allowed scopes; must include openid. }
+                enabled: { type: boolean }
+                require_mfa: { type: boolean }
+                signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+                owner_group_id: { type: string, description: 'The group whose members are the app''s admins, or "" for none. Guardian admins only.' }
+      responses:
+        '200':
+          description: The updated app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/App' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [apps]
+      summary: Remove an app
+      description: Its secrets, tokens and consents go with it.
+      operationId: deleteApp
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /apps/{app}/access:
+    parameters:
+      - $ref: '#/components/parameters/AppID'
+    put:
+      tags: [apps]
+      summary: Set who may sign in to an app
+      description: |
+        The access rule and the complete list of linked groups. With "groups", only members of a linked group may
+        sign in; with "anyone", every account may, and the linked groups only decide which groups the app is
+        told about. machine_api (optional) turns the app's own read-only machine API access on or off; only
+        confidential apps may have it. A group bound to another app cannot be linked (409, group_bound). A
+        refused request changes nothing. The app's admins may change the rule, and link or unlink only groups
+        they own (403, not_group_owner); turning the machine API on or off is for Guardian admins.
+      operationId: setAppAccess
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [access_rule]
+              properties:
+                access_rule: { $ref: '#/components/schemas/AccessRule' }
+                group_ids: { type: array, items: { type: string, format: uuid } }
+                machine_api: { type: boolean }
+      responses:
+        '200':
+          description: The updated app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/App' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /apps/{app}/secret:
+    parameters:
+      - $ref: '#/components/parameters/AppID'
+    post:
+      tags: [apps]
+      summary: Rotate a confidential app's secret
+      description: Creates a new secret and returns it once. The app's older secrets keep working for grace_seconds (default 0, at most 7 days), so the new one can be rolled out first.
+      operationId: rotateAppSecret
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                grace_seconds: { type: integer, minimum: 0, maximum: 604800, default: 0 }
+      responses:
+        '201':
+          description: The new secret.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [client_secret]
+                properties:
+                  client_secret: { type: string, description: Shown once. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /audit:
+    get:
+      tags: [audit]
+      summary: Read the audit log
+      description: Newest first. Guardian admins read all of it; an app's admins only the entries about their app (app is then required), without ip_address.
+      operationId: listAudit
+      parameters:
+        - name: event
+          in: query
+          description: One event type, such as login.failure or group.member_added.
+          schema: { type: string, maxLength: 64 }
+        - name: account
+          in: query
+          description: Only entries where this account acted.
+          schema: { type: string, format: uuid }
+        - name: about
+          in: query
+          description: Only entries where this account acted or that were done to it (metadata "account" or "target").
+          schema: { type: string, format: uuid }
+        - name: app
+          in: query
+          description: Only entries about this app (the acting app, or metadata "app").
+          schema: { type: string, format: uuid }
+        - name: username
+          in: query
+          description: Like about, for the account with this username (also one in its deletion grace period). 404 account_not_found if there is none.
+          schema: { type: string, maxLength: 64 }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEntry' }
+                  next_cursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /apps/self:
+    get:
+      tags: [machine]
+      summary: The calling app
+      operationId: machineSelf
+      security:
+        - clientToken: []
+      responses:
+        '200':
+          description: The app.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id: { type: string, format: uuid }
+                  name: { type: string }
+                  pretty_name: { type: string }
+                  access_rule: { $ref: '#/components/schemas/AccessRule' }
+                  scopes: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/InvalidToken' }
+
+  /apps/self/groups:
+    get:
+      tags: [machine]
+      summary: The groups linked to the calling app
+      operationId: machineGroups
+      security:
+        - clientToken: []
+      responses:
+        '200':
+          description: The groups, by key.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        display_name: { type: string }
+                        description: { type: string }
+                        member_count: { type: integer }
+        '401': { $ref: '#/components/responses/InvalidToken' }
+
+  /apps/self/groups/{key}/members:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: The group's key.
+        schema: { type: string }
+    get:
+      tags: [machine]
+      summary: The active members of a linked group
+      operationId: machineGroupMembers
+      security:
+        - clientToken: []
+      responses:
+        '200':
+          description: The members, as the app's allowed scopes show them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MachineUser' }
+        '401': { $ref: '#/components/responses/InvalidToken' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /apps/self/users/{sub}:
+    parameters:
+      - name: sub
+        in: path
+        required: true
+        description: The account's subject (sub claim).
+        schema: { type: string, format: uuid }
+    get:
+      tags: [machine]
+      summary: One user the app may know
+      description: An active member of a linked group, or an account that has signed in to the app. Anything else is the same 404 as an unknown account.
+      operationId: machineUser
+      security:
+        - clientToken: []
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineUser' }
+        '401': { $ref: '#/components/responses/InvalidToken' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-guardian_session
+      description: Guardian's sign-in session (guardian_session when Guardian runs on plain http in development).
+    clientToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: An access token the app got for itself with the client_credentials grant at /token.
+
+  parameters:
+    AccountID:
+      name: account
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    GroupID:
+      name: group
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RequestID:
+      name: request
+      in: path
+      required: true
+      description: A request to join a group.
+      schema: { type: string, format: uuid }
+    AppID:
+      name: app
+      in: path
+      required: true
+      description: The app's id (not its client id).
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      description: next_cursor from the previous page.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  responses:
+    BadRequest:
+      description: The request is malformed or a field is invalid (error invalid_request).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Not signed in (error unauthorized).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: >-
+        Signed in, but not allowed (error forbidden); an administrator or group owner whose session did not
+        pass two-factor (error mfa_required: sign in again); an account with a temporary password, which may
+        only call GET /me and PUT /me/password until it chooses its own (error password_change_required); a
+        protected change from a session that did not confirm who its user is within the last 5 minutes (error
+        reauth_required: call POST /me/reauth, then retry); or a cross-origin request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ProtectedChange:
+      description: >-
+        The session did not sign in or confirm who its user is within the last 5 minutes (error reauth_required:
+        call POST /me/reauth, then retry), or a cross-origin request (error forbidden).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    CrossOrigin:
+      description: A state-changing request from another origin (error forbidden).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such resource, or not one the caller may know about (error not_found).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Taken name or key (error conflict), or the change would leave no permanent administrator (error last_admin).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InvalidToken:
+      description: The client token is missing, invalid or expired, or the app no longer has machine API access (error invalid_token).
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Delivery:
+      type: string
+      enum: ['off', 'now', 'daily']
+    Notifications:
+      type: object
+      required: [email, summary_hour, settings]
+      properties:
+        email: { type: string }
+        summary_hour: { type: integer, minimum: 0, maximum: 23 }
+        settings:
+          type: array
+          items:
+            type: object
+            required: [kind, panel, label, hint, delivery]
+            properties:
+              kind: { type: string }
+              panel: { type: string, enum: [owner, admin] }
+              label: { type: string }
+              hint: { type: string }
+              delivery: { $ref: '#/components/schemas/Delivery' }
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: |
+            invalid_request, unauthorized, forbidden, not_found, method_not_allowed, conflict, rate_limited,
+            server_error, unavailable, or a specific code: last_admin, wrong_password, invalid_token,
+            reauth_required, mfa_required, email_required, username_taken, email_taken.
+        message: { type: string }
+
+    Username:
+      type: string
+      pattern: '^[A-Za-z0-9._-]{3,64}$'
+      description: Unique, ignoring case.
+    Password:
+      type: string
+      minLength: 10
+      maxLength: 1024
+    GroupKey:
+      type: string
+      pattern: '^[a-z0-9][a-z0-9._-]{1,62}$'
+      description: What tokens carry. Never changes.
+    URL:
+      type: string
+      maxLength: 2048
+      description: An https URL (http only for localhost), without a fragment.
+    TokenTTL:
+      type: integer
+      minimum: 15
+      maximum: 86400
+      default: 300
+      description: Lifetime of the app's access and ID tokens, and so how stale its view of a user can get.
+    AccessRule:
+      type: string
+      enum: [groups, anyone]
+
+    DeletedAccount:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        deleted_at: { type: string, format: date-time }
+        erase_after: { type: string, format: date-time }
+        deleted_by: { type: string, format: uuid, description: The account that deleted it. }
+        deleted_by_itself: { type: boolean }
+        deleted_by_username: { type: string, description: Who deleted it, while that account exists. }
+    Account:
+      type: object
+      required: [id, username, email_verified, status, must_change_password, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid, description: The OIDC subject (sub). }
+        username: { type: string }
+        display_name: { type: string }
+        given_name: { type: string }
+        family_name: { type: string }
+        picture_url: { type: string }
+        locale: { type: string }
+        zoneinfo: { type: string }
+        email: { type: string, description: Always verified when present. }
+        email_verified: { type: boolean }
+        status: { type: string, enum: [pending, active, disabled, locked] }
+        must_change_password: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_login_at: { type: string, format: date-time }
+    RecoveryCodes:
+      type: object
+      properties:
+        recovery_codes: { type: array, items: { type: string }, minItems: 10, maxItems: 10 }
+        setup_token: { type: string }
+    RecoveryCodeAnswer:
+      type: object
+      additionalProperties: false
+      required: [setup_token, recovery_code]
+      properties:
+        setup_token: { type: string }
+        recovery_code: { type: string, description: One of the codes just shown, to prove they were saved. }
+    Me:
+      allOf:
+        - $ref: '#/components/schemas/Account'
+        - type: object
+          required: [is_admin, app_admin, mfa, email_settings]
+          properties:
+            is_admin: { type: boolean }
+            app_admin: { type: boolean, description: An admin of at least one app; the admin area then shows those apps. }
+            mfa:
+              type: object
+              properties:
+                totp: { type: boolean, description: The account has an authenticator app. }
+                totp_added_at: { type: string, format: date-time }
+                recovery_codes_left: { type: integer }
+                security_keys: { type: array, items: { $ref: '#/components/schemas/SecurityKey' } }
+                required: { type: boolean, description: 'Administrators and group owners must use two-factor; they cannot remove it.' }
+                required_reason: { type: string, description: Why two-factor is required, in a sentence. }
+            email_settings:
+              type: object
+              required: [enabled, required]
+              properties:
+                enabled: { type: boolean, description: This Guardian sends email; without it no address can be added or changed. }
+                required: { type: boolean, description: Every account must have an address (REQUIRE_EMAIL); it cannot be removed. }
+                pending: { type: string, description: A new address waiting for its confirmation link to be opened. }
+                pending_until: { type: string, format: date-time, description: When that link expires. }
+    Overview:
+      type: object
+      required: [accounts, groups, apps, last_day, admins, audit_retention_days]
+      properties:
+        audit_retention_days: { type: integer, description: How many days the audit log keeps entries (AUDIT_RETENTION). }
+        accounts:
+          type: object
+          required: [active, disabled, must_change_password, waiting_for_erasure]
+          properties:
+            active: { type: integer }
+            disabled: { type: integer }
+            must_change_password: { type: integer }
+            waiting_for_erasure: { type: integer }
+        groups: { type: integer }
+        apps:
+          type: object
+          required: [enabled, disabled]
+          properties:
+            enabled: { type: integer }
+            disabled: { type: integer }
+        last_day:
+          type: object
+          required: [sign_ins, failed_sign_ins, rate_limited, honeypot]
+          properties:
+            sign_ins: { type: integer }
+            failed_sign_ins: { type: integer, description: Wrong passwords and wrong two-factor codes. }
+            rate_limited: { type: integer, description: Requests refused by a rate limit. }
+            honeypot: { type: integer, description: Forms a bot filled in. }
+        admins:
+          type: object
+          required: [total, with_two_factor, permanent, signed_in_last_day]
+          properties:
+            total: { type: integer, description: Active administrators. }
+            with_two_factor: { type: integer }
+            permanent: { type: integer, description: Administrators whose membership does not expire. }
+            signed_in_last_day: { type: integer }
+    HomeApp:
+      type: object
+      required: [id, display_name, description, homepage_url]
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        homepage_url: { type: string }
+    MySession:
+      type: object
+      required: [id, browser, user_agent, ip_address, created_at, last_seen_at, expires_at, current]
+      properties:
+        id: { type: string, format: uuid }
+        browser: { type: string, description: 'Browser and system read from the user agent, such as "Firefox on Windows".' }
+        user_agent: { type: string }
+        ip_address: { type: string }
+        created_at: { type: string, format: date-time, description: When the user signed in. }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        current: { type: boolean, description: The session making this request. }
+    ConnectedApp:
+      type: object
+      required: [id, name, display_name, description, scopes, sees, first_used_at, last_used_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        homepage_url: { type: string }
+        scopes: { type: array, items: { type: string } }
+        sees: { type: array, items: { type: string }, description: What the app can see, one line per scope, as on the consent page. }
+        first_used_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+    AccountDetail:
+      allOf:
+        - $ref: '#/components/schemas/Account'
+        - type: object
+          required: [groups, is_admin, mfa]
+          properties:
+            is_admin: { type: boolean }
+            mfa:
+              type: object
+              properties:
+                totp: { type: boolean }
+                totp_added_at: { type: string, format: date-time }
+                recovery_codes_left: { type: integer }
+                security_keys: { type: array, items: { $ref: '#/components/schemas/SecurityKey' } }
+            groups:
+              type: array
+              items: { $ref: '#/components/schemas/Membership' }
+    SecurityKey:
+      type: object
+      required: [id, name, passkey, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        passkey: { type: boolean, description: 'A synced passkey (backup eligible): usable on the user''s other devices too.' }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+    WebAuthnOptions:
+      type: object
+      description: 'What navigator.credentials.create or .get takes, as JSON: binary values are base64url strings.'
+      required: [publicKey]
+      properties:
+        publicKey: { type: object, additionalProperties: true }
+    WebAuthnCredential:
+      type: object
+      description: 'The browser''s answer (a PublicKeyCredential) as JSON, binary values in base64url: what PublicKeyCredential.toJSON() returns.'
+      additionalProperties: true
+    Membership:
+      type: object
+      required: [group_id, key, display_name]
+      properties:
+        group_id: { type: string, format: uuid }
+        key: { type: string }
+        display_name: { type: string }
+        expires_at: { type: string, format: date-time }
+    ProfileUpdate:
+      type: object
+      properties:
+        username: { $ref: '#/components/schemas/Username' }
+        display_name: { type: string, maxLength: 128 }
+        given_name: { type: string, maxLength: 128 }
+        family_name: { type: string, maxLength: 128 }
+        picture_url: { type: string, description: 'An https URL, or "" to remove it.' }
+        locale: { type: string, maxLength: 35 }
+        zoneinfo: { type: string, maxLength: 64 }
+
+    Group:
+      type: object
+      required: [id, key, display_name, description, is_system, member_count, app_ids, created_at, single_app, hidden, requestable, join_by_default, open_requests]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        is_system: { type: boolean, description: Built-in groups such as guardian-admins cannot be changed or deleted. }
+        owner_group_id: { type: string, format: uuid }
+        member_count: { type: integer, description: Memberships that have not expired. }
+        app_ids: { type: array, items: { type: string, format: uuid } }
+        created_at: { type: string, format: date-time }
+        single_app: { type: boolean, description: Bound to one app for good; it can be linked to no other. }
+        bound_app_id: { type: string, format: uuid, description: The app a single-app group is bound to; absent once that app was deleted. }
+        bound_at: { type: string, format: date-time }
+        bound_app_deleted_at: { type: string, format: date-time, description: When the bound app was deleted. Such a group can never be linked again. }
+        hidden: { type: boolean, description: "Left out of its members' own group list. Apps still get it." }
+        requestable: { type: boolean, description: People may ask to join it. Never together with hidden. }
+        join_by_default: { type: boolean, description: Every new account joins it. }
+        open_requests: { type: integer, description: Requests to join waiting for a decision. }
+    GroupRequest:
+      type: object
+      required: [id, group_id, group_name, account_id, username, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        group_name: { type: string }
+        account_id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        decision: { type: string, enum: [approved, denied, withdrawn], description: Absent while the request is open. }
+        decided_at: { type: string, format: date-time }
+    GroupMember:
+      type: object
+      required: [account_id, username, added_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+        added_by: { type: string, format: uuid }
+        added_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    App:
+      type: object
+      required: [id, name, pretty_name, description, client_id, client_type, grant_types, redirect_uris,
+                 post_logout_redirect_uris, require_pkce, is_first_party, access_token_ttl_seconds, refresh_mode,
+                 enabled, access_rule, group_ids, signing_alg]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        pretty_name: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        homepage_url: { type: string }
+        client_id: { type: string, format: uuid }
+        client_type: { type: string, enum: [confidential, public] }
+        token_endpoint_auth_method: { type: string }
+        grant_types: { type: array, items: { type: string } }
+        redirect_uris: { type: array, items: { type: string } }
+        post_logout_redirect_uris: { type: array, items: { type: string } }
+        backchannel_logout_uri: { type: string }
+        require_pkce: { type: boolean }
+        is_first_party: { type: boolean }
+        access_token_ttl_seconds: { type: integer }
+        refresh_mode: { type: string, enum: [stable, none] }
+        enabled: { type: boolean }
+        access_rule: { $ref: '#/components/schemas/AccessRule' }
+        group_ids: { type: array, items: { type: string, format: uuid } }
+        scopes: { type: array, items: { type: string } }
+        require_mfa: { type: boolean, description: 'Signing in to the app needs two-factor: Guardian asks for it, or has it set up, before issuing a code.' }
+        signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+        owner_group_id: { type: string, format: uuid, description: "The app's owner group: its members are the app's admins." }
+
+    SigningAlg:
+      type: string
+      enum: [RS256, ES256]
+      default: RS256
+      description: 'The algorithm of the app''s tokens (ID, access and logout tokens). RS256 is what OIDC apps expect when they say nothing; ES256 gives smaller tokens and faster signing, for apps whose library handles it. Both keys are always published, so a change takes effect at the next token.'
+
+    AuditEntry:
+      type: object
+      required: [id, occurred_at, event_type, metadata]
+      properties:
+        id: { type: integer, format: int64 }
+        occurred_at: { type: string, format: date-time }
+        event_type: { type: string }
+        actor_account_id: { type: string, format: uuid }
+        actor_app_id: { type: string, format: uuid }
+        actor_username: { type: string, description: The acting account's username, while it exists. }
+        target_username: { type: string, description: 'The username of the account the entry is about (metadata "target" or "account"), while it exists.' }
+        app_name: { type: string, description: 'The display name of the app (the acting app or metadata "app"), while it exists.' }
+        group_name: { type: string, description: 'The display name of the group (metadata "group"), while it exists.' }
+        ip_address: { type: string }
+        metadata: { type: object, additionalProperties: true }
+
+    MachineUser:
+      type: object
+      description: The OIDC claims the app's allowed scopes release, plus groups (linked groups only) if the app may use the groups scope.
+      required: [sub]
+      properties:
+        sub: { type: string, format: uuid }
+        name: { type: string }
+        given_name: { type: string }
+        family_name: { type: string }
+        preferred_username: { type: string }
+        picture: { type: string }
+        locale: { type: string }
+        zoneinfo: { type: string }
+        updated_at: { type: integer, description: Unix time. }
+        email: { type: string }
+        email_verified: { type: boolean }
+        groups: { type: array, items: { type: string } }

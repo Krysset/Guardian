@@ -1,0 +1,18 @@
+{{define "content"}}
+      <h1>Save your recovery codes</h1>
+      <p class="sub">If you lose your phone or security key, each code gets you in once. This is the only time they're shown.</p>
+      <div class="codes" id="codes">{{range .Codes}}<code>{{.}}</code>{{end}}</div>
+      <div class="code-actions" hidden>
+        <button class="button alt small-button" type="button" data-copy="codes">Copy</button>
+        <button class="button alt small-button" type="button" data-download="codes">Download</button>
+        <button class="button alt small-button" type="button" data-print>Print</button>
+      </div>
+      <form method="post" action="/mfa/setup">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="codes">
+        <input type="hidden" name="token" value="{{.Token}}">
+        <label for="code">Type one of the codes to show you saved them</label>
+        <input class="text" id="code" name="code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="xxxx-xxxx" required{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{with .FieldErrors.code}}<p class="field-error" id="code-error">{{.}}</p>{{end}}
+        <button class="button" type="submit">Finish</button>
+      </form>
+{{end}}

@@ -1,0 +1,29 @@
+# Used by CI: an external Postgres behind a standard Ingress, one replica, without the management UI.
+issuerURL: https://auth.example.com
+image:
+  repository: registry.example.com/guardian-backend
+secrets:
+  existingSecret: guardian
+database:
+  mode: external
+  passwordSecret: guardian-db
+  passwordKey: password
+  external:
+    host: postgres.db.svc
+replicaCount: 1
+frontend:
+  enabled: false
+ingress:
+  enabled: true
+  className: traefik
+  tls:
+    - secretName: guardian-tls
+config:
+  helpURL: https://example.com/help
+  sessionIdleTimeout: 24h
+  auditRetention: 8760h
+  loginLimits:
+    window: 30m
+    perIP: 200
+  extraEnv:
+    FOO: bar

@@ -1,0 +1,204 @@
+package mail
+
+import (
+	"bytes"
+	"embed"
+	htmltemplate "html/template"
+	"strconv"
+	"strings"
+	texttemplate "text/template"
+	"time"
+	"unicode/utf8"
+)
+
+// The emails are designed on the design board (E1-E6). Every email has the same parts, so one HTML and one
+// text template render them all from an email value.
+
+//go:embed templates/*
+var templateFiles embed.FS
+
+var (
+	htmlTemplate = htmltemplate.Must(htmltemplate.ParseFS(templateFiles, "templates/email.html"))
+	textTemplate = texttemplate.Must(texttemplate.ParseFS(templateFiles, "templates/email.txt"))
+)
+
+type email struct {
+	Site    Site
+	Subject string
+	Lines   []string // paragraphs
+	Button  *button
+	Small   string // under the button: how long the link works
+	Facts   []fact
+	Items   []Item // a list of things, each linking to its page (the daily summary)
+	NotMe   string // "Wasn't you?" and what to do then
+	Footer  string // why this email came, for emails that are not about security
+}
+
+type button struct{ Label, URL string }
+type fact struct{ Label, Value string }
+
+// Item is one line of a list in an email: what happened, when, and the page to open.
+type Item struct{ Title, When, URL string }
+
+func (e email) message(to string) Message {
+	e.Site = currentSite()
+	var h, t bytes.Buffer
+	if err := htmlTemplate.Execute(&h, e); err != nil {
+		panic(err) // the templates are fixed; a failure is a bug caught by the tests
+	}
+	if err := textTemplate.Execute(&t, e); err != nil {
+		panic(err)
+	}
+	return Message{To: to, Subject: e.Subject, HTML: h.String(), Text: t.String()}
+}
+
+// When formats a time for an email, in the account's time zone when it has one: "15 Nov 2026 at 14:02
+// (Europe/Stockholm)".
+func When(t time.Time, zone string) string {
+	loc, err := time.LoadLocation(zone)
+	if zone == "" || err != nil {
+		loc, zone = time.UTC, "UTC"
+	}
+	return t.In(loc).Format("2 Jan 2006 at 15:04") + " (" + zone + ")"
+}
+
+// Mask hides most of an address: alice@example.com becomes a•••@example.com.
+func Mask(address string) string {
+	at := strings.LastIndex(address, "@")
+	if at <= 0 {
+		return "•••"
+	}
+	r, _ := utf8.DecodeRuneInString(address)
+	return string(r) + "•••" + address[at:]
+}
+
+// ConfirmAddress is E1: the link that confirms an email address, at sign-up or when the address changes.
+func ConfirmAddress(to, link string, expires time.Time, zone string, signup bool) Message {
+	lines := []string{"Someone, hopefully you, added this address to a Guardian account. Confirm it so you can reset your password by email."}
+	notMe := "Ignore this email. The address won't be added."
+	if signup {
+		lines = []string{"Someone, hopefully you, created a Guardian account with this address. Confirm it to finish creating the account."}
+		notMe = "Ignore this email. The account won't be created."
+	}
+	return email{
+		Subject: "Confirm your email address",
+		Lines:   lines,
+		Button:  &button{"Confirm this address", link},
+		Small:   "The link works once, until " + When(expires, zone) + ".",
+		NotMe:   notMe,
+	}.message(to)
+}
+
+// AddressHasAccount is E9, sent instead of E1 when someone signs up with an address that already belongs to
+// an account. The sign-up page looks the same either way, so it never tells anyone whose address is in use.
+func AddressHasAccount(to, signIn, forgot string) Message {
+	return email{
+		Subject: "You already have an account",
+		Lines: []string{"Someone, hopefully you, tried to create a Guardian account with this address. It already " +
+			"belongs to an account, so no new one was made. Sign in with it, or reset its password if you forgot it."},
+		Button: &button{"Sign in", signIn},
+		Small:  "Forgot the password? " + forgot,
+		NotMe:  "Ignore this email. Nothing changed.",
+	}.message(to)
+}
+
+// DailySummary is E10: the notifications an account chose to get once a day, in one email.
+func DailySummary(to string, items []Item, settings string) Message {
+	subject := "Your daily summary: 1 thing"
+	if len(items) != 1 {
+		subject = "Your daily summary: " + strconv.Itoa(len(items)) + " things"
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{"Here is what happened since your last summary."},
+		Items:   items,
+		Footer:  "You get this because you chose a daily summary. Change it under Notifications in your account: " + settings,
+	}.message(to)
+}
+
+// ResetPassword is E2: the link to choose a new password.
+func ResetPassword(to, link string, expires time.Time, zone string) Message {
+	return email{
+		Subject: "Reset your password",
+		Lines:   []string{"Someone asked to reset the password of your Guardian account."},
+		Button:  &button{"Choose a new password", link},
+		Small:   "The link works once, until " + When(expires, zone) + ". Two-factor still applies when you sign in.",
+		NotMe:   "Ignore this email. Your password stays the same.",
+	}.message(to)
+}
+
+// PasswordChanged is E3, sent whenever the account's own password changes.
+func PasswordChanged(to string, when time.Time, zone string) Message {
+	return email{
+		Subject: "Your password was changed",
+		Lines:   []string{"The password of your Guardian account was changed. Other sessions were signed out."},
+		Facts:   []fact{{"When", When(when, zone)}},
+		NotMe:   "Reset your password from the sign-in page, or ask your administrator for a temporary one.",
+	}.message(to)
+}
+
+// EmailChanging is E5, sent to the old address when the account asks to move to a new one.
+func EmailChanging(to, newAddress string, when time.Time, zone string) Message {
+	return email{
+		Subject: "Your email address is being changed",
+		Lines: []string{"Your Guardian account is moving to a new email address. " +
+			"This address stops getting emails once the new one is confirmed."},
+		Facts: []fact{{"New address", Mask(newAddress)}, {"When", When(when, zone)}},
+		NotMe: "Change your password now and sign out everywhere else. Then tell your administrator.",
+	}.message(to)
+}
+
+// TwoFactorChanged is E4, sent when a two-factor method is added or removed by the account itself.
+func TwoFactorChanged(to string, added bool, method string, when time.Time, zone string) Message {
+	subject, line := "Two-factor was added to your account", "A two-factor method was added to your Guardian account."
+	if !added {
+		subject, line = "Two-factor was removed from your account", "A two-factor method was removed from your Guardian account."
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{line},
+		Facts:   []fact{{"Method", method}, {"When", When(when, zone)}},
+		NotMe:   "Change your password now and sign out everywhere else. Then tell your administrator.",
+	}.message(to)
+}
+
+// TwoFactorReset is E6, sent when an administrator removes the account's two-factor methods.
+func TwoFactorReset(to, reason string, when time.Time, zone string) Message {
+	return email{
+		Subject: "An administrator reset your two-factor",
+		Lines: []string{"An administrator removed the two-factor methods from your Guardian account. " +
+			"If your account must use two-factor, you will be asked to set it up again at the next sign-in."},
+		Facts: []fact{{"When", When(when, zone)}, {"Reason", reason}},
+		NotMe: "Tell your administrator at once and change your password.",
+	}.message(to)
+}
+
+// GroupRequested is E7, sent to the people who decide when someone asks to join a group.
+func GroupRequested(to, who, group, message, link, settings string, when time.Time, zone string) Message {
+	facts := []fact{{"Who", who}, {"Group", group}, {"When", When(when, zone)}}
+	if message != "" {
+		facts = append(facts, fact{"Their message", message})
+	}
+	return email{
+		Subject: who + " asks to join " + group,
+		Lines:   []string{who + " asks to join the group " + group + " in Guardian. You can approve or deny the request."},
+		Button:  &button{"Open the request", link},
+		Facts:   facts,
+		Footer:  "You get this because you decide who may join " + group + ". Choose how you get these under Notifications in your account: " + settings,
+	}.message(to)
+}
+
+// GroupRequestDecided is E8, sent to the person who asked to join a group when the request is decided.
+func GroupRequestDecided(to, group string, approved bool, link string, when time.Time, zone string) Message {
+	subject, line := "You were added to "+group, "Your request to join "+group+" was approved. Apps that use the group see it at your next sign-in to them."
+	if !approved {
+		subject, line = "Your request to join "+group+" was denied", "Your request to join "+group+" was denied. Ask the group's owners if you think this is a mistake."
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{line},
+		Button:  &button{"Your groups", link},
+		Facts:   []fact{{"When", When(when, zone)}},
+		Footer:  "You get this because you asked to join " + group + ".",
+	}.message(to)
+}

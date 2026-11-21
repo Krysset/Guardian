@@ -1,0 +1,226 @@
+# Guardian's Helm chart. Required values are marked REQUIRED; values.schema.json refuses an install without them.
+# The chart generates no secrets: create them yourself (see docs/INSTALL.md).
+
+# The public address of Guardian as browsers and apps see it, without a trailing slash. REQUIRED.
+# It is the OIDC issuer, so it must not change after apps are connected. https:// turns on secure cookies.
+issuerURL: ""
+
+image:
+  # The backend image, for example ghcr.io/krysset/guardian-backend. REQUIRED.
+  repository: ""
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The Secret with Guardian's own secrets. REQUIRED. It must exist before the install.
+secrets:
+  existingSecret: ""
+  keys:
+    # The encryption keyring: "k1:<32 random bytes, base64>" (openssl rand -base64 32), and later
+    # "k2:<new>,k1:<old>" while rotating. Encrypts the signing keys and authenticator apps in the database.
+    # Mounted as a file and reread every minute (docs/INSTALL.md, "Keys").
+    keyEncryptionKeys: key-encryption-keys
+    # The first password of the built-in "admin" account; it must be changed at the first sign-in.
+    adminInitialPassword: admin-initial-password
+    # The SMTP password, only read when config.mail.username is set.
+    smtpPassword: smtp-password
+
+database:
+  # "bundled": a single Postgres instance installed with the chart (development and small setups).
+  # "external": an existing Postgres, for example CloudNativePG.
+  mode: bundled
+  # The Secret and key holding the database password. Defaults to secrets.existingSecret.
+  passwordSecret: ""
+  passwordKey: db-password
+  # Connections per backend pod. Replicas times maxConns must stay below Postgres' max_connections.
+  maxConns: 10
+
+  external:
+    host: ""
+    port: 5432
+    user: guardian
+    name: guardian
+    sslMode: require
+
+  bundled:
+    # The major version is pinned on purpose: a new major cannot read the old data files.
+    image:
+      repository: postgres
+      tag: "16"
+      pullPolicy: IfNotPresent
+    user: guardian
+    name: guardian
+    storage:
+      size: 5Gi
+      # Empty uses the cluster's default storage class.
+      storageClass: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 512Mi }
+    # Extra Postgres settings, passed as -c name=value.
+    settings: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+# Backend replicas, when autoscaling is off.
+replicaCount: 2
+
+# Scales the backend on CPU. Each replica holds up to database.maxConns connections, so maxReplicas times
+# maxConns must stay below Postgres' max_connections.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# How the database schema is applied:
+#   startup: every backend pod applies pending migrations when it starts (they take turns under a lock).
+#   job:     a Job runs `guardian migrate` (a Helm hook after install and before upgrade; an Argo CD Sync hook
+#            in an earlier wave than the Deployment), and the pods only wait until the schema is there.
+migrations:
+  mode: startup
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+# How many reverse proxies in front of Guardian append to X-Forwarded-For (ingress controller, load balancer).
+trustedProxyHops: 1
+
+config:
+  # Go durations. Empty keeps Guardian's defaults (168h idle, 720h maximum).
+  sessionIdleTimeout: ""
+  sessionMaxLifetime: ""
+  # How long audit entries are kept, as a Go duration (at least 24h). Single-app groups whose app was deleted
+  # are removed after this too. Empty keeps Guardian's default (4392h, about 6 months).
+  auditRetention: ""
+  # Failed sign-ins allowed within the window, for one account from one address and from one address in
+  # total. Accounts are never locked; only the address is refused. Empty keeps the defaults (15m, 5, 50).
+  loginLimits:
+    window: ""
+    perAccountAndIP: ""
+    perIP: ""
+  # How long a deleted account waits before it is erased (an administrator can restore it until then), and
+  # how long a signing key signs before the next one takes over. Empty keeps 720h and 2160h.
+  deletionGracePeriod: ""
+  signingKeyLifetime: ""
+  # Email: confirmation and reset links, and notices about security changes. Without a host Guardian sends
+  # no email: sign-up has no email field and only administrators can reset passwords.
+  mail:
+    host: ""
+    port: 587
+    # starttls, tls or none
+    security: starttls
+    # Empty: no authentication. Otherwise the password is the Secret key secrets.keys.smtpPassword.
+    username: ""
+    # The sender, for example: Guardian <no-reply@example.com>. Required with a host.
+    from: ""
+    # Every account must have an email address (needs a host).
+    requireEmail: false
+  # Help and Privacy links in the footer of the sign-in pages; left out when empty.
+  helpURL: ""
+  privacyURL: ""
+  logFormat: json
+  logLevel: info
+  # Extra environment variables for the backend, as name: value.
+  extraEnv: {}
+
+# The management UI (Home at /, the account area at /account, the admin area at /admin): static files served
+# by nginx. The routes send exactly /, and /account, /admin and /_app with everything under them, here; all
+# else goes to the backend. Without it, the backend's simple Home is served at /.
+frontend:
+  enabled: true
+  image:
+    # For example ghcr.io/krysset/guardian-frontend. REQUIRED when enabled.
+    repository: ""
+    # Defaults to the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# NetworkPolicies: the backend's public port and the frontend are open to all (the routes reach them), the
+# metrics port only to this namespace and metricsFrom, and the bundled Postgres only to Guardian's own pods.
+# Outgoing traffic is not restricted: Guardian sends email and back-channel logouts to the apps.
+networkPolicy:
+  enabled: true
+  # Extra NetworkPolicy peers allowed to scrape /metrics on port 3002, for example:
+  # [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+  metricsFrom: []
+
+# A Prometheus Operator ServiceMonitor for /metrics (needs the operator's CRDs).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  # Labels your Prometheus selects ServiceMonitors by, for example { release: kube-prometheus-stack }.
+  labels: {}
+
+# Scheduled backups: a CronJob runs `guardian backup` with the deletion log next to each backup, onto a
+# volume, and keeps the newest ones. Copy the volume off the cluster too (docs/INSTALL.md).
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  # age public keys (age1...) the backups are encrypted to. REQUIRED when enabled.
+  recipients: []
+  # How many backups to keep on the volume; 0 keeps all.
+  keep: 14
+  withoutAudit: false
+  persistence:
+    # Use an existing claim, or let the chart create one (kept when the release is uninstalled).
+    existingClaim: ""
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
+
+# Gateway API HTTPRoute: attaches to an existing Gateway. The chart never creates a Gateway.
+httpRoute:
+  enabled: false
+  # For example: [{ name: main-gateway, namespace: gateway-system, sectionName: https }]
+  parentRefs: []
+  # Defaults to the host of issuerURL.
+  hostnames: []
+  annotations: {}
+
+# A standard Ingress, as an alternative to the HTTPRoute.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # [{ secretName: guardian-tls }]; the host is taken from issuerURL.
+  tls: []
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  # Each password check needs 64 MiB and at most 4 run at once.
+  limits: { memory: 512Mi }
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+nodeSelector: {}
+tolerations: []
+affinity: {}

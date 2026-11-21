@@ -1,0 +1,50 @@
+# Used by CI: everything on. An external Postgres with the migration Job, autoscaling, email, scheduled
+# backups, a ServiceMonitor, and the HTTPRoute with the management UI.
+issuerURL: https://auth.example.com
+image:
+  repository: ghcr.io/krysset/guardian-backend
+  tag: "0.5.0"
+frontend:
+  image:
+    repository: ghcr.io/krysset/guardian-frontend
+  replicaCount: 3
+secrets:
+  existingSecret: guardian
+database:
+  mode: external
+  external:
+    host: guardian-rw.db.svc
+migrations:
+  mode: job
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+config:
+  deletionGracePeriod: 336h
+  signingKeyLifetime: 1440h
+  mail:
+    host: smtp.example.com
+    username: guardian
+    from: Guardian <no-reply@example.com>
+    requireEmail: true
+networkPolicy:
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+backup:
+  enabled: true
+  recipients:
+    - age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+  keep: 7
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+      sectionName: https

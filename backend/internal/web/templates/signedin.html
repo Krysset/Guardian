@@ -1,0 +1,7 @@
+{{define "content"}}
+      <h1>You're already signed in</h1>
+      <p class="who">Signed in as <strong>{{.Username}}</strong></p>
+      <div class="buttons-top">
+        <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="button" type="submit">Sign out</button></form>
+      </div>
+{{end}}

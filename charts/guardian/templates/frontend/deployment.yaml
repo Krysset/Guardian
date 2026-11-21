@@ -1,0 +1,75 @@
+{{- if .Values.frontend.enabled }}
+{{- $fe := .Values.frontend }}
+# The management UI: static files served by nginx as a non-root user. It holds no secrets and talks to
+# nothing; the browser calls the backend's /api/v1 on the same host.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guardian.frontendName" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ $fe.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "guardian.frontendSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "guardian.labels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+      {{- with $fe.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: frontend
+          image: {{ include "guardian.frontendImage" . | quote }}
+          imagePullPolicy: {{ $fe.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet: { path: /_ui/health, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /_ui/health, port: http }
+            periodSeconds: 5
+          resources:
+            {{- toYaml $fe.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            # nginx writes its pid and temporary files here.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with $fe.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $fe.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $fe.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

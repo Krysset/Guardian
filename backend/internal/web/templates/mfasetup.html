@@ -1,0 +1,45 @@
+{{define "content"}}
+      <h1>Set up two-factor</h1>
+      <p class="sub">{{.Message}} It only takes a minute.</p>
+      <nav class="methods" aria-label="Two-factor method">
+        <a href="/mfa/setup"{{if not .Key}} aria-current="page"{{end}}>Authenticator app</a>
+        <a href="/mfa/setup?method=key"{{if .Key}} aria-current="page"{{end}}>Security key or passkey</a>
+      </nav>
+      {{template "error-banner" .}}
+      {{if .Key}}
+      <form method="post" action="/mfa/setup" data-webauthn="create" data-options="{{.KeyOptions}}">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="key">
+        <input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="credential">
+        {{if .AskPassword}}<p class="step"><label for="current_password">First, your password, to confirm it's you.</label></p>
+        <div class="password"><input class="text" id="current_password" name="current_password" type="password" autocomplete="current-password" required{{if .FieldErrors.current_password}} aria-invalid="true" aria-describedby="current-password-error"{{end}}></div>
+        {{with .FieldErrors.current_password}}<p class="field-error" id="current-password-error">{{.}}</p>{{end}}{{end}}
+        <p class="step"><label for="name">1. Name it, so you can tell your keys apart.</label></p>
+        <input class="text" id="name" name="name" type="text" maxlength="64" placeholder="Security key" autocomplete="off"{{if .FieldErrors.name}} aria-invalid="true" aria-describedby="name-error"{{end}}>
+        {{with .FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+        <p class="step">2. Add it. Your browser asks you to touch the key, or to save a passkey on this device or your phone.</p>
+        <button class="button" type="submit">{{template "icon-key"}}Add security key</button>
+        <p class="field-error center" data-webauthn-error role="alert" hidden></p>
+        <noscript><p class="field-error center">Security keys need JavaScript. Use the authenticator app instead.</p></noscript>
+      </form>
+      {{else}}
+      <form method="post" action="/mfa/setup">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="scan">
+        <input type="hidden" name="token" value="{{.Token}}">
+        {{if .AskPassword}}<p class="step"><label for="current_password">First, your password, to confirm it's you.</label></p>
+        <div class="password"><input class="text" id="current_password" name="current_password" type="password" autocomplete="current-password" required{{if .FieldErrors.current_password}} aria-invalid="true" aria-describedby="current-password-error"{{end}}></div>
+        {{with .FieldErrors.current_password}}<p class="field-error" id="current-password-error">{{.}}</p>{{end}}{{end}}
+        <p class="step">1. Scan this with your authenticator app.</p>
+        {{with .QRCode}}<img class="qr" src="{{.}}" width="168" height="168" alt="QR code for your authenticator app">{{end}}
+        <p class="hint center">Can't scan it? Type this key instead:</p>
+        <div class="secret"><code id="secret">{{.SecretGroups}}</code><button class="button alt small-button" type="button" data-copy="secret" hidden>Copy</button></div>
+        <p class="step">2. Enter the code it shows.</p>
+        <label class="visually-hidden" for="code">Code</label>
+        <input class="text code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" placeholder="000000" required{{if .FieldErrors.code}} aria-invalid="true" aria-describedby="code-error"{{end}}>
+        {{with .FieldErrors.code}}<p class="field-error" id="code-error">{{.}}</p>{{end}}
+        <button class="button" type="submit">Continue</button>
+      </form>
+      {{end}}
+      <form class="small" method="post" action="/mfa/cancel">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link-button" type="submit">Sign out</button>
+      </form>
+{{end}}

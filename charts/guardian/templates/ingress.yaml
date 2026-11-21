@@ -1,0 +1,51 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "guardian.fullname" . }}
+  labels:
+    {{- include "guardian.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- range . }}
+    - secretName: {{ .secretName }}
+      hosts: [{{ include "guardian.host" $ | quote }}]
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ include "guardian.host" . | quote }}
+      http:
+        paths:
+          {{- if .Values.frontend.enabled }}
+          # The management UI: exactly /, and /account, /admin and /_app with everything under them.
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "guardian.frontendName" . }}
+                port: { number: 8080 }
+          {{- range list "/account" "/admin" "/_app" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "guardian.frontendName" $ }}
+                port: { number: 8080 }
+          {{- end }}
+          {{- end }}
+          # Everything else: sign-in pages, OIDC, /api/v1.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "guardian.fullname" . }}
+                port: { number: 3001 }
+{{- end }}

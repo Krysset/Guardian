@@ -1,0 +1,22 @@
+{{define "bar"}} fixed{{end}}
+{{define "content"}}
+      <div class="app">
+        <div class="app-logo" aria-hidden="true">{{if .App.LogoURL}}<img src="{{.App.LogoURL}}" alt="">{{else}}{{initial .App.PrettyName}}{{end}}</div>
+        <h1>{{.App.PrettyName}} wants to use your Guardian account</h1>
+      </div>
+      <p class="who-left">Signed in as <strong>{{.Username}}</strong></p>
+      {{template "signout-to-switch" .}}<button class="link-button" type="submit">Not you? Sign out</button></form>
+      <div class="scroll" tabindex="0" aria-labelledby="gets">
+        <div class="gets"><h2 id="gets">{{.App.PrettyName}} will get</h2></div>
+        <ul class="scopes">{{range .Scopes}}
+          <li>{{.}}</li>{{end}}
+        </ul>
+      </div>
+      <form class="actions" method="post" action="/consent">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="req" value="{{.Req}}">
+        <hr>
+        <button class="button" type="submit" name="decision" value="allow">Allow</button>
+        <button class="button alt" type="submit" name="decision" value="deny">Deny</button>
+        <p class="hint">You can remove {{.App.PrettyName}}'s access later in your account.</p>
+      </form>
+{{end}}

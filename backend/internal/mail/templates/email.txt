@@ -1,0 +1,20 @@
+{{.Subject}}
+{{range .Lines}}
+{{.}}
+{{end}}{{with .Button}}
+{{.Label}}:
+{{.URL}}
+{{end}}{{with .Small}}
+{{.}}
+{{end}}{{with .Facts}}
+{{range .}}{{.Label}}: {{.Value}}
+{{end}}{{end}}{{with .Items}}
+{{range .}}- {{.Title}}
+  {{.When}}
+  {{.URL}}
+{{end}}{{end}}{{with .NotMe}}
+Wasn't you? {{.}}
+{{end}}
+--
+Sent by {{.Site.Name}}{{with .Site.Host}} ({{.}}){{end}} because this address belongs to a Guardian account.
+{{if .Footer}}{{.Footer}}{{else}}You can't turn off security emails.{{end}}
