@@ -50,6 +50,9 @@ func Router() http.Handler {
 			r.Get("/me/apps", listMyApps)
 			r.Delete("/me/apps/{app}", removeMyApp)
 			r.Get("/me/groups", listMyGroups)
+			r.Get("/me/group-requests", listMyGroupRequests)
+			r.Post("/me/group-requests", askToJoinGroup)
+			r.Delete("/me/group-requests/{request}", withdrawMyGroupRequest)
 			r.Post("/me/reauth", reauth)
 			r.Post("/me/reauth/key", startKeyReauth)
 			r.Delete("/me", deleteMe)
@@ -72,6 +75,8 @@ func Router() http.Handler {
 			r.Post("/groups/{group}/members", addGroupMemberByLogin)
 			r.Put("/groups/{group}/members/{account}", addGroupMember)
 			r.Delete("/groups/{group}/members/{account}", removeGroupMember)
+			r.Get("/groups/{group}/requests", listGroupRequests)
+			r.Post("/groups/{group}/requests/{request}", decideGroupRequest)
 
 			// Apps: administrators may do everything; an app's admins (its owner group's members) may see and
 			// edit it, rotate its secret, link groups they own, and read its audit entries.

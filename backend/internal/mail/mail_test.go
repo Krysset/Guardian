@@ -46,6 +46,19 @@ func TestEveryEmailRendersBothPartsAndEscapes(t *testing.T) {
 			}
 		}
 	}
+	// The group request emails are not about security, and say why they came instead.
+	for name, m := range map[string]Message{
+		"requested": GroupRequested("a@b.test", "Zelda <z>", "Knights", "Let me <in>", link, when, ""),
+		"approved":  GroupRequestDecided("a@b.test", "Knights", true, link, when, ""),
+		"denied":    GroupRequestDecided("a@b.test", "Knights", false, link, when, ""),
+	} {
+		if strings.Contains(m.Text, "security emails") || !strings.Contains(m.Text, "You get this because") {
+			t.Errorf("%s: footer:\n%s", name, m.Text)
+		}
+		if strings.Contains(m.HTML, "<in>") || strings.Contains(m.HTML, "Zelda <z>") {
+			t.Errorf("%s: not escaped", name)
+		}
+	}
 	if m := ConfirmAddress("a@b.test", link, when, "Europe/Stockholm", false); !strings.Contains(m.Text, "15 Nov 2026 at 14:02 (Europe/Stockholm)") {
 		t.Errorf("times are shown in the account's zone: %s", m.Text)
 	}

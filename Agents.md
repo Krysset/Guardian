@@ -90,6 +90,10 @@ current: they are the hand-off between sessions.
   layout sends app admins to `/admin/apps`. Proof of work (V9): `web/pow.go`, the `pow` template in
   `layout.html`, the solver at the end of `guardian.js`; e2e `postForm` answers puzzles like the script does
   (`pow=-` sends none) and `web.PoWMax` is 200 there.
+- **Groups (2026-11-21):** `hidden`, `requestable`, `join_by_default` on `user_group`; `group_request` table
+  (`store/requests.go`); `web/requests.go` (`AskToJoin`, `DecideRequest`, the no-access page's
+  `/request-access`); emails E7/E8 carry a `Footer` instead of the security-email line;
+  `withDefaultGroups` wraps every account INSERT. UI: `GroupRequests.svelte` on AD5 and AC6; AC5 asks.
 - **ES256 per app** (2026-11-21): `app.signing_alg` (RS256 default); store functions for signing keys work per
   algorithm; `LogoutTarget` carries the alg. `keys rotate --alg`. Changing `00001_init.sql` changes the schema
   revision: the test database (and the owner's Compose volume) must be recreated.

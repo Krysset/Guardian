@@ -15,7 +15,7 @@ Page ids: **S** sign-in pages, **H** home (`/`), **AC** account area (`/account`
 | S2 Sign up | Create an account, with the three notices. | V3 | Visitor | 0.1 |
 | S3 Choose a new password | After an admin set a temporary password. | U3 | User | 0.1 |
 | S4 Consent | What an app asks for; allow or deny. | U1 | User | 0.1 |
-| S5 No access | The account may not use this app. | U2 | User | 0.1 |
+| S5 No access | The account may not use this app; ask to join one of its requestable groups. | U2, A33 | User | 0.1 |
 | S6 Sign out? | Confirm signing out of Guardian and all apps. | U5 | User | 0.1 |
 | S7 Signed out | Confirmation, and a way back. | U5 | Visitor | 0.1 |
 | S8 Already signed in | Who is signed in; go to the account area, or sign out. | U6 | User | 0.1 |
@@ -44,8 +44,8 @@ The account area opens on AC1 Profile.
 | AC2 Security | Password, two-factor methods, security keys and passkeys (0.5), recovery codes. | U10, U11 | User | 0.4 |
 | AC3 Sessions | Where they are signed in; sign out one or all. | U12 | User | 0.4 |
 | AC4 Connected apps | Apps they use, what each can see; remove access. | U13 | User | 0.4 |
-| AC5 Groups | Groups they are in (not hidden ones), and the groups they own, linking to AC6. | U18, O1 | User | 0.4 |
-| AC6 Owned group | One group they own: members and expiry, add by exact username or email, remove, linked apps. | O2, O3, O5 | Group owner | 0.4 |
+| AC5 Groups | Groups they are in (not hidden ones), the groups they own (with waiting requests), linking to AC6; their requests to join, and groups they may ask to join. | U18, O1, A33 | User | 0.4 |
+| AC6 Owned group | One group they own: requests to join, members and expiry, add by exact username or email, remove, linked apps. | O2, O3, O5, A33 | Group owner | 0.4 |
 | AC7 Your data | Download their data; delete the account. | U14, U15 | User | 0.4 |
 | AC8 Confirm it's you (dialog) | Password or second factor before a protected change, then the change is saved. Used by AC1, AC2, AC3, AC4 and AC7. | U16 | User | 0.4 |
 
@@ -60,7 +60,7 @@ Every admin page carries the one-administrator warning (A23) while it applies. T
 | AD2 Account | Profile and email, status, groups and their expiry, temporary password, sign out everywhere, two-factor reset (0.3), delete or erase, restore during grace (0.3). | A2, A4, A5, A6, A7, A8, A9, A10, A13 | Guardian admin | 0.4 |
 | AD3 New account | Username, password, email. | A3 | Guardian admin | 0.4 |
 | AD4 Groups | All groups: key, name, members, owner group, built-in, bound app (single-app), hidden (1.x), linked apps. | A11, A26, A27 | Guardian admin | 0.4 |
-| AD5 Group | Name, description, owner group, the app it is bound to (single-app), hidden (1.x), copy, members and expiry, linked apps; delete. | A12, A13, A14, A26, A27, A29, O5 | Guardian admin | 0.4 |
+| AD5 Group | Name, description, owner group, the app it is bound to (single-app), hidden, requestable, new accounts join, requests to join, copy, members and expiry, linked apps; delete. | A12, A13, A14, A26, A27, A29, O5 | Guardian admin | 0.4 |
 | AD6 New group | Name, key (suggested from the name; never changes), description, owner group, "Is this group for one app only?" (no preselected answer; yes asks for the app), hidden (1.x). As a copy of a group: every field starts from the original, and the question about one app is left out. | A12, A26, A27, A29 | Guardian admin | 0.4 |
 | AD7 Apps | All apps; app admins see their own, as "Your apps", with no New app. | A15 | App admin | 0.4 |
 | AD8 App | Settings, access (rule, linked groups, machine API for Guardian admins), credentials and secret rotation, setup details to copy, disable, delete (Guardian admins), the app's audit entries. | A17, A18, A19, A20, A21, A22, A25, A30, A32 | App admin | 0.4 |
@@ -163,10 +163,13 @@ appear from that release; until then the page is drawn without them.
 **S5 No access**
 - Shows:
   - "You don't have access to `<app>`";
-  - what to do: ask an administrator to add you to a group with access;
+  - what to do: ask an administrator to add you to a group with access; or, when the app has requestable
+    groups (A33), one card per group (name, description, an optional message, "Ask to join", or "Waiting for a
+    decision" when asked already);
+  - after asking, a notice: sent, asked already, too many requests in the last hour, or no longer requestable;
   - "Signed in as `<username>`".
-- Actions: Sign out to switch account (signs out, then back to sign-in for the same app); go to your account
-  (0.4).
+- Actions: Ask to join; Sign out to switch account (signs out, then back to sign-in for the same app); go to
+  your account (0.4).
 
 **S6 Sign out?**
 - Shows: "Sign out of Guardian? You will also be signed out of the apps you use through Guardian."
@@ -300,11 +303,17 @@ appear from that release; until then the page is drawn without them.
 **AC5 Groups**
 - **Groups you're in:** display name, description, when the membership expires. Display names only: users
   never need group keys.
-- **Groups you manage** (group owners): display name, number of members, linked apps; open (AC6).
+- **Groups you manage** (group owners): display name, number of members, waiting requests, linked apps; open
+  (AC6).
+- **Your requests** (A33): group, when asked, and Waiting (with Withdraw), Approved, Denied or Withdrawn;
+  decided ones stay for 30 days.
+- **Ask to join**: the requestable groups they are not in, each with an optional message and "Ask to join".
 - States: no groups.
 
 **AC6 Owned group**
 - Shows: name, description, the apps it is linked to (names only).
+- **Requests to join** (A33), when there are any: who, when, their message; Approve (optionally until a date)
+  or Deny. The requester is emailed.
 - Shows the members: username, display name, added, expires.
 - Fields: username or email (exact); expiry date (optional). There are no suggestions.
 - Actions: Add (the only answers are "No user found" and "User added"); Remove (with confirmation); change a
@@ -368,7 +377,10 @@ appear from that release; until then the page is drawn without them.
 **AD5 Group**
 - Shows: key (read-only, "never changes"), bound app (read-only), linked apps (linking is done on the app's
   page).
-- Fields: display name, description, owner group.
+- Fields: display name, description, owner group; switches, in this order: new accounts join (A34), people
+  can ask to join (A33), hidden from its members (A26). The last two exclude each other: while one is on, the
+  other is dimmed and disabled, with a line saying why and which to turn off first.
+- **Requests to join:** as on AC6.
 - **Members:** the same as AC6, except that admins may also search accounts.
 - Actions: Save; Bind to an app (only while it is linked to at most that one app; with a warning that it is
   permanent); Copy (opens AD6 as a copy); Delete (type the key; shows the members and linked apps it affects).

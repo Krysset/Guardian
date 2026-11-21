@@ -13,4 +13,4 @@ Wasn't you? {{.}}
 {{end}}
 --
 Sent by {{.Site.Name}}{{with .Site.Host}} ({{.}}){{end}} because this address belongs to a Guardian account.
-You can't turn off security emails.
+{{if .Footer}}{{.Footer}}{{else}}You can't turn off security emails.{{end}}

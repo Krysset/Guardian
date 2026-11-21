@@ -7,6 +7,7 @@
 	import { askConfirm } from '#lib/confirm.svelte.ts';
 	import CopyField from '#lib/components/CopyField.svelte';
 	import GroupMembers from '#lib/components/GroupMembers.svelte';
+	import GroupRequests from '#lib/components/GroupRequests.svelte';
 	import { messageOf } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -18,17 +19,34 @@
 	// Owner choices: any other group (a group cannot own itself).
 	const owners = $derived(data.groups.filter((g) => g.id !== group.id));
 
+	function formOf(g: typeof data.group) {
+		return {
+			display_name: g.display_name,
+			description: g.description,
+			owner: g.owner_group_id ?? '',
+			hidden: g.hidden,
+			requestable: g.requestable,
+			join_by_default: g.join_by_default
+		};
+	}
 	// svelte-ignore state_referenced_locally
-	let form = $state({ display_name: data.group.display_name, description: data.group.description, owner: data.group.owner_group_id ?? '' });
+	let form = $state(formOf(data.group));
 	// svelte-ignore state_referenced_locally
 	let shownId = data.group.id;
 	$effect(() => {
 		if (data.group.id !== shownId) {
 			shownId = data.group.id;
-			form = { display_name: data.group.display_name, description: data.group.description, owner: data.group.owner_group_id ?? '' };
+			form = formOf(data.group);
 		}
 	});
-	const dirty = $derived(form.display_name.trim() !== group.display_name || form.description.trim() !== group.description || form.owner !== (group.owner_group_id ?? ''));
+	const dirty = $derived(
+		form.display_name.trim() !== group.display_name ||
+			form.description.trim() !== group.description ||
+			form.owner !== (group.owner_group_id ?? '') ||
+			form.hidden !== group.hidden ||
+			form.requestable !== group.requestable ||
+			form.join_by_default !== group.join_by_default
+	);
 
 	let note = $state<{ section: string; ok: boolean; text: string } | null>(null);
 	let bindApp = $state('');
@@ -38,7 +56,15 @@
 		note = null;
 		if (!form.display_name.trim()) return (note = { section: 'details', ok: false, text: 'The display name cannot be empty.' });
 		try {
-			await api.patch('/groups/{group}', { path: { group: group.id }, body: { display_name: form.display_name.trim(), description: form.description.trim(), owner_group_id: form.owner } });
+			await api.patch('/groups/{group}', { path: { group: group.id }, body: {
+					display_name: form.display_name.trim(),
+					description: form.description.trim(),
+					owner_group_id: form.owner,
+					hidden: form.hidden,
+					requestable: form.requestable,
+					join_by_default: form.join_by_default
+				}
+			});
 			note = { section: 'details', ok: true, text: 'Saved.' };
 			await refreshAll();
 		} catch (e) {
@@ -126,6 +152,30 @@
 			</div>
 			<div class="wide"><label class="lbl" for="gde">Description</label><input class="in" id="gde" maxlength="1024" bind:value={form.description} /></div>
 		</div>
+		<div class="switches">
+			<label class="switch">
+				<span><strong>New accounts join</strong><span class="hint block">Every account created from now on, by sign-up or by an administrator.</span></span>
+				<input type="checkbox" bind:checked={form.join_by_default} />
+			</label>
+			<!-- A hidden group cannot be asked for: asking would show it to everyone. While one is on, the other is
+			     off and says why. -->
+			<label class="switch" class:off={form.hidden}>
+				<span>
+					<strong>People can ask to join</strong>
+					<span class="hint block">From their groups page, or when {group.display_name}'s apps refuse them. {form.owner ? 'The owners' : 'Administrators'} decide.</span>
+					{#if form.hidden}<span class="why block">Not possible while the group is hidden: asking would show it to everyone. Turn off "Hidden from its members" first.</span>{/if}
+				</span>
+				<input type="checkbox" bind:checked={form.requestable} disabled={form.hidden} />
+			</label>
+			<label class="switch" class:off={form.requestable}>
+				<span>
+					<strong>Hidden from its members</strong>
+					<span class="hint block">Left out of their own groups page. Apps still see it in sign-ins, so it isn't secret.</span>
+					{#if form.requestable}<span class="why block">Not possible while people can ask to join: the list of groups to ask for shows it. Turn off "People can ask to join" first.</span>{/if}
+				</span>
+				<input type="checkbox" bind:checked={form.hidden} disabled={form.requestable} />
+			</label>
+		</div>
 		{@render message('details')}
 		<div class="foot">
 			<span class="hint">
@@ -137,6 +187,8 @@
 		</div>
 	</form>
 {/if}
+
+<GroupRequests groupId={group.id} groupName={group.display_name} requests={data.requests} />
 
 <GroupMembers groupId={group.id} groupName={group.display_name} members={data.members} search accountLinks />
 
@@ -244,5 +296,43 @@
 	.bind {
 		margin-top: 10px;
 		max-width: 320px;
+	}
+	.switches {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		margin-top: 20px;
+	}
+	.switch {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		cursor: pointer;
+	}
+	.switch strong {
+		font-weight: 600;
+	}
+	.switch.off {
+		cursor: not-allowed;
+	}
+	.switch.off strong,
+	.switch.off .hint {
+		opacity: 0.5;
+	}
+	.switch input:disabled {
+		cursor: not-allowed;
+		opacity: 0.35;
+	}
+	.why {
+		margin-top: 4px;
+		font-size: 13px;
+		color: var(--warn);
+	}
+	.switch input {
+		width: 20px;
+		height: 20px;
+		accent-color: var(--accent);
+		flex: none;
 	}
 </style>

@@ -85,10 +85,19 @@ func GetPasswordHash(id string) (string, error) {
 	return hash, err
 }
 
+// withDefaultGroups wraps an INSERT INTO account ... RETURNING id so that the new account also joins every
+// group marked join_by_default, in the same statement.
+func withDefaultGroups(insert string) string {
+	return `WITH a AS (` + insert + `), m AS (
+		INSERT INTO group_member (group_id, account_id) SELECT g.id, a.id FROM user_group g, a WHERE g.join_by_default)
+		SELECT id FROM a`
+}
+
+// CreateAccount creates an active account; it joins the default groups.
 func CreateAccount(username, passwordHash string) (Account, error) {
 	var id string
-	err := GetDatabaseConnection().QueryRow(
-		`INSERT INTO account (username, password_hash) VALUES ($1, $2) RETURNING id`, username, passwordHash).Scan(&id)
+	err := GetDatabaseConnection().QueryRow(withDefaultGroups(
+		`INSERT INTO account (username, password_hash) VALUES ($1, $2) RETURNING id`), username, passwordHash).Scan(&id)
 	if err != nil {
 		slog.Error("failed to create an account", "error", err)
 		return Account{}, err

@@ -221,11 +221,12 @@ type MyGroup struct {
 
 // ManagedGroup is a group the account manages as an owner.
 type ManagedGroup struct {
-	ID          string   `json:"id"`
-	DisplayName string   `json:"display_name"`
-	Description string   `json:"description"`
-	MemberCount int      `json:"member_count"`
-	Apps        []string `json:"apps"` // display names of the linked apps
+	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name"`
+	Description  string   `json:"description"`
+	MemberCount  int      `json:"member_count"`
+	Apps         []string `json:"apps"`          // display names of the linked apps
+	OpenRequests int      `json:"open_requests"` // requests to join waiting for a decision
 }
 
 // MyGroups lists the groups the account is in (memberships that have not expired).
@@ -233,7 +234,7 @@ func MyGroups(accountID string) ([]MyGroup, error) {
 	rows, err := GetDatabaseConnection().Query(
 		`SELECT g.id, g.display_name, g.description, m.expires_at
 		 FROM group_member m JOIN user_group g ON g.id = m.group_id
-		 WHERE m.account_id = $1 AND `+activeMember+`
+		 WHERE m.account_id = $1 AND `+activeMember+` AND NOT g.hidden
 		 ORDER BY lower(g.display_name), g.key`, accountID)
 	if err != nil {
 		return nil, err
@@ -261,7 +262,8 @@ func ManagedGroups(accountID string) ([]ManagedGroup, error) {
 		`SELECT g.id, g.display_name, g.description,
 		        (SELECT count(*) FROM group_member m WHERE m.group_id = g.id AND `+activeMember+`),
 		        ARRAY(SELECT a.pretty_name FROM app_group ag JOIN app a ON a.id = ag.app_id
-		              WHERE ag.group_id = g.id ORDER BY lower(a.pretty_name))
+		              WHERE ag.group_id = g.id ORDER BY lower(a.pretty_name)),
+		        (SELECT count(*) FROM group_request q WHERE q.group_id = g.id AND q.decision IS NULL)
 		 FROM user_group g
 		 WHERE NOT g.is_system AND EXISTS (SELECT 1 FROM group_member m
 		        WHERE m.group_id = g.owner_group_id AND m.account_id = $1 AND `+activeMember+`)
@@ -273,7 +275,7 @@ func ManagedGroups(accountID string) ([]ManagedGroup, error) {
 	groups := []ManagedGroup{}
 	for rows.Next() {
 		var g ManagedGroup
-		if err := rows.Scan(&g.ID, &g.DisplayName, &g.Description, &g.MemberCount, scanArray(&g.Apps)); err != nil {
+		if err := rows.Scan(&g.ID, &g.DisplayName, &g.Description, &g.MemberCount, scanArray(&g.Apps), &g.OpenRequests); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)

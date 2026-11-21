@@ -3,6 +3,7 @@
      apps are shown by name; only an administrator can change them. -->
 <script lang="ts">
 	import GroupMembers from '#lib/components/GroupMembers.svelte';
+	import GroupRequests from '#lib/components/GroupRequests.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -26,6 +27,8 @@
 		<p class="hint none">None yet.</p>
 	{/if}
 </section>
+
+<GroupRequests groupId={group.id} groupName={group.display_name} requests={data.requests} />
 
 <GroupMembers groupId={group.id} groupName={group.display_name} members={data.members} />
 

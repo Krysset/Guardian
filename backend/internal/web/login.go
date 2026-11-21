@@ -45,6 +45,7 @@ func Mount(r chi.Router) {
 	r.Get("/mfa/setup", mfaSetupPage)
 	r.Get("/mfa/stepup", stepUpPage)
 	r.Post("/mfa/setup", mfaSetupSubmit)
+	r.Post("/request-access", requestAccessSubmit)
 	r.Get("/static/*", serveStatic)
 	r.Head("/static/*", serveStatic)
 }

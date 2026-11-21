@@ -184,9 +184,17 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, req.RedirectURI, req.State, "access_denied", "The account has no access to this app")
 			return
 		}
+		// The app's groups that may be asked for (A33). The notice says what the last "Ask to join" did.
+		requestable, err := db.RequestableGroups(sess.AccountID, req.App.ID)
+		if err != nil {
+			slog.Error("failed to list requestable groups", "error", err)
+		}
+		q := r.URL.Query()
+		notice := web.RequestNotice(q.Get("requested"))
+		q.Del("requested")
 		web.Render(w, http.StatusForbidden, "noaccess", web.Page{
 			Title: "No access to " + req.App.PrettyName, App: req.App, Username: acct.Username,
-			CSRF: httpx.CSRFToken(w, r), ReturnTo: "/authorize?" + r.URL.RawQuery,
+			CSRF: httpx.CSRFToken(w, r), ReturnTo: "/authorize?" + q.Encode(), Requestable: requestable, Notice: notice,
 		})
 		return
 	}

@@ -22,7 +22,7 @@
 {{end}}</table>
 {{end}}{{with .NotMe}}<div style="margin:22px 0 0;padding:14px 16px;border-left:3px solid #b8561a;background:#f7ede6;font-size:14px"><strong>Wasn't you?</strong> {{.}}</div>
 {{end}}</td></tr>
-<tr><td style="padding:16px 28px;border-top:1px solid #d3dfe1;font-size:12px;color:#4d6469">Sent by {{.Site.Name}} because this address belongs to a Guardian account. You can't turn off security emails.</td></tr>
+<tr><td style="padding:16px 28px;border-top:1px solid #d3dfe1;font-size:12px;color:#4d6469">Sent by {{.Site.Name}} because this address belongs to a Guardian account. {{if .Footer}}{{.Footer}}{{else}}You can't turn off security emails.{{end}}</td></tr>
 </table>
 </body>
 </html>

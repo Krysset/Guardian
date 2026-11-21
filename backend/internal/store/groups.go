@@ -47,6 +47,11 @@ type Group struct {
 	BoundAppID        string     `json:"bound_app_id,omitempty"`
 	BoundAt           *time.Time `json:"bound_at,omitempty"`
 	BoundAppDeletedAt *time.Time `json:"bound_app_deleted_at,omitempty"`
+
+	Hidden        bool `json:"hidden"`          // left out of its members' own group list
+	Requestable   bool `json:"requestable"`     // people may ask to join
+	JoinByDefault bool `json:"join_by_default"` // every new account joins
+	OpenRequests  int  `json:"open_requests"`   // requests to join waiting for a decision
 }
 
 type GroupMember struct {
@@ -64,13 +69,15 @@ const activeMember = `(m.expires_at IS NULL OR m.expires_at > now())`
 const groupColumns = `g.id, g.key, g.display_name, g.description, g.is_system, COALESCE(g.owner_group_id::text, ''),
 	(SELECT count(*) FROM group_member m WHERE m.group_id = g.id AND ` + activeMember + `),
 	ARRAY(SELECT ag.app_id::text FROM app_group ag WHERE ag.group_id = g.id ORDER BY 1), g.created_at,
-	COALESCE(g.bound_app_id::text, ''), g.bound_at, g.bound_app_deleted_at`
+	COALESCE(g.bound_app_id::text, ''), g.bound_at, g.bound_app_deleted_at, g.hidden, g.requestable, g.join_by_default,
+	(SELECT count(*) FROM group_request q WHERE q.group_id = g.id AND q.decision IS NULL)`
 
 func scanGroup(s scanner) (Group, error) {
 	var g Group
 	var boundAt, deletedAt sql.NullTime
 	err := s.Scan(&g.ID, &g.Key, &g.DisplayName, &g.Description, &g.IsSystem, &g.OwnerGroupID, &g.MemberCount,
-		scanArray(&g.AppIDs), &g.CreatedAt, &g.BoundAppID, &boundAt, &deletedAt)
+		scanArray(&g.AppIDs), &g.CreatedAt, &g.BoundAppID, &boundAt, &deletedAt, &g.Hidden, &g.Requestable, &g.JoinByDefault,
+		&g.OpenRequests)
 	g.CreatedAt = g.CreatedAt.UTC()
 	if boundAt.Valid {
 		t := boundAt.Time.UTC()
@@ -249,10 +256,16 @@ func bindGroup(tx *sql.Tx, groupID, appID string) error {
 
 // GroupUpdate lists what UpdateGroup may change. A nil field is left as it is.
 type GroupUpdate struct {
-	DisplayName  *string
-	Description  *string
-	OwnerGroupID *string // "" removes the owner
+	DisplayName   *string
+	Description   *string
+	OwnerGroupID  *string // "" removes the owner
+	Hidden        *bool
+	Requestable   *bool
+	JoinByDefault *bool
 }
+
+// ErrHiddenRequestable: a hidden group cannot also be open to requests, which would show it to everyone.
+var ErrHiddenRequestable = errors.New("a hidden group cannot be open to requests")
 
 // UpdateGroup changes a group's display name, description or owner. Built-in groups cannot be changed.
 func UpdateGroup(id string, u GroupUpdate) error {
@@ -268,13 +281,31 @@ func UpdateGroup(id string, u GroupUpdate) error {
 			return ErrInvalidOwner
 		}
 	}
+	hidden, requestable := g.Hidden, g.Requestable
+	if u.Hidden != nil {
+		hidden = *u.Hidden
+	}
+	if u.Requestable != nil {
+		requestable = *u.Requestable
+	}
+	if hidden && requestable {
+		return ErrHiddenRequestable
+	}
 	_, err = GetDatabaseConnection().Exec(
 		`UPDATE user_group SET
-			display_name   = COALESCE($2, display_name),
-			description    = COALESCE($3, description),
-			owner_group_id = CASE WHEN $4::boolean THEN NULLIF($5, '')::uuid ELSE owner_group_id END
+			display_name    = COALESCE($2, display_name),
+			description     = COALESCE($3, description),
+			owner_group_id  = CASE WHEN $4::boolean THEN NULLIF($5, '')::uuid ELSE owner_group_id END,
+			hidden          = COALESCE($6, hidden),
+			requestable     = COALESCE($7, requestable),
+			join_by_default = COALESCE($8, join_by_default)
 		 WHERE id = $1 AND NOT is_system`,
-		id, u.DisplayName, u.Description, u.OwnerGroupID != nil, deref(u.OwnerGroupID))
+		id, u.DisplayName, u.Description, u.OwnerGroupID != nil, deref(u.OwnerGroupID), u.Hidden, u.Requestable, u.JoinByDefault)
+	if err == nil && u.Requestable != nil && !*u.Requestable {
+		// Closing a group to requests withdraws the open ones.
+		_, err = GetDatabaseConnection().Exec(`UPDATE group_request SET decision = 'withdrawn', decided_at = now()
+			WHERE group_id = $1 AND decision IS NULL`, id)
+	}
 	return err
 }
 

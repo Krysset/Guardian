@@ -27,6 +27,7 @@ var tables = []table{
 	{"account_consent", "account_id, app_id"},
 	{"user_group", "id"},
 	{"group_member", "group_id, account_id"},
+	{"group_request", "id"},
 	{"app_group", "app_id, group_id"},
 	{"app_user", "app_id, account_id"},
 	{"signing_key", "kid"},

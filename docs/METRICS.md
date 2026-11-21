@@ -28,7 +28,7 @@ Counters are per replica. Use `sum(rate(...))` across replicas.
 | `guardian_app_access_denied_total` | `app` | Sign-ins to an app refused because the account is in none of its groups. |
 | `guardian_tokens_issued_total` | `app`, `grant`: authorization_code, refresh_token, client_credentials | Tokens issued. Refreshes are the steady load: one per signed-in user per app per token lifetime. |
 | `guardian_token_refusals_total` | `app`, `grant` (also `other`), `reason` (below) | Token requests answered without tokens. |
-| `guardian_rate_limited_total` | `endpoint`: login, register, reauth, mfa, mail, forgot, honeypot | Requests refused by a rate limiter, and honeypot hits (bots). |
+| `guardian_rate_limited_total` | `endpoint`: login, register, reauth, mfa, mail, forgot, honeypot, group_request | Requests refused by a rate limiter, and honeypot hits (bots). |
 | `guardian_csrf_refusals_total` | `check`: form, origin | Requests refused as possibly cross-site (below). |
 | `guardian_passkey_clone_warnings_total` | none | Security key uses refused because the key may have been copied (below). |
 | `guardian_pow_checks_total` | `form`: signup, forgot, login, api_signup. `result`: passed, missing, invalid | Proof-of-work answers checked (below). |

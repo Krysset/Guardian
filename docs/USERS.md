@@ -164,7 +164,7 @@ Everything an app admin has for every app, and everything a group owner has for 
 | A12 | Create, change and delete groups; the key is chosen at creation and never changes, which the form must make clear. Built-in groups cannot be changed. | 0.1 / 0.4 | done |
 | A13 | Manage the members of any group, with expiry dates; also from an account's page. | 0.1 / 0.4 | done |
 | A14 | Set or remove a group's owner group. | 0.1 / 0.4 | done |
-| A26 | Mark a group as hidden from its members: it is left out of their own group list (U18). Owners and admins still see it, and apps still receive it in tokens, which a user's browser can sometimes read, so this hides it from the account area, not from a determined user. | 1.x, if needed | deferred |
+| A26 | Mark a group as hidden from its members: it is left out of their own group list (U18). Owners and admins still see it, and apps still receive it in tokens, which a user's browser can sometimes read, so this hides it from the account area, not from a determined user. | 1.0 / 1.0 | done |
 | A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | done |
 | A29 | Copy a group: a new group, with a new key, starting with the same members (and their expiry dates), after which the two are unrelated. For replacing an app without adding every member again, for two groups that start alike but will grow apart, and for starting a larger group from a smaller one. | 1.0 / 1.0 | done |
 
@@ -177,6 +177,8 @@ Everything an app admin has for every app, and everything a group owner has for 
 | A30 | Choose how an app's tokens are signed: RS256 (the default, which every OIDC app handles) or ES256 (smaller and faster, for apps that support it). Each algorithm has its own key and rotation, and a change applies at the app's next sign-in or refresh. | 1.0 / 1.0 | done |
 | A31 | An app can ask for two-factor for a single sign-in (`acr_values=mfa`), for example before a sensitive action; the tokens say whether the sign-in met it (`acr`). | 1.0 / — | done |
 | A32 | Choose an app's admins: an owner group whose members manage the app (A15 to A22), or none. | 1.0 / 1.0 | done |
+| A33 | Let people ask to join a group (only groups marked requestable): from the account area or from the page that refuses them an app. The group's owners decide, or Guardian admins when it has none; both sides are emailed; an approval adds the membership, optionally with an expiry. | 1.0 / 1.0 | done |
+| A34 | Mark groups that every new account joins (sign-ups and accounts an administrator creates). | 1.0 / 1.0 | done |
 
 **Oversight**
 

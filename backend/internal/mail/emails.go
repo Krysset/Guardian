@@ -29,6 +29,7 @@ type email struct {
 	Small   string // under the button: how long the link works
 	Facts   []fact
 	NotMe   string // "Wasn't you?" and what to do then
+	Footer  string // why this email came, for emails that are not about security
 }
 
 type button struct{ Label, URL string }
@@ -137,5 +138,35 @@ func TwoFactorReset(to, reason string, when time.Time, zone string) Message {
 			"If your account must use two-factor, you will be asked to set it up again at the next sign-in."},
 		Facts: []fact{{"When", When(when, zone)}, {"Reason", reason}},
 		NotMe: "Tell your administrator at once and change your password.",
+	}.message(to)
+}
+
+// GroupRequested is E7, sent to the people who decide when someone asks to join a group.
+func GroupRequested(to, who, group, message, link string, when time.Time, zone string) Message {
+	facts := []fact{{"Who", who}, {"Group", group}, {"When", When(when, zone)}}
+	if message != "" {
+		facts = append(facts, fact{"Their message", message})
+	}
+	return email{
+		Subject: who + " asks to join " + group,
+		Lines:   []string{who + " asks to join the group " + group + " in Guardian. You can approve or deny the request."},
+		Button:  &button{"Open the request", link},
+		Facts:   facts,
+		Footer:  "You get this because you decide who may join " + group + ".",
+	}.message(to)
+}
+
+// GroupRequestDecided is E8, sent to the person who asked to join a group when the request is decided.
+func GroupRequestDecided(to, group string, approved bool, link string, when time.Time, zone string) Message {
+	subject, line := "You were added to "+group, "Your request to join "+group+" was approved. Apps that use the group see it at your next sign-in to them."
+	if !approved {
+		subject, line = "Your request to join "+group+" was denied", "Your request to join "+group+" was denied. Ask the group's owners if you think this is a mistake."
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{line},
+		Button:  &button{"Your groups", link},
+		Facts:   []fact{{"When", When(when, zone)}},
+		Footer:  "You get this because you asked to join " + group + ".",
 	}.message(to)
 }

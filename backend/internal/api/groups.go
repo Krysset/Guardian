@@ -12,6 +12,7 @@ import (
 	"guardian/internal/httpx"
 	"guardian/internal/oidc"
 	db "guardian/internal/store"
+	"guardian/internal/web"
 )
 
 // Groups: administrators (members of guardian-admins) may do everything. A group's owners, the members
@@ -35,6 +36,8 @@ func groupFail(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusBadRequest, "The app to bind the group to does not exist")
 	case errors.Is(err, db.ErrAlreadyBound):
 		httpx.ErrorCode(w, http.StatusConflict, "already_bound", "The group is already bound to an app; a binding cannot be changed")
+	case errors.Is(err, db.ErrHiddenRequestable):
+		httpx.ErrorCode(w, http.StatusBadRequest, "hidden_requestable", "A hidden group cannot be open to requests")
 	case errors.Is(err, db.ErrLinkedElsewhere):
 		httpx.ErrorCode(w, http.StatusConflict, "linked_elsewhere", "The group is linked to another app; unlink it there first")
 	case db.IsUniqueViolation(err):
@@ -111,11 +114,14 @@ func getGroup(w http.ResponseWriter, r *http.Request) {
 
 func createGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Key          string `json:"key"`
-		DisplayName  string `json:"display_name"`
-		Description  string `json:"description"`
-		OwnerGroupID string `json:"owner_group_id"`
-		BoundAppID   string `json:"bound_app_id"` // optional: a single-app group, bound to this app for good
+		Key           string `json:"key"`
+		DisplayName   string `json:"display_name"`
+		Description   string `json:"description"`
+		OwnerGroupID  string `json:"owner_group_id"`
+		BoundAppID    string `json:"bound_app_id"` // optional: a single-app group, bound to this app for good
+		Hidden        bool   `json:"hidden"`
+		Requestable   bool   `json:"requestable"`
+		JoinByDefault bool   `json:"join_by_default"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -124,10 +130,20 @@ func createGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, msg)
 		return
 	}
+	if req.Hidden && req.Requestable {
+		groupFail(w, db.ErrHiddenRequestable)
+		return
+	}
 	id, err := db.CreateGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID, req.BoundAppID)
 	if err != nil {
 		groupFail(w, err)
 		return
+	}
+	if req.Hidden || req.Requestable || req.JoinByDefault {
+		if err := db.UpdateGroup(id, db.GroupUpdate{Hidden: &req.Hidden, Requestable: &req.Requestable, JoinByDefault: &req.JoinByDefault}); err != nil {
+			groupFail(w, err)
+			return
+		}
 	}
 	db.Audit("group.created", httpx.AccountID(r), req.BoundAppID, httpx.ClientIP(r),
 		map[string]any{"group": id, "key": req.Key, "owner_group": req.OwnerGroupID, "bound_app": req.BoundAppID})
@@ -214,10 +230,13 @@ func bindGroup(w http.ResponseWriter, r *http.Request) {
 // updateGroup changes the display name, description or owner. The key never changes: apps match on it.
 func updateGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Key          *string `json:"key"`
-		DisplayName  *string `json:"display_name"`
-		Description  *string `json:"description"`
-		OwnerGroupID *string `json:"owner_group_id"` // "" removes the owner
+		Key           *string `json:"key"`
+		DisplayName   *string `json:"display_name"`
+		Description   *string `json:"description"`
+		OwnerGroupID  *string `json:"owner_group_id"` // "" removes the owner
+		Hidden        *bool   `json:"hidden"`
+		Requestable   *bool   `json:"requestable"`
+		JoinByDefault *bool   `json:"join_by_default"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -236,7 +255,8 @@ func updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "group")
-	err := db.UpdateGroup(id, db.GroupUpdate{DisplayName: req.DisplayName, Description: req.Description, OwnerGroupID: req.OwnerGroupID})
+	err := db.UpdateGroup(id, db.GroupUpdate{DisplayName: req.DisplayName, Description: req.Description, OwnerGroupID: req.OwnerGroupID,
+		Hidden: req.Hidden, Requestable: req.Requestable, JoinByDefault: req.JoinByDefault})
 	if err != nil {
 		groupFail(w, err)
 		return
@@ -244,6 +264,11 @@ func updateGroup(w http.ResponseWriter, r *http.Request) {
 	detail := map[string]any{"group": id}
 	if req.OwnerGroupID != nil {
 		detail["owner_group"] = *req.OwnerGroupID
+	}
+	for k, v := range map[string]*bool{"hidden": req.Hidden, "requestable": req.Requestable, "join_by_default": req.JoinByDefault} {
+		if v != nil {
+			detail[k] = *v
+		}
 	}
 	db.Audit("group.updated", httpx.AccountID(r), "", httpx.ClientIP(r), detail)
 	group, err := db.GetGroup(id)
@@ -336,4 +361,51 @@ func removeGroupMember(w http.ResponseWriter, r *http.Request) {
 	db.Audit("group.member_removed", httpx.AccountID(r), "", httpx.ClientIP(r),
 		map[string]any{"group": group.ID, "key": group.Key, "account": member, "via": via, "apps_notified": len(notices)})
 	httpx.NoContent(w)
+}
+
+// listGroupRequests returns the open requests to join the group, for its owners and administrators.
+func listGroupRequests(w http.ResponseWriter, r *http.Request) {
+	group, _, ok := groupAccess(w, r)
+	if !ok {
+		return
+	}
+	requests, err := db.OpenGroupRequests(group.ID)
+	if err != nil {
+		groupFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, list(requests))
+}
+
+// decideGroupRequest approves (adding the membership, optionally until expires_at) or denies a request.
+func decideGroupRequest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Approve   *bool      `json:"approve"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Approve == nil {
+		httpx.Error(w, http.StatusBadRequest, "approve (true or false) is required")
+		return
+	}
+	if req.ExpiresAt != nil && (!*req.Approve || !req.ExpiresAt.After(time.Now())) {
+		httpx.Error(w, http.StatusBadRequest, "expires_at must be in the future, and only goes with an approval")
+		return
+	}
+	group, via, ok := groupAccess(w, r)
+	if !ok {
+		return
+	}
+	q, err := web.DecideRequest(r, group.ID, chi.URLParam(r, "request"), via, *req.Approve, req.ExpiresAt)
+	if errors.Is(err, db.ErrRequestNotOpen) {
+		httpx.ErrorCode(w, http.StatusConflict, "request_not_open", "The request was decided or withdrawn already")
+		return
+	}
+	if err != nil {
+		groupFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, q)
 }

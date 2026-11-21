@@ -148,9 +148,9 @@ func UpdateAccount(id string, u AccountUpdate) (Account, []LogoutNotice, error) 
 // password is the administrator's choice, so the user must choose their own at the first sign-in (A3, U3).
 func CreateAccountWithEmail(username, passwordHash, email string) (Account, error) {
 	var id string
-	err := GetDatabaseConnection().QueryRow(
+	err := GetDatabaseConnection().QueryRow(withDefaultGroups(
 		`INSERT INTO account (username, password_hash, email, email_verified_at, must_change_password)
-		 VALUES ($1, $2, NULLIF($3, ''), CASE WHEN $3 = '' THEN NULL ELSE now() END, true) RETURNING id`,
+		 VALUES ($1, $2, NULLIF($3, ''), CASE WHEN $3 = '' THEN NULL ELSE now() END, true) RETURNING id`),
 		username, passwordHash, email).Scan(&id)
 	if err != nil {
 		return Account{}, err

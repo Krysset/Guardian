@@ -194,9 +194,17 @@ CREATE TABLE IF NOT EXISTS user_group (
 	bound_app_id          UUID REFERENCES app(id) ON DELETE SET NULL,
 	bound_at              TIMESTAMPTZ,
 	bound_app_deleted_at  TIMESTAMPTZ,
+	-- hidden: left out of its members' own group list (apps still get it in tokens).
+	-- requestable: people outside it may ask to join; its owners (or Guardian admins) decide.
+	-- join_by_default: every new account joins it.
+	hidden                BOOLEAN NOT NULL DEFAULT FALSE,
+	requestable           BOOLEAN NOT NULL DEFAULT FALSE,
+	join_by_default       BOOLEAN NOT NULL DEFAULT FALSE,
 	CHECK (owner_group_id IS DISTINCT FROM id),
 	CHECK (bound_app_id IS NULL OR bound_at IS NOT NULL),
-	CHECK (NOT (is_system AND bound_at IS NOT NULL))
+	CHECK (NOT (is_system AND bound_at IS NOT NULL)),
+	CHECK (NOT (is_system AND (hidden OR requestable OR join_by_default))),
+	CHECK (NOT (hidden AND requestable))
 );
 CREATE INDEX IF NOT EXISTS ix_user_group_owner ON user_group (owner_group_id);
 -- The app's owner group (declared above, before user_group existed). Deleting the group leaves the app
@@ -217,6 +225,22 @@ CREATE TABLE IF NOT EXISTS group_member (
 	PRIMARY KEY (group_id, account_id)
 );
 CREATE INDEX IF NOT EXISTS ix_group_member_account ON group_member (account_id);
+
+-- Requests to join a requestable group. One open request per account and group; a decided one is kept for
+-- 30 days so its requester can see the answer, then removed by maintenance.
+CREATE TABLE IF NOT EXISTS group_request (
+	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	group_id    UUID NOT NULL REFERENCES user_group(id) ON DELETE CASCADE,
+	account_id  UUID NOT NULL REFERENCES account(id)    ON DELETE CASCADE,
+	message     TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	decision    TEXT CHECK (decision IN ('approved', 'denied', 'withdrawn')),
+	decided_by  UUID REFERENCES account(id) ON DELETE SET NULL,
+	decided_at  TIMESTAMPTZ,
+	CHECK ((decision IS NULL) = (decided_at IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_group_request_open ON group_request (group_id, account_id) WHERE decision IS NULL;
+CREATE INDEX IF NOT EXISTS ix_group_request_account ON group_request (account_id);
 
 -- Which groups an app is told about. An app only ever sees the groups linked to it, and with
 -- access_rule = 'groups' only their members may sign in to it.

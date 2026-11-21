@@ -322,6 +322,8 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - **App admins** (A15 to A24, A32, built): an app's optional owner group, chosen by Guardian admins; its members must use two-factor and manage the app: settings, enabling, the secret, the access rule, links to and from groups they own (`not_group_owner` otherwise), and its audit entries without IP addresses. Creating and deleting apps, choosing their admins and the machine API stay with Guardian admins. The admin area shows app admins only "Your apps". `/me` says `app_admin`; `GET /apps/{app}` names the linked groups.
 - **Proof-of-work challenges** (V9, built): an ALTCHA-style puzzle (SHA-256 of a salt and a secret number up to 50000, sealed with the keyring, each answered once through `used_challenge`) on sign-up and forgot-password always, and on sign-in once an address has failed three times (owner's choice). `guardian.js` solves it from page load, in about a third of a second on a laptop; a form sent before then waits for it. Without JavaScript the page explains why the form needs it; sign-in works without it until an address fails repeatedly. `POST /api/v1/signup` takes a puzzle from `GET /api/v1/signup/challenge`. Metric `guardian_pow_checks_total`.
 
+- **Hidden groups, requests to join, default groups** (A26, A33, A34, built 2026-11-21): three group switches (hidden; people can ask to join; new accounts join), never on built-in groups, hidden and requestable not together. Requests (`group_request`, one open per account and group, 10 an hour, decided ones kept 30 days) come from the account area or the no-access page; the owners decide, or Guardian admins for a group without owners; both sides are emailed (E7, E8); an approval adds the membership, optionally until a date. Closing a group to requests withdraws the open ones. New accounts join the default groups in the same statement that creates them.
+
 ### 1.0: release
 - **M7 hardening:**
   - a real browser over TLS;
@@ -349,13 +351,11 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 ## 6. After 1.0 (1.x candidates)
 
 - **Passkey-only accounts:** an account with no password, signing in only with passkeys (owner, 2026-11-20). Needs a "remove password" action, and password reset must not quietly add one back.
-- **Hidden groups,** left out of a member's own group list, only if a need arises (`docs/USERS.md` A26).
-- **Access requests:** requests to join a group, and a "request access" screen when an app's access rule denies sign-in.
 - **Rotating refresh tokens for public clients** (mobile apps and backend-less SPAs), with reuse detection.
 - **A metric for group memberships about to expire** (owner held it back from the 1.0 metrics, 2026-11-21).
 - **S3-compatible backup storage.**
 - **A bundled CloudNativePG option.**
-- **Invites,** default groups, and sign-up approval or closed modes, only if needed.
+- **Invites,** and sign-up approval or closed modes, only if needed.
 - **Not planned:** federated login, LDAP, SCIM, phone/SMS, `private_key_jwt`, dynamic client registration, multi-tenancy, third-party CAPTCHAs, KMS integration, theming beyond the built-in design, translations (strings are kept in one place so these can be added later).
 
 ## Change log

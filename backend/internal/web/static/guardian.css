@@ -133,9 +133,12 @@ h1 { font: 600 22px/1.3 Figtree, system-ui, sans-serif; margin: 0; text-align: c
 .field-error { font-size: 13px; color: var(--danger); margin: 6px 0 0; font-weight: 500; }
 
 label { display: block; font-weight: 500; font-size: 14px; margin: 18px 0 6px; }
-.label-row { display: flex; align-items: baseline; justify-content: space-between; margin: 18px 0 6px; }
-.label-row label { margin: 0; }
-.label-row a { font-size: 14px; }
+/* The password's label with "Forgot password?" beside it. The link comes after the field in the page, so the
+   keyboard goes username, password, then the link; the grid only places it beside the label. */
+.label-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "label link" "field field"; align-items: baseline; row-gap: 6px; margin: 18px 0 0; }
+.label-row label { grid-area: label; margin: 0; }
+.label-row .password { grid-area: field; }
+.label-row a { grid-area: link; font-size: 14px; }
 
 input.text {
   width: 100%;
@@ -349,3 +352,12 @@ form.small { margin-top: 14px; }
 .methods a { flex: 1; padding: 8px 10px; border-radius: 6px; text-align: center; font-size: 14px; font-weight: 600; color: var(--mute); text-decoration: none; }
 .methods a[aria-current] { background: var(--field); color: var(--ink); }
 .methods a:hover { color: var(--ink); }
+
+/* S7: groups the user may ask to join */
+.requests { display: flex; flex-direction: column; gap: 12px; margin: 20px 0 0; }
+.request { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.request-head { display: flex; flex-direction: column; gap: 2px; }
+.request .small { margin: 0; text-align: left; }
+.request .button { margin: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.pow { margin: 10px 0 0; }

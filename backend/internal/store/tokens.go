@@ -198,8 +198,8 @@ func ResetPassword(tokenHash, newHash string) (AccountToken, []LogoutNotice, err
 // in until then, and maintenance removes it if the confirmation never comes.
 func CreatePendingAccount(username, passwordHash string) (Account, error) {
 	var id string
-	err := GetDatabaseConnection().QueryRow(
-		`INSERT INTO account (username, password_hash, status) VALUES ($1, $2, 'pending') RETURNING id`,
+	err := GetDatabaseConnection().QueryRow(withDefaultGroups(
+		`INSERT INTO account (username, password_hash, status) VALUES ($1, $2, 'pending') RETURNING id`),
 		username, passwordHash).Scan(&id)
 	if err != nil {
 		return Account{}, err

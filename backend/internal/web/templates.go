@@ -66,6 +66,8 @@ type Page struct {
 	Codes        []string     // S16: the recovery codes, shown once
 
 	PoW *PoW // the form's proof-of-work puzzle (always on S2 and S10; on S1 after failures)
+
+	Requestable []db.RequestableGroup // S7: the app's groups the user may ask to join
 }
 
 // Link is a button that leads somewhere.

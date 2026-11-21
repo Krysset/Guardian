@@ -34,6 +34,7 @@ func cleanup() {
 		`DELETE FROM session WHERE expires_at < now() - interval '30 days'`,
 		`DELETE FROM rate_limit WHERE window_start < now() - interval '1 day'`,
 		`DELETE FROM used_challenge WHERE expires_at < now()`,
+		pruneGroupRequests,
 		// Sign-ups whose email was never confirmed; their usernames become free again.
 		`DELETE FROM account WHERE status = 'pending' AND last_login_at IS NULL
 			AND created_at < now() - make_interval(secs => ` + strconv.Itoa(int(PendingSignupLifetime.Seconds())) + `)`,

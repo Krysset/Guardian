@@ -1,6 +1,18 @@
 {{define "content"}}
       <h1>You don't have access to {{.App.PrettyName}}</h1>
-      <p class="sub">Ask an administrator to add you to a group that can use {{.App.PrettyName}}.</p>
+      {{template "notice-banner" .}}
+      {{if .Requestable}}<p class="sub">Ask to join a group that can use {{.App.PrettyName}}. Its owners decide, and you get an email.</p>
+      <div class="requests">
+        {{range .Requestable}}<form method="post" action="/request-access" class="request">
+          {{template "hidden-flow" $}}<input type="hidden" name="group" value="{{.ID}}">
+          <div class="request-head"><strong>{{.DisplayName}}</strong>{{with .Description}}<span class="small">{{.}}</span>{{end}}</div>
+          {{if .Requested}}<p class="small">You have asked to join. Waiting for a decision.</p>
+          {{else}}<label class="visually-hidden" for="message-{{.ID}}">Message to the owners (optional)</label>
+          <input class="text" id="message-{{.ID}}" name="message" type="text" maxlength="500" placeholder="Why you need it (optional)">
+          <button class="button alt" type="submit">Ask to join</button>{{end}}
+        </form>{{end}}
+      </div>
+      {{else}}<p class="sub">Ask an administrator to add you to a group that can use {{.App.PrettyName}}.</p>{{end}}
       <p class="who">Signed in as <strong>{{.Username}}</strong></p>
       <div class="buttons-top">
         {{template "signout-to-switch" .}}<button class="button" type="submit">Sign out to switch account</button></form>

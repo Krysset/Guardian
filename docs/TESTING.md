@@ -109,7 +109,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | A12 | done | `TestBuiltInGroupsAreProtected`, `TestDeletingAGroupRemovesItsMembershipsAndAppLinks`, `TestE2EGroupAndAppAPIsAreForAdministrators`, `TestEveryRouteHasItsPermissionCheck`, `TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups` |
 | A13 | done | `TestE2EGroupAndAppAPIsAreForAdministrators`, `TestExpiredMembershipsDoNotCount` |
 | A14 | done | `TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups`, `TestGroupOwnersAreTheMembersOfTheOwnerGroup` |
-| A26 | deferred | — |
+| A26 | done | `TestE2EHiddenGroups` |
 | A27 | done | `TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention`, `TestE2ESingleAppGroupsThroughTheAPI`, `TestSingleAppGroupsAreBoundToOneAppForGood` |
 | A29 | done | `TestE2ECopyingAGroup` |
 | A16 | done | `TestE2EAppRegistrationAPI` |
@@ -117,6 +117,8 @@ or when a test names an id that is not a requirement, and generates this table. 
 | A30 | done | `TestE2EAppsChooseTheirSigningAlgorithm`, `TestEachAlgorithmRotatesOnItsOwn` |
 | A31 | done | `TestE2EAnAppAsksForTwoFactorForOneSignIn` |
 | A32 | done | `TestE2EAppAdminsManageTheirOwnApps` |
+| A33 | done | `TestE2EAskingToJoinAGroup` |
+| A34 | done | `TestE2EDefaultGroups` |
 | A23 | done | `TestE2EAdminOverviewCountsWithoutNamingAnyone`, `TestE2ETheLastAdministratorIsProtected` |
 | A28 | done | `TestE2EAdminOverviewCountsWithoutNamingAnyone` |
 | P1 | done | `TestMigrateSurvivesConcurrentStartups`, `TestMigrationsAreRecordedAndRunOnce` |

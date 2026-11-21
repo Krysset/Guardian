@@ -242,3 +242,63 @@ func addGroupMemberByLogin(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"group": group.ID, "key": group.Key, "account": member.ID, "via": via, "expires_at": req.ExpiresAt})
 	httpx.JSON(w, http.StatusOK, map[string]string{"account_id": member.ID, "username": member.Username})
 }
+
+// listMyGroupRequests returns the account's requests to join groups (open, and decided in the last 30
+// days) and the groups it may ask to join.
+func listMyGroupRequests(w http.ResponseWriter, r *http.Request) {
+	id := httpx.AccountID(r)
+	requests, err := db.MyGroupRequests(id)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	requestable, err := db.RequestableGroups(id, "")
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"requests": requests, "requestable": requestable})
+}
+
+// askToJoinGroup asks to join a requestable group; its owners (or administrators) are emailed.
+func askToJoinGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupID string `json:"group_id"`
+		Message string `json:"message"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len([]rune(req.Message)) > web.MaxRequestMessage {
+		httpx.Error(w, http.StatusBadRequest, "message may be up to 500 characters")
+		return
+	}
+	q, err := web.AskToJoin(r, httpx.AccountID(r), req.GroupID, req.Message)
+	switch {
+	case errors.Is(err, db.ErrNotRequestable):
+		httpx.ErrorCode(w, http.StatusBadRequest, "not_requestable", "That group cannot be asked for, or you are in it already")
+	case errors.Is(err, db.ErrAlreadyRequested):
+		httpx.ErrorCode(w, http.StatusConflict, "already_requested", "You have asked to join that group already")
+	case errors.Is(err, web.ErrTooManyRequests):
+		httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+	case err != nil:
+		accountFail(w, err)
+	default:
+		httpx.JSON(w, http.StatusCreated, q)
+	}
+}
+
+// withdrawMyGroupRequest withdraws one of the account's open requests.
+func withdrawMyGroupRequest(w http.ResponseWriter, r *http.Request) {
+	q, err := db.WithdrawGroupRequest(httpx.AccountID(r), chi.URLParam(r, "request"))
+	if errors.Is(err, db.ErrRequestNotOpen) {
+		httpx.ErrorCode(w, http.StatusNotFound, "request_not_open", "No open request of yours has that id")
+		return
+	}
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
+	db.Audit("group.request_withdrawn", q.AccountID, "", httpx.ClientIP(r), map[string]any{"group": q.GroupID, "request": q.ID})
+	httpx.NoContent(w)
+}

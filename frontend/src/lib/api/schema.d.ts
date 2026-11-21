@@ -15,9 +15,29 @@ export interface paths {
         put?: never;
         /**
          * Create an account
-         * @description Open to everyone, limited to 10 sign-ups per client IP per hour. Takes no email address: a sign-up with one goes through the sign-up page, which waits for the confirmation link in the same browser. With REQUIRE_EMAIL set, this route refuses every request (error email_required).
+         * @description Open to everyone, limited to 10 sign-ups per client IP per hour. Takes no email address: a sign-up with one goes through the sign-up page, which waits for the confirmation link in the same browser. With REQUIRE_EMAIL set, this route refuses every request (error email_required). It needs the answer to a proof-of-work puzzle from GET /signup/challenge (error pow_failed otherwise).
          */
         post: operations["signup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signup/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A proof-of-work puzzle for sign-up
+         * @description Find the number from 0 to max whose SHA-256, of the salt followed by the number in decimal, is the challenge (hex). Send it with the token to POST /signup within 30 minutes. Each puzzle is accepted once.
+         */
+        get: operations["signupChallenge"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -466,6 +486,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/group-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in user's requests to join groups
+         * @description Their requests (open, and decided in the last 30 days), and the groups they may ask to join (requestable groups they are not in). Hidden groups are never requestable.
+         */
+        get: operations["listMyGroupRequests"];
+        put?: never;
+        /**
+         * Ask to join a group
+         * @description Only requestable groups the user is not in (not_requestable), one open request per group (409 already_requested), 10 an hour (429). The group's owners, or Guardian admins when it has none, are emailed.
+         */
+        post: operations["askToJoinGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/group-requests/{request}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A request to join a group. */
+                request: components["parameters"]["RequestID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Withdraw a request to join a group */
+        delete: operations["withdrawMyGroupRequest"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts": {
         parameters: {
             query?: never;
@@ -758,6 +822,52 @@ export interface paths {
          *     (linked_elsewhere). A binding can never be removed or moved.
          */
         post: operations["bindGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{group}/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Open requests to join a group
+         * @description For the group's owners and Guardian admins. Oldest first.
+         */
+        get: operations["listGroupRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/groups/{group}/requests/{request}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+                /** @description A request to join a group. */
+                request: components["parameters"]["RequestID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve or deny a request to join
+         * @description An approval adds the membership (until expires_at, if given). The requester is emailed. A request already decided or withdrawn answers 409 request_not_open.
+         */
+        post: operations["decideGroupRequest"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1307,6 +1417,35 @@ export interface components {
              * @description When the bound app was deleted. Such a group can never be linked again.
              */
             bound_app_deleted_at?: string;
+            /** @description Left out of its members' own group list. Apps still get it. */
+            hidden: boolean;
+            /** @description People may ask to join it. Never together with hidden. */
+            requestable: boolean;
+            /** @description Every new account joins it. */
+            join_by_default: boolean;
+            /** @description Requests to join waiting for a decision. */
+            open_requests: number;
+        };
+        GroupRequest: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            group_id: string;
+            group_name: string;
+            /** Format: uuid */
+            account_id: string;
+            username: string;
+            display_name?: string;
+            message?: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description Absent while the request is open.
+             * @enum {string}
+             */
+            decision?: "approved" | "denied" | "withdrawn";
+            /** Format: date-time */
+            decided_at?: string;
         };
         GroupMember: {
             /** Format: uuid */
@@ -1480,6 +1619,8 @@ export interface components {
     parameters: {
         AccountID: string;
         GroupID: string;
+        /** @description A request to join a group. */
+        RequestID: string;
         /** @description The app's id (not its client id). */
         AppID: string;
         /** @description next_cursor from the previous page. */
@@ -1504,6 +1645,10 @@ export interface operations {
                 "application/json": {
                     username: components["schemas"]["Username"];
                     password: components["schemas"]["Password"];
+                    /** @description The token of a puzzle from GET /signup/challenge. */
+                    pow_token: string;
+                    /** @description The number, in decimal, such that the hex SHA-256 of salt + number is the challenge. */
+                    pow_number: string;
                 };
             };
         };
@@ -1528,6 +1673,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    signupChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The puzzle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        algorithm: "SHA-256";
+                        salt: string;
+                        challenge: string;
+                        max: number;
+                        token: string;
+                    };
                 };
             };
         };
@@ -2374,11 +2546,99 @@ export interface operations {
                             member_count: number;
                             /** @description The linked apps' display names. */
                             apps: string[];
+                            /** @description Requests to join waiting for a decision. */
+                            open_requests: number;
                         }[];
                     };
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listMyGroupRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Requests and requestable groups. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        requests: components["schemas"]["GroupRequest"][];
+                        requestable: {
+                            /** Format: uuid */
+                            id: string;
+                            display_name: string;
+                            description: string;
+                            /** @description An open request exists. */
+                            requested: boolean;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    askToJoinGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    group_id: string;
+                    message?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The request. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["BadRequest"];
+        };
+    };
+    withdrawMyGroupRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A request to join a group. */
+                request: components["parameters"]["RequestID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Withdrawn. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     listAccounts: {
@@ -2803,6 +3063,9 @@ export interface operations {
                      * @description Makes a single-app group, bound to this app for good and linked to it. It can never be linked to another app.
                      */
                     bound_app_id?: string;
+                    hidden?: boolean;
+                    requestable?: boolean;
+                    join_by_default?: boolean;
                 };
             };
         };
@@ -2886,6 +3149,12 @@ export interface operations {
                     description?: string;
                     /** @description A group id, or "" to remove the owner. */
                     owner_group_id?: string;
+                    /** @description Leave it out of its members' own group list. Not with requestable (hidden_requestable). */
+                    hidden?: boolean;
+                    /** @description Let people ask to join. Turning it off withdraws the open requests. */
+                    requestable?: boolean;
+                    /** @description Every account created from now on joins it. */
+                    join_by_default?: boolean;
                 };
             };
         };
@@ -2930,6 +3199,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listGroupRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open requests. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["GroupRequest"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    decideGroupRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+                /** @description A request to join a group. */
+                request: components["parameters"]["RequestID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    approve: boolean;
+                    /**
+                     * Format: date-time
+                     * @description With an approval only.
+                     */
+                    expires_at?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The decided request. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupRequest"];
                 };
             };
             400: components["responses"]["BadRequest"];

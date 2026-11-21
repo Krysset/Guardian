@@ -760,14 +760,81 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, display_name, description, member_count, apps]
+                      required: [id, display_name, description, member_count, apps, open_requests]
                       properties:
                         id: { type: string, format: uuid }
                         display_name: { type: string }
                         description: { type: string }
                         member_count: { type: integer }
                         apps: { type: array, items: { type: string }, description: The linked apps' display names. }
+                        open_requests: { type: integer, description: Requests to join waiting for a decision. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/group-requests:
+    get:
+      tags: [me]
+      summary: The signed-in user's requests to join groups
+      description: Their requests (open, and decided in the last 30 days), and the groups they may ask to join (requestable groups they are not in). Hidden groups are never requestable.
+      operationId: listMyGroupRequests
+      responses:
+        '200':
+          description: Requests and requestable groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests, requestable]
+                properties:
+                  requests: { type: array, items: { $ref: '#/components/schemas/GroupRequest' } }
+                  requestable:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, display_name, description, requested]
+                      properties:
+                        id: { type: string, format: uuid }
+                        display_name: { type: string }
+                        description: { type: string }
+                        requested: { type: boolean, description: An open request exists. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [me]
+      summary: Ask to join a group
+      description: Only requestable groups the user is not in (not_requestable), one open request per group (409 already_requested), 10 an hour (429). The group's owners, or Guardian admins when it has none, are emailed.
+      operationId: askToJoinGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [group_id]
+              properties:
+                group_id: { type: string, format: uuid }
+                message: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/BadRequest' }
+
+  /me/group-requests/{request}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    delete:
+      tags: [me]
+      summary: Withdraw a request to join a group
+      operationId: withdrawMyGroupRequest
+      responses:
+        '204': { description: Withdrawn. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /accounts:
     get:
@@ -1117,6 +1184,9 @@ paths:
                   type: string
                   format: uuid
                   description: Makes a single-app group, bound to this app for good and linked to it. It can never be linked to another app.
+                hidden: { type: boolean }
+                requestable: { type: boolean }
+                join_by_default: { type: boolean }
       responses:
         '201':
           description: The new group.
@@ -1161,6 +1231,9 @@ paths:
                 display_name: { type: string, minLength: 1, maxLength: 128 }
                 description: { type: string, maxLength: 1024 }
                 owner_group_id: { type: string, description: 'A group id, or "" to remove the owner.' }
+                hidden: { type: boolean, description: "Leave it out of its members' own group list. Not with requestable (hidden_requestable)." }
+                requestable: { type: boolean, description: Let people ask to join. Turning it off withdraws the open requests. }
+                join_by_default: { type: boolean, description: Every account created from now on joins it. }
       responses:
         '200':
           description: The updated group.
@@ -1209,6 +1282,60 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /groups/{group}/requests:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    get:
+      tags: [groups]
+      summary: Open requests to join a group
+      description: For the group's owners and Guardian admins. Oldest first.
+      operationId: listGroupRequests
+      responses:
+        '200':
+          description: The open requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GroupRequest' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group}/requests/{request}:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      tags: [groups]
+      summary: Approve or deny a request to join
+      description: An approval adds the membership (until expires_at, if given). The requester is emailed. A request already decided or withdrawn answers 409 request_not_open.
+      operationId: decideGroupRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [approve]
+              properties:
+                approve: { type: boolean }
+                expires_at: { type: string, format: date-time, description: With an approval only. }
+      responses:
+        '200':
+          description: The decided request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupRequest' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1731,6 +1858,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    RequestID:
+      name: request
+      in: path
+      required: true
+      description: A request to join a group.
+      schema: { type: string, format: uuid }
     AppID:
       name: app
       in: path
@@ -2029,7 +2162,7 @@ components:
 
     Group:
       type: object
-      required: [id, key, display_name, description, is_system, member_count, app_ids, created_at, single_app]
+      required: [id, key, display_name, description, is_system, member_count, app_ids, created_at, single_app, hidden, requestable, join_by_default, open_requests]
       properties:
         id: { type: string, format: uuid }
         key: { type: string }
@@ -2044,6 +2177,24 @@ components:
         bound_app_id: { type: string, format: uuid, description: The app a single-app group is bound to; absent once that app was deleted. }
         bound_at: { type: string, format: date-time }
         bound_app_deleted_at: { type: string, format: date-time, description: When the bound app was deleted. Such a group can never be linked again. }
+        hidden: { type: boolean, description: "Left out of its members' own group list. Apps still get it." }
+        requestable: { type: boolean, description: People may ask to join it. Never together with hidden. }
+        join_by_default: { type: boolean, description: Every new account joins it. }
+        open_requests: { type: integer, description: Requests to join waiting for a decision. }
+    GroupRequest:
+      type: object
+      required: [id, group_id, group_name, account_id, username, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        group_name: { type: string }
+        account_id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        decision: { type: string, enum: [approved, denied, withdrawn], description: Absent while the request is open. }
+        decided_at: { type: string, format: date-time }
     GroupMember:
       type: object
       required: [account_id, username, added_at]

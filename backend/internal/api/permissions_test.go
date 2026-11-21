@@ -23,6 +23,7 @@ var (
 		"GET /groups": true, "GET /groups/{group}": true, "GET /groups/{group}/members": true,
 		"POST /groups/{group}/members": true, "PUT /groups/{group}/members/{account}": true,
 		"DELETE /groups/{group}/members/{account}": true,
+		"GET /groups/{group}/requests":             true, "POST /groups/{group}/requests/{request}": true,
 		"GET /apps": true, "GET /apps/{app}": true, "PATCH /apps/{app}": true, "PUT /apps/{app}/access": true,
 		"POST /apps/{app}/secret": true, "GET /audit": true, "GET /scopes": true,
 	}

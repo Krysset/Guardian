@@ -37,6 +37,9 @@
 							<td>
 								<a href="/admin/groups/{g.id}">{g.display_name}</a>
 								{#if g.is_system}<span class="badge small mute">built-in</span>{/if}
+								{#if g.open_requests}<span class="badge small hl">{g.open_requests === 1 ? '1 request' : `${g.open_requests} requests`}</span>{/if}
+								{#if g.hidden}<span class="badge small mute">hidden</span>{/if}
+								{#if g.join_by_default}<span class="badge small mute">new accounts join</span>{/if}
 								{#if g.single_app}<span class="badge small hl">{g.bound_app_id && appName.get(g.bound_app_id) ? `bound to ${appName.get(g.bound_app_id)}` : 'bound to a deleted app'}</span>{/if}
 							</td>
 							<td><code>{g.key}</code></td>
