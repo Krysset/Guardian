@@ -154,6 +154,40 @@ func CreateGroup(key, displayName, description, ownerGroupID, boundAppID string)
 	return id, tx.Commit()
 }
 
+// CopyGroup makes a new group from another one: the given key, names and owner group, and the source's
+// current members with their expiry dates (memberships that have already expired are left behind). The copy
+// is linked to no app and bound to none; from then on the two groups are unrelated. by is who copied.
+func CopyGroup(sourceID, key, displayName, description, ownerGroupID, by string) (id string, members int, err error) {
+	if _, err := GetGroup(sourceID); err != nil {
+		return "", 0, err
+	}
+	if ownerGroupID != "" {
+		if _, err := GetGroup(ownerGroupID); err != nil {
+			return "", 0, ErrInvalidOwner
+		}
+	}
+	tx, err := GetDatabaseConnection().Begin()
+	if err != nil {
+		return "", 0, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRow(
+		`INSERT INTO user_group (key, display_name, description, owner_group_id)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid) RETURNING id`,
+		key, displayName, description, ownerGroupID).Scan(&id); err != nil {
+		return "", 0, err
+	}
+	res, err := tx.Exec(
+		`INSERT INTO group_member (group_id, account_id, added_by, expires_at)
+		 SELECT $1, m.account_id, NULLIF($3, '')::uuid, m.expires_at FROM group_member m
+		 WHERE m.group_id = $2 AND `+activeMember, id, sourceID, by)
+	if err != nil {
+		return "", 0, err
+	}
+	n, _ := res.RowsAffected()
+	return id, int(n), tx.Commit()
+}
+
 // BindGroup makes an existing group a single-app group: bound to the app for good, and linked to it. It is
 // refused for built-in groups, for groups that are already bound (a binding never moves) and for groups
 // linked to any other app.
@@ -376,7 +410,7 @@ func RemoveGroupMember(groupID, accountID string) error {
 // refused by the app's access rule. Apps that are not linked to the group are not disturbed.
 func GroupChangeLogoutNotices(accountID, groupID string) ([]LogoutNotice, error) {
 	return logoutNotices(GetDatabaseConnection(),
-		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
+		`SELECT a.client_id, a.backchannel_logout_uri, a.signing_alg, s.account_id, s.id
 		 FROM session s
 		 JOIN session_app sa ON sa.session_id = s.id
 		 JOIN app a ON a.id = sa.app_id AND a.backchannel_logout_uri IS NOT NULL
@@ -502,4 +536,33 @@ func AccountMayUseApp(accountID string, app App) (bool, error) {
 	}
 	keys, err := AccountAppGroups(accountID, app.ID)
 	return len(keys) > 0, err
+}
+
+// GroupSummary names a group without its members or settings.
+type GroupSummary struct {
+	ID          string `json:"id"`
+	Key         string `json:"key"`
+	DisplayName string `json:"display_name"`
+}
+
+// GroupSummaries names the groups with these ids, in key order. Unknown ids are left out.
+func GroupSummaries(ids []string) ([]GroupSummary, error) {
+	out := []GroupSummary{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := GetDatabaseConnection().Query(
+		`SELECT id, key, display_name FROM user_group WHERE id::text = ANY($1) ORDER BY key`, strArray(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var g GroupSummary
+		if err := rows.Scan(&g.ID, &g.Key, &g.DisplayName); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }

@@ -293,16 +293,20 @@ The compose installation has another keyring and issuer, so add the backed-up in
 
 ### Signing keys
 
-Guardian signs tokens with RSA keys that rotate by themselves every 90 days (`SIGNING_KEY_LIFETIME`). A new
-key is published an hour before it signs, and the old one stays published until every token it signed has
-expired. Apps that fetch Guardian's keys (`/jwks.json`, cached for 15 minutes) never see an unknown key.
+Guardian has one signing key per algorithm: RS256 (RSA-2048) and ES256 (P-256). Each app's tokens are signed
+with the algorithm chosen for it (RS256 unless changed; see INTEGRATION.md), and both keys are always
+published. Each key rotates by itself every 90 days (`SIGNING_KEY_LIFETIME`). A new key is published an hour
+before it signs, and the old one stays published until every token it signed has expired. Apps that fetch
+Guardian's keys (`/jwks.json`, cached for 15 minutes) never see an unknown key.
 
 ```
 kubectl -n auth exec deploy/guardian -- /guardian keys list              # stages, and the keyring
 kubectl -n auth exec deploy/guardian -- /guardian keys rotate --execute --reason "yearly check"
 ```
 
-**If a signing key leaked**, withdraw it at once:
+`keys rotate` rotates both algorithms' keys; `--alg RS256` or `--alg ES256` rotates one.
+
+**If a signing key leaked**, withdraw it at once (add `--alg` if you know which one leaked):
 
 ```
 kubectl -n auth exec deploy/guardian -- /guardian keys rotate --now --revoke-current \

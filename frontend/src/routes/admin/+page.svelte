@@ -3,7 +3,7 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const o = $derived(data.overview);
+	const o = $derived(data.overview!);
 </script>
 
 <svelte:head><title>Overview · Guardian</title></svelte:head>

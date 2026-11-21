@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Frame, { type NavItem } from '#lib/components/Frame.svelte';
+	import Frame, { adminHref, type NavItem } from '#lib/components/Frame.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -14,6 +14,6 @@
 	];
 </script>
 
-<Frame area="account" {nav} username={data.me.username} isAdmin={data.me.is_admin}>
+<Frame area="account" {nav} username={data.me.username} admin={adminHref(data.me)}>
 	{@render children()}
 </Frame>

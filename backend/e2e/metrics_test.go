@@ -96,7 +96,7 @@ func TestE2EMetricsCountHowNotWho(t *testing.T) {
 		`guardian_state_metrics_up`, `guardian_sessions`, `guardian_app_sessions{app="billing"}`,
 		`guardian_accounts{status="active"}`, `guardian_accounts_second_factor{factor="none"}`,
 		`guardian_admins_without_second_factor`, `guardian_apps{state="enabled"}`, `guardian_groups{kind="shared"}`,
-		`guardian_signing_key_activated_timestamp_seconds`, `guardian_signing_key_rotation_due_timestamp_seconds`,
+		`guardian_signing_key_activated_timestamp_seconds{alg="RS256"}`, `guardian_signing_key_rotation_due_timestamp_seconds{alg="ES256"}`,
 		`guardian_mail_queue_depth`, `guardian_signups_total{result="confirmed"}`,
 		`guardian_passkey_clone_warnings_total`,
 	} {

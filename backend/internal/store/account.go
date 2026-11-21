@@ -185,7 +185,7 @@ type queryer interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// logoutNotices runs a query that returns client_id, backchannel_logout_uri, account_id, session_id.
+// logoutNotices runs a query that returns client_id, backchannel_logout_uri, signing_alg, account_id, session_id.
 func logoutNotices(q queryer, query string, args ...any) ([]LogoutNotice, error) {
 	rows, err := q.Query(query, args...)
 	if err != nil {
@@ -195,7 +195,7 @@ func logoutNotices(q queryer, query string, args ...any) ([]LogoutNotice, error)
 	var out []LogoutNotice
 	for rows.Next() {
 		var n LogoutNotice
-		if err := rows.Scan(&n.ClientID, &n.URI, &n.AccountID, &n.SessionID); err != nil {
+		if err := rows.Scan(&n.ClientID, &n.URI, &n.SigningAlg, &n.AccountID, &n.SessionID); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

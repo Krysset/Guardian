@@ -54,6 +54,7 @@ const words: Record<string, string> = {
 	'group.created': 'Group created',
 	'group.updated': 'Group changed',
 	'group.bound': 'Group bound to an app',
+	'group.copied': 'Group copied',
 	'group.deleted': 'Group deleted',
 	'signing_key.created': 'Signing key created',
 	'signing_key.activated': 'Signing key put in use',
@@ -140,7 +141,7 @@ export function summary(e: Schema<'AuditEntry'>): string {
 		case 'signing_key.created':
 		case 'signing_key.activated':
 		case 'signing_key.retired':
-			parts.push(text(m.kid));
+			parts.push(text(m.kid), text(m.alg));
 			break;
 		case 'backup.created':
 		case 'backup.restored':

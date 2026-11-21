@@ -40,7 +40,7 @@ count as covered by the API and end-to-end tests of the same behaviour.
 |---|---|---|---|
 | Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, `internal/backup` (file format), `cmd/guardian` (backup command line), and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, every sign-in page rendering with escaping, security headers and no inline styles or scripts, static files and their caching, request validation (unknown fields refused, one error shape), metrics labelling, discovery document, `docs/openapi.yaml` matching the router route for route, the backup file's checksum catching truncation and damage |
 | Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, single-app groups, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job, the counts behind /metrics; in `internal/backup`, backup and restore against a real database |
-| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: the sign-in pages driven like a browser without JavaScript (sign-up, sign-in by username or email, temporary passwords, switching account, Home, error pages), SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics (what they count, and that nothing about a person reaches a label) |
+| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: the sign-in pages driven like a browser without JavaScript (sign-up, sign-in by username or email, temporary passwords, switching account, Home, error pages), SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics (what they count, and that nothing about a person reaches a label), signing per app (RS256 or ES256); and after the run, that the server logged no email or IP address |
 
 ## Requirements and their tests
 
@@ -61,6 +61,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | V6 | done | `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt` |
 | V7 | done | `TestE2ESecurityKeyIsASecondFactor`, `TestE2ETwoFactorAttemptsAreLimitedAndCanBeCancelled`, `TestE2ETwoFactorThroughTheAPIAndAtSignIn` |
 | V8 | done | `TestE2EPasskeyOfARemovedKeyIsRefused`, `TestE2EPasskeySignsInWithoutAPassword` |
+| V9 | done | `TestE2EProofOfWorkOnTheFormsBotsLike` |
 | U1 | done | `TestConsentPageListsScopesAndEscapesHiddenRequest`, `TestE2EConsentFlowForThirdPartyApps` |
 | U2 | done | `TestE2EAppAccessRuleDecidesWhoMaySignIn` |
 | U3 | done | `TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged`, `TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn` |
@@ -86,14 +87,14 @@ or when a test names an id that is not a requirement, and generates this table. 
 | O3 | done | `TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups`, `TestE2EMyGroupsAndAddingMembersByLogin`, `TestEveryRouteHasItsPermissionCheck` |
 | O4 | done | `TestE2EAdministratorsAndOwnersMustUseTwoFactor` |
 | O5 | done | `TestE2EMyGroupsAndAddingMembersByLogin` |
-| A15 | done (admins) | `TestE2EAdminsEditAppsAndRotateSecrets`, `TestE2EAppRegistrationAPI`, `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt` |
-| A17 | done (admins) | `TestAppUpdatesAndSecretRotation`, `TestE2EAdminsEditAppsAndRotateSecrets`, `TestE2EScopesAndAppActivity` |
-| A18 | done (admins) | `TestE2EAppAccessRuleDecidesWhoMaySignIn`, `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers` |
-| A19 | done (admins) | `TestAppUpdatesAndSecretRotation`, `TestE2EAdminsEditAppsAndRotateSecrets` |
-| A20 | done (admins) | `TestE2EDisablingAnAppStopsItsRefreshesAndLogins` |
+| A15 | done | `TestE2EAdminsEditAppsAndRotateSecrets`, `TestE2EAppAdminsManageTheirOwnApps`, `TestE2EAppRegistrationAPI`, `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt` |
+| A17 | done | `TestAppUpdatesAndSecretRotation`, `TestE2EAdminsEditAppsAndRotateSecrets`, `TestE2EAppAdminsManageTheirOwnApps`, `TestE2EScopesAndAppActivity` |
+| A18 | done | `TestE2EAppAccessRuleDecidesWhoMaySignIn`, `TestE2EAppAdminsManageTheirOwnApps`, `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers` |
+| A19 | done | `TestAppUpdatesAndSecretRotation`, `TestE2EAdminsEditAppsAndRotateSecrets`, `TestE2EAppAdminsManageTheirOwnApps` |
+| A20 | done | `TestE2EAppAdminsManageTheirOwnApps`, `TestE2EDisablingAnAppStopsItsRefreshesAndLogins` |
 | A21 | done | `TestE2EAppRegistrationAPI`, `TestE2EDiscoveryAndJWKS` |
-| A22 | done (admins) | `TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention`, `TestAuditLogFiltersAndPages`, `TestE2EAuditLogAPI`, `TestE2EAuditLogNamesAndUsernameFilter`, `TestE2EScopesAndAppActivity`, `TestEveryRouteHasItsPermissionCheck` |
-| A24 | done | `TestE2EAdministratorsAndOwnersMustUseTwoFactor`, `TestE2ERequiredSetupWithASecurityKey`, `TestE2EStepUpForTheManagementUI` |
+| A22 | done | `TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention`, `TestAuditLogFiltersAndPages`, `TestE2EAppAdminsManageTheirOwnApps`, `TestE2EAuditLogAPI`, `TestE2EAuditLogNamesAndUsernameFilter`, `TestE2EScopesAndAppActivity`, `TestEveryRouteHasItsPermissionCheck` |
+| A24 | done | `TestE2EAdministratorsAndOwnersMustUseTwoFactor`, `TestE2EAppAdminsMustUseTwoFactor`, `TestE2ERequiredSetupWithASecurityKey`, `TestE2EStepUpForTheManagementUI` |
 | A1 | done | `TestE2EAdminAccountsPagesFiltersAndActivity`, `TestE2EAdminsListCreateAndEditAccounts`, `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt`, `TestListingAccountsSearchesAndPages` |
 | A2 | done | `TestAccountGroupsListsActiveMemberships`, `TestE2EAdminAccountsPagesFiltersAndActivity` |
 | A3 | done | `TestE2EAdminsListCreateAndEditAccounts` |
@@ -110,14 +111,17 @@ or when a test names an id that is not a requirement, and generates this table. 
 | A14 | done | `TestGroupKeysAreUniqueAndOwnersMustBeOtherGroups`, `TestGroupOwnersAreTheMembersOfTheOwnerGroup` |
 | A26 | deferred | — |
 | A27 | done | `TestAuditEntriesAndOrphanedSingleAppGroupsGoAfterRetention`, `TestE2ESingleAppGroupsThroughTheAPI`, `TestSingleAppGroupsAreBoundToOneAppForGood` |
-| A29 | planned | — |
+| A29 | done | `TestE2ECopyingAGroup` |
 | A16 | done | `TestE2EAppRegistrationAPI` |
 | A25 | done | `TestE2EDeletingAnAppRemovesEverythingItHeld` |
+| A30 | done | `TestE2EAppsChooseTheirSigningAlgorithm`, `TestEachAlgorithmRotatesOnItsOwn` |
+| A31 | done | `TestE2EAnAppAsksForTwoFactorForOneSignIn` |
+| A32 | done | `TestE2EAppAdminsManageTheirOwnApps` |
 | A23 | done | `TestE2EAdminOverviewCountsWithoutNamingAnyone`, `TestE2ETheLastAdministratorIsProtected` |
 | A28 | done | `TestE2EAdminOverviewCountsWithoutNamingAnyone` |
 | P1 | done | `TestMigrateSurvivesConcurrentStartups`, `TestMigrationsAreRecordedAndRunOnce` |
 | P2 | done | `TestBackupCommandLine`, `TestBackupRestoresIntoAFreshInstallationExactly`, `TestBackupWithoutAuditLogAndDryRun`, `TestPruneBackupsKeepsTheNewestWithTheirDeletionLogs`, `TestRestoreAppliesANewerDeletionLog` |
-| P3 | done | `TestKeyringRotationReencryptsEverything`, `TestKeysCommandLine`, `TestKeysFollowARotation`, `TestSigningKeysMoveThroughTheirStages` |
+| P3 | done | `TestEachAlgorithmRotatesOnItsOwn`, `TestKeyringRotationReencryptsEverything`, `TestKeysCommandLine`, `TestKeysFollowARotation`, `TestSigningKeysMoveThroughTheirStages` |
 | P4 | done | `TestKeysCommandLine`, `TestResettingEveryAuthenticatorAppKeepsSecurityKeys` |
 | P5 | done | `TestSeededAdminHasNoPasswordUntilBootstrapped` |
 | P6 | done | `TestCountsForMetrics`, `TestE2EInternalListenerProbesAndMetrics`, `TestE2EMetricsCountHowNotWho`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |

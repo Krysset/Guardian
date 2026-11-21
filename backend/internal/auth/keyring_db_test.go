@@ -55,7 +55,7 @@ func TestKeyringRotationReencryptsEverything(t *testing.T) {
 	}
 	acct := testutil.CreateAccount(t, "zora")
 	secret := testutil.EnableTOTP(t, acct.ID)
-	token, err := keys.Sign(jwt.MapClaims{"sub": "x"}, "")
+	token, err := keys.Sign("ES256", jwt.MapClaims{"sub": "x"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,8 @@ func TestKeyringRotationReencryptsEverything(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
-	if got := counts(); got != "k1=2" {
-		t.Fatalf("values per key = %s, want the signing key and the app secret under k1", got)
+	if got := counts(); got != "k1=3" {
+		t.Fatalf("values per key = %s, want both signing keys and the authenticator secret under k1", got)
 	}
 
 	file := filepath.Join(t.TempDir(), "keys")
@@ -87,13 +87,13 @@ func TestKeyringRotationReencryptsEverything(t *testing.T) {
 	// 1. Add k2 at the end: it may decrypt, nothing moves.
 	write(spec("k1", "k2"))
 	auth.MaintainKeys(keys, sched, file)
-	if auth.CurrentKeyring().Primary().ID != "k1" || counts() != "k1=2" {
+	if auth.CurrentKeyring().Primary().ID != "k1" || counts() != "k1=3" {
 		t.Fatalf("after adding k2: primary %s, %s", auth.CurrentKeyring().Primary().ID, counts())
 	}
 	// 2. Promote k2: re-encryption moves every value to it.
 	write(spec("k2", "k1"))
 	auth.MaintainKeys(keys, sched, file)
-	if auth.CurrentKeyring().Primary().ID != "k2" || counts() != "k2=2" {
+	if auth.CurrentKeyring().Primary().ID != "k2" || counts() != "k2=3" {
 		t.Fatalf("after promoting k2: primary %s, %s", auth.CurrentKeyring().Primary().ID, counts())
 	}
 	// 3. A keyring without the key in use is refused; the previous one stays.
@@ -118,13 +118,13 @@ func TestKeyringRotationReencryptsEverything(t *testing.T) {
 	if got, err := auth.Decrypt(f.SealedSecret, auth.AAD("account_mfa", "secret", acct.ID)); err != nil || string(got) != secret {
 		t.Errorf("the authenticator secret after the rotation: %v", err)
 	}
-	if fresh, err := auth.LoadKeys(); err != nil || fresh.ActiveKID() != keys.ActiveKID() {
+	if fresh, err := auth.LoadKeys(); err != nil || fresh.ActiveKID("ES256") != keys.ActiveKID("ES256") {
 		t.Errorf("loading the keys again: %v", err)
 	}
 }
 
 // After an emergency rotation every replica signs with the new key within a minute, and tokens signed
-// with the revoked key no longer verify.
+// with the revoked key no longer verify. Only the rotated algorithm's key changes.
 //
 // Covers: P3
 func TestKeysFollowARotation(t *testing.T) {
@@ -144,24 +144,28 @@ func TestKeysFollowARotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := keys.ActiveKID()
-	before, _ := keys.Sign(jwt.MapClaims{"sub": "x"}, "")
-	k, err := auth.NewSigningKey()
+	old, rsaKID := keys.ActiveKID("ES256"), keys.ActiveKID("RS256")
+	before, _ := keys.Sign("ES256", jwt.MapClaims{"sub": "x"}, "")
+	rsaToken, _ := keys.Sign("RS256", jwt.MapClaims{"sub": "x"}, "")
+	k, err := auth.NewSigningKey("ES256")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.EmergencyRotate(k); err != nil {
 		t.Fatal(err)
 	}
-	if keys.ActiveKID() != old {
+	if keys.ActiveKID("ES256") != old {
 		t.Fatal("the keys changed before a reload")
 	}
 	auth.MaintainKeys(keys, auth.DefaultSchedule, "")
-	if keys.ActiveKID() != k.KID {
-		t.Fatalf("active = %s after the reload, want %s", keys.ActiveKID(), k.KID)
+	if keys.ActiveKID("ES256") != k.KID {
+		t.Fatalf("active = %s after the reload, want %s", keys.ActiveKID("ES256"), k.KID)
 	}
 	if _, err := jwt.Parse(before, keys.Keyfunc); err == nil {
 		t.Error("a token signed with the revoked key still verifies")
+	}
+	if _, err := jwt.Parse(rsaToken, keys.Keyfunc); err != nil || keys.ActiveKID("RS256") != rsaKID {
+		t.Errorf("the RS256 key was touched by an ES256 rotation: %v", err)
 	}
 	if !strings.Contains(string(keys.JWKS()), k.KID) || strings.Contains(string(keys.JWKS()), old) {
 		t.Errorf("JWKS = %s", keys.JWKS())

@@ -2,7 +2,7 @@
      account and admin areas. No personal details. -->
 <script lang="ts">
 	import AppLogo from '#lib/components/AppLogo.svelte';
-	import Frame from '#lib/components/Frame.svelte';
+	import Frame, { adminHref } from '#lib/components/Frame.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import type { PageProps } from './$types';
 
@@ -38,7 +38,7 @@
 	</div>
 {/snippet}
 
-<Frame area="home" username={me.username} isAdmin={me.is_admin}>
+<Frame area="home" username={me.username} admin={adminHref(me)}>
 	<div class="ph"><h1>Welcome to {home.site_name}</h1><p>Your apps, and where to manage your account.</p></div>
 
 	{#if needsTwoFactor || pendingEmail}
@@ -98,6 +98,11 @@
 				<a class="tile-link" href="/admin">
 					<Icon name="shield" />
 					<span class="text"><strong>Admin area</strong><span>Accounts, groups, apps and the audit log.</span></span>
+				</a>
+			{:else if me.app_admin}
+				<a class="tile-link" href="/admin/apps">
+					<Icon name="apps" />
+					<span class="text"><strong>Your apps</strong><span>The apps you are an admin of: settings, access and secret.</span></span>
 				</a>
 			{/if}
 		</div>

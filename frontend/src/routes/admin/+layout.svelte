@@ -1,21 +1,26 @@
 <script lang="ts">
-	import Frame, { type NavItem } from '#lib/components/Frame.svelte';
+	import Frame, { adminHref, type NavItem } from '#lib/components/Frame.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
-	const nav: NavItem[] = [
-		{ href: '/admin', label: 'Overview', icon: 'overview' },
-		{ href: '/admin/accounts', label: 'Accounts', icon: 'profile' },
-		{ href: '/admin/groups', label: 'Groups', icon: 'groups' },
-		{ href: '/admin/apps', label: 'Apps', icon: 'apps' },
-		{ href: '/admin/audit', label: 'Audit log', icon: 'audit' },
-		{ href: '/admin/deleted', label: 'Deleted accounts', icon: 'deleted' }
-	];
+	// App admins see only their apps.
+	const nav: NavItem[] = $derived(
+		data.me.is_admin
+			? [
+					{ href: '/admin', label: 'Overview', icon: 'overview' },
+					{ href: '/admin/accounts', label: 'Accounts', icon: 'profile' },
+					{ href: '/admin/groups', label: 'Groups', icon: 'groups' },
+					{ href: '/admin/apps', label: 'Apps', icon: 'apps' },
+					{ href: '/admin/audit', label: 'Audit log', icon: 'audit' },
+					{ href: '/admin/deleted', label: 'Deleted accounts', icon: 'deleted' }
+				]
+			: [{ href: '/admin/apps', label: 'Your apps', icon: 'apps' }]
+	);
 
 	// A23: with one administrator, losing that account loses the admin area.
-	const alone = $derived(data.overview.admins.total <= 1);
+	const alone = $derived(data.overview !== undefined && data.overview.admins.total <= 1);
 </script>
 
 {#snippet warning()}
@@ -28,7 +33,7 @@
 	{/if}
 {/snippet}
 
-<Frame area="admin" {nav} username={data.me.username} isAdmin banner={warning}>
+<Frame area="admin" {nav} username={data.me.username} admin={adminHref(data.me)} banner={warning}>
 	{@render children()}
 </Frame>
 

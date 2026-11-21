@@ -48,6 +48,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
   postgres:

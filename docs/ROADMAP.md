@@ -112,7 +112,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - Accounts are never locked automatically.
 
 ### Keys and secrets
-- **Signing keys:** RS256 with RSA-2048.
+- **Signing keys:** RS256 with RSA-2048, and ES256 with P-256; each app chooses (default RS256).
   - Keys move through four stages: `pending` → `active` → `retiring` → `retired`.
     - **pending:** published but not signing, for 1 hour.
     - **active:** exactly one per algorithm signs.
@@ -120,7 +120,7 @@ Status: agreed plan, consolidated 2026-11-13 after a full design review and revi
   - Replicas reload keys every 60 seconds. JWKS is served with `max-age=900`.
   - Rotation is automatic every 90 days. `guardian keys rotate` rotates by hand; `--now --revoke-current` is the emergency path.
   - **Limit of the emergency path:** apps cache Guardian's public keys, so tokens signed with a revoked key are still accepted until each app's cache expires. The runbook includes restarting or refreshing the apps.
-  - The code is algorithm-agnostic, with a per-app algorithm setting. ES256 is a stretch goal before 1.0, otherwise 1.x.
+  - **ES256 built 2026-11-21 (owner chose per app):** one active key per algorithm, each with its own rotation; both are always published. An app's ID, access and logout tokens use its `signing_alg` (RS256 by default, as OIDC apps expect when they say nothing). Discovery lists both. `guardian keys rotate` takes `--alg`; without it both rotate.
 - **Encryption keyring:**
   - It replaces `KEY_ENCRYPTION_KEY`. It is read from `KEY_ENCRYPTION_KEYS_FILE` (`k2:<b64>,k1:<b64>`) and reloaded every 60 seconds.
   - **Format:** values are tagged `v1:<key id>:...`, encrypted with AES-256-GCM, with the table, column and row as associated data.
@@ -316,6 +316,12 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - **Built 2026-11-21:** every done requirement names at least one test (`Covers:` in the test's doc comment); `backend/requirements_test.go` fails on a gap or an unknown id and generates the table in `TESTING.md`. New tests for the gaps: changing the username (U8), deleting an app and everything it held (A25), removing every authenticator app (P4, which also fixes that it took the recovery codes of accounts keeping a security key), and the locked-out administrator runbook, now written in `INSTALL.md` and run as printed (P7). Every `/api/v1` route is checked for its permission (structurally and over HTTP), so a new route cannot be left open by accident. The suite went from over two minutes to about 30 seconds with `-race`: the end-to-end tests hash with cheap parameters, and the abuse test uses a lower limit. Fixed: a keyring test that left the database unusable for the next test process, and a metrics test that failed when run twice. Statuses corrected in `USERS.md`: U4, U17, P3, P4 and P7 are done. Browser tests stay out of the repository (owner).
 - **Metrics, 2026-11-21 (owner's choice from a list):** how sign-ins succeed (by method) and why they fail; tokens issued and refused per app, with the reason; sign-ins to each app and refusals for not being in its groups; CSRF refusals; passkey clone warnings (also audited); sign-ups awaiting confirmation versus confirmed; the mail queue's depth; and, from the database, accounts by status and by second factor, administrators without one, live sessions and per-app sessions (two metrics, so they are not summed by mistake), apps, groups and the signing key's rotation. No label holds anything about a person. Renamed before 1.0: `guardian_token_requests_total` became `guardian_tokens_issued_total` and `guardian_token_refusals_total`, and `guardian_logins_total` counts by method (failures moved to `guardian_login_failures_total`). Reference and alerts: `docs/METRICS.md`. Left out: a count of administrators (the banner suffices, and the last one cannot be removed), and memberships about to expire (later).
 
+### Added to 1.0 (owner, 2026-11-21)
+- **Copying a group** (A29, built): AD5's Copy opens AD6 filled in from the original, every field editable; the members and their expiry dates come along (expired memberships stay behind), app links do not. `POST /groups/{group}/copy`, administrators only.
+- **Two-factor for one sign-in** (A31, built): `acr_values=mfa` makes that sign-in step up like an app that requires two-factor; ID and access tokens carry `acr` (`mfa` or `password`), and discovery lists `acr_values_supported`. Other values are ignored. For apps the owner writes himself.
+- **App admins** (A15 to A24, A32, built): an app's optional owner group, chosen by Guardian admins; its members must use two-factor and manage the app: settings, enabling, the secret, the access rule, links to and from groups they own (`not_group_owner` otherwise), and its audit entries without IP addresses. Creating and deleting apps, choosing their admins and the machine API stay with Guardian admins. The admin area shows app admins only "Your apps". `/me` says `app_admin`; `GET /apps/{app}` names the linked groups.
+- **Proof-of-work challenges** (V9, built): an ALTCHA-style puzzle (SHA-256 of a salt and a secret number up to 50000, sealed with the keyring, each answered once through `used_challenge`) on sign-up and forgot-password always, and on sign-in once an address has failed three times (owner's choice). `guardian.js` solves it from page load, in about a third of a second on a laptop; a form sent before then waits for it. Without JavaScript the page explains why the form needs it; sign-in works without it until an address fails repeatedly. `POST /api/v1/signup` takes a puzzle from `GET /api/v1/signup/challenge`. Metric `guardian_pow_checks_total`.
+
 ### 1.0: release
 - **M7 hardening:**
   - a real browser over TLS;
@@ -326,7 +332,8 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
   - a security review.
 - **Docs:** `INSTALL.md` (with runbooks), `INTEGRATION.md`, `ARCHITECTURE.md`, `DATA-PROTECTION.md`, `openapi.yaml`, `CHANGELOG.md`.
   - **Reminder:** recreate the app-to-Guardian communication diagrams (how an app talks to Guardian: sign-in, refresh, logout, back-channel logout, machine API). The old yUML versions described the removed introspection design and were deleted in 0.1.
-- **ES256** only if it doesn't delay the release.
+- ~~**ES256** only if it doesn't delay the release.~~ Done 2026-11-21, per app (see Keys and secrets).
+- **Checked 2026-11-21:** no secrets or personal data in logs, and non-root, read-only images. The end-to-end run fails if the server logs an email or IP address (`e2e/logs_test.go`); mail servers' answers are logged without the recipient; the `client_id` a refused sign-in request sent is cut to 64 characters. Images: distroless `nonroot` (backend) and `nginx-unprivileged` (frontend), read-only root filesystems and no capabilities in the chart; Compose runs the backend the same way. The one deliberate exception: a generated initial admin password is logged once when `ADMIN_INITIAL_PASSWORD` is not set (the chart always sets it).
 - **After tagging,** `00001_init.sql` is frozen and the compatibility rules apply. Until then nothing is deployed, so removed or renamed settings are simply dropped: no warnings or refusals for legacy options.
 
 ### Release checklist for v1.0.0
@@ -336,20 +343,16 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - [ ] A backup restores into a fresh install, and `--apply-deletions` keeps erased accounts erased.
 - [ ] Signing-key rotation and keyring rotation run on a live multi-replica install without errors at the apps.
 - [ ] A sample app integrates by following only `INTEGRATION.md`.
-- [ ] No secrets or personal data in logs. The images run as non-root with read-only root filesystems.
+- [x] No secrets or personal data in logs. The images run as non-root with read-only root filesystems. (2026-11-21; see 1.0 above.)
 - [ ] All docs listed above are current, including the recreated app-to-Guardian communication diagrams.
 
 ## 6. After 1.0 (1.x candidates)
 
 - **Passkey-only accounts:** an account with no password, signing in only with passkeys (owner, 2026-11-20). Needs a "remove password" action, and password reset must not quietly add one back.
-- **App owners:** an owner group edits its app and links only groups it owns.
-- **Copying a group** with its members, as a new, unrelated group (`docs/USERS.md` A29).
 - **Hidden groups,** left out of a member's own group list, only if a need arises (`docs/USERS.md` A26).
 - **Access requests:** requests to join a group, and a "request access" screen when an app's access rule denies sign-in.
 - **Rotating refresh tokens for public clients** (mobile apps and backend-less SPAs), with reuse detection.
-- **`acr_values`:** apps can demand MFA for a single sign-in.
-- **ES256** (if it didn't make 1.0).
-- **Proof-of-work challenges** (ALTCHA-style) on sign-up and on login under attack.
+- **A metric for group memberships about to expire** (owner held it back from the 1.0 metrics, 2026-11-21).
 - **S3-compatible backup storage.**
 - **A bundled CloudNativePG option.**
 - **Invites,** default groups, and sign-up approval or closed modes, only if needed.
@@ -377,5 +380,6 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - 2026-11-20: security keys and passkeys built (0.5 part 2). The sign-in pages run the key dialogs with plain form posts (the options in the page, the answer in a form field), so their CSP stays without `connect-src`. Removing the password from an account is not part of 0.5.
 - 2026-11-20: passkey-only accounts (no password at all) moved to after 1.0 (owner's decision). SonarQube is integrated through oauth2-proxy and its HTTP header sign-in, since it no longer supports OIDC itself.
 - 2026-11-20: SonarQube paused (owner). The full chart built locally (0.5 part 4); the cluster install waits for the cluster, with a kind install in CI meanwhile. The migration Job needs an external Postgres.
+- 2026-11-21: ES256 per app, and the log and image checks of the release checklist.
 - 2026-11-21: metrics expanded (see 0.6); refresh-token reuse is not a signal while refresh tokens are stable, so token refusals carry a reason instead.
 - 2026-11-21: 0.6 built: requirement coverage enforced by a test, the gaps filled, the suite four times faster. UI browser tests stay out of the repository (owner).

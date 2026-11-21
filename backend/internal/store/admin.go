@@ -17,7 +17,7 @@ func revokeAccountSessions(tx *sql.Tx, accountID, keepSessionID string) ([]Logou
 		keep = "00000000-0000-0000-0000-000000000000"
 	}
 	notices, err := logoutNotices(tx,
-		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
+		`SELECT a.client_id, a.backchannel_logout_uri, a.signing_alg, s.account_id, s.id
 		 FROM session s JOIN session_app sa ON sa.session_id = s.id JOIN app a ON a.id = sa.app_id
 		 WHERE s.account_id = $1 AND s.id <> $2 AND s.revoked_at IS NULL AND s.expires_at > now()
 		   AND a.backchannel_logout_uri IS NOT NULL`, accountID, keep)
@@ -286,10 +286,10 @@ func AccountGroups(accountID string) ([]Membership, error) {
 // AppUpdate lists the app settings to change; nil fields are left alone. The name, client id and client
 // type never change, and access (rule, groups, machine API) has its own call.
 type AppUpdate struct {
-	PrettyName, Description, LogoURL, HomepageURL, BackchannelLogoutURI *string
-	RedirectURIs, PostLogoutRedirectURIs, Scopes                        *[]string
-	IsFirstParty, Enabled, RequireMFA                                   *bool
-	AccessTokenTTL                                                      *int
+	PrettyName, Description, LogoURL, HomepageURL, BackchannelLogoutURI, SigningAlg, OwnerGroupID *string
+	RedirectURIs, PostLogoutRedirectURIs, Scopes                                                  *[]string
+	IsFirstParty, Enabled, RequireMFA                                                             *bool
+	AccessTokenTTL                                                                                *int
 }
 
 // UpdateApp applies u in one transaction. A missing app is sql.ErrNoRows.
@@ -345,6 +345,12 @@ func UpdateApp(id string, u AppUpdate) (App, error) {
 	}
 	if u.AccessTokenTTL != nil {
 		add("access_token_ttl_seconds", *u.AccessTokenTTL, "")
+	}
+	if u.SigningAlg != nil {
+		add("signing_alg", *u.SigningAlg, "")
+	}
+	if u.OwnerGroupID != nil {
+		add("owner_group_id", *u.OwnerGroupID, "NULLIF(%s, '')::uuid")
 	}
 	res, err := tx.Exec(`UPDATE app SET `+strings.Join(sets, ", ")+` WHERE id = $1`, args...)
 	if err != nil {

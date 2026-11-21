@@ -1,25 +1,35 @@
-<!-- F2, the management UI frame: the top bar (logo to Home, the area switch for administrators, the signed-in
+<!-- F2, the management UI frame: the top bar (logo to Home, the area switch for administrators and app admins, the signed-in
      username, Sign out), the area's navigation, and the page. Home has no area navigation. The admin area
      passes its warning (A23) as `banner`. -->
+<script lang="ts" module>
+	import type { IconName } from './Icon.svelte';
+
+	export type NavItem = { href: string; label: string; icon: IconName };
+
+	// Where the Admin link goes: the admin area for administrators, their apps for app admins, nowhere
+	// (no area switch) for everyone else.
+	export function adminHref(me: { is_admin: boolean; app_admin: boolean }): string | undefined {
+		return me.is_admin ? '/admin' : me.app_admin ? '/admin/apps' : undefined;
+	}
+</script>
+
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
-	import Icon, { type IconName } from './Icon.svelte';
-
-	export type NavItem = { href: string; label: string; icon: IconName };
+	import Icon from './Icon.svelte';
 
 	let {
 		area,
 		nav = [],
 		username,
-		isAdmin,
+		admin,
 		banner,
 		children
 	}: {
 		area: 'home' | 'account' | 'admin';
 		nav?: NavItem[];
 		username: string;
-		isAdmin: boolean;
+		admin: string | undefined;
 		banner?: Snippet;
 		children: Snippet;
 	} = $props();
@@ -38,10 +48,10 @@
 		<img src="/static/favicon.svg" alt="" width="28" height="28" />
 		<span>Guardian</span>
 	</a>
-	{#if isAdmin}
+	{#if admin}
 		<nav class="area" aria-label="Area">
 			<a href="/account" aria-current={area === 'account' ? 'page' : undefined}>Account</a>
-			<a href="/admin" aria-current={area === 'admin' ? 'page' : undefined}>Admin</a>
+			<a href={admin} aria-current={area === 'admin' ? 'page' : undefined}>Admin</a>
 		</nav>
 	{/if}
 	<span class="who">

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"html"
 	"net/http"
 	"net/url"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"guardian/internal/auth"
 	db "guardian/internal/store"
@@ -362,5 +365,85 @@ func TestE2EAdministratorsResetTwoFactor(t *testing.T) {
 	}
 	if m := admin.call("POST", path, map[string]any{"reason": "Again"}, 409); m["error"] != "no_totp" {
 		t.Errorf("resetting nothing: %v", m)
+	}
+}
+
+// An app may ask for two-factor for one sign-in only (acr_values=mfa), for example before a sensitive
+// action. A session that has not passed it steps up first; the ID and access tokens say which class the
+// sign-in met (acr), so the app can check. Without the parameter the same app signs in with the password.
+//
+// Covers: A31
+func TestE2EAnAppAsksForTwoFactorForOneSignIn(t *testing.T) {
+	newTestEnv(t)
+	app, secret := testutil.CreateApp(t, "notes", testutil.AppOptions{FirstParty: true})
+	acct := testutil.CreateAccount(t, "mipha")
+	testutil.EnableTOTP(t, acct.ID)
+	_, cookie := testutil.Session(t, acct.ID)
+	testutil.Exec(t, `UPDATE session SET amr = ARRAY['pwd'] WHERE account_id = $1`, acct.ID)
+	br := newBrowser(t)
+	br.setCookie("guardian_session", cookie)
+
+	disc := decodeMap(t, br.get("/.well-known/openid-configuration"))
+	if fmt.Sprint(disc["acr_values_supported"]) != "[password mfa]" {
+		t.Errorf("acr_values_supported = %v", disc["acr_values_supported"])
+	}
+
+	signIn := func(acr string) (tokens tokenSet, location string) {
+		t.Helper()
+		verifier, challenge := newPKCE(t)
+		p := authParams{app: app, scope: "openid", state: "s", challenge: challenge}
+		if acr != "" {
+			p.extra = url.Values{"acr_values": {acr}}
+		}
+		authorize := "/authorize?" + p.values().Encode()
+		resp := br.get(authorize)
+		drain(resp)
+		loc := resp.Header.Get("Location")
+		if !strings.HasPrefix(loc, app.RedirectURIs[0]+"?code=") {
+			return tokenSet{}, loc
+		}
+		cb, _ := url.Parse(loc)
+		status, raw := tokenRequest(t, app, secret, url.Values{"grant_type": {"authorization_code"}, "code": {cb.Query().Get("code")},
+			"redirect_uri": {app.RedirectURIs[0]}, "code_verifier": {verifier}})
+		if status != http.StatusOK {
+			t.Fatalf("token: %d %v", status, raw)
+		}
+		return tokenSet{Access: str(raw["access_token"]), ID: str(raw["id_token"])}, ""
+	}
+	acrIn := func(tok tokenSet) (id, access any) {
+		t.Helper()
+		return parseJWT(t, tok.ID).Claims.(jwt.MapClaims)["acr"], verifyAccessToken(t, app, tok.Access)["acr"]
+	}
+
+	tok, _ := signIn("")
+	if id, access := acrIn(tok); id != "password" || access != "password" {
+		t.Errorf("an ordinary sign-in: acr %v / %v, want password", id, access)
+	}
+	// Values Guardian does not know are met by any session, as OIDC allows.
+	if tok, loc := signIn("urn:something:else"); loc != "" || tok.ID == "" {
+		t.Errorf("an unknown acr value: %q", loc)
+	}
+
+	_, loc := signIn("password mfa")
+	if loc != "/mfa" {
+		t.Fatalf("acr_values=mfa without two-factor: %q, want the two-factor step", loc)
+	}
+	resp := br.postForm("/mfa", url.Values{"csrf": {br.csrf()}, "code": {testutil.TOTPCode(t, acct.ID)}})
+	drain(resp)
+	tok, loc = signIn("password mfa")
+	if loc != "" {
+		t.Fatalf("after the step-up: %q", loc)
+	}
+	if id, access := acrIn(tok); id != "mfa" || access != "mfa" {
+		t.Errorf("after the step-up: acr %v / %v, want mfa", id, access)
+	}
+
+	// prompt=none cannot step up.
+	testutil.Exec(t, `UPDATE session SET amr = ARRAY['pwd'] WHERE account_id = $1`, acct.ID)
+	_, challenge := newPKCE(t)
+	none := authParams{app: app, scope: "openid", state: "s", challenge: challenge,
+		extra: url.Values{"acr_values": {"mfa"}, "prompt": {"none"}}}
+	if cb := br.authorizeCallback(none.values(), "mipha"); cb.Query().Get("error") != "interaction_required" {
+		t.Errorf("prompt=none: %s", cb)
 	}
 }

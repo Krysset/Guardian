@@ -24,6 +24,7 @@ type authRequest struct {
 	Prompts     []string
 	MaxAge      int // -1 when absent
 	Scopes      []string
+	ACRValues   []string // what the app asked for this sign-in; "mfa" makes it need two-factor
 }
 
 // authError with Redirect=false must be shown to the user (client_id / redirect_uri can't be trusted);
@@ -46,7 +47,7 @@ func parseAuthRequest(q url.Values) (*authRequest, *authError) {
 	req := &authRequest{
 		App: app, RedirectURI: redirectURI, State: q.Get("state"), Nonce: q.Get("nonce"),
 		Challenge: q.Get("code_challenge"), Prompts: strings.Fields(q.Get("prompt")),
-		MaxAge: -1, Scopes: strings.Fields(q.Get("scope")),
+		MaxAge: -1, Scopes: strings.Fields(q.Get("scope")), ACRValues: strings.Fields(q.Get("acr_values")),
 	}
 	fail := func(code, desc string) (*authRequest, *authError) {
 		return req, &authError{code, desc, true}
@@ -108,8 +109,11 @@ func refuseAuthRequest(w http.ResponseWriter, r *http.Request, req *authRequest,
 		redirectWithError(w, r, req.RedirectURI, req.State, aerr.Code, aerr.Description)
 		return
 	}
-	slog.Info("refused an authorization request", "error", aerr.Code, "reason", aerr.Description,
-		"client_id", r.FormValue("client_id"))
+	clientID := r.FormValue("client_id") // what the request sent, so possibly anything: cut short
+	if len(clientID) > 64 {
+		clientID = clientID[:64] + "…"
+	}
+	slog.Info("refused an authorization request", "error", aerr.Code, "reason", aerr.Description, "client_id", clientID)
 	web.Error(w, web.BrokenLink)
 }
 
@@ -155,8 +159,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// An app that requires two-factor gets a session that passed it, now or earlier.
-	if req.App.RequireMFA && !httpx.TwoFactor(sess.AMR) {
+	// An app that requires two-factor, or asks for it for this sign-in (acr_values=mfa), gets a session that
+	// passed it, now or earlier. Other acr values are met by any session, as OIDC allows.
+	if (req.App.RequireMFA || slices.Contains(req.ACRValues, ACRMFA)) && !httpx.TwoFactor(sess.AMR) {
 		if slices.Contains(req.Prompts, "none") {
 			redirectWithError(w, r, req.RedirectURI, req.State, "interaction_required", "")
 			return

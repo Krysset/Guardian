@@ -83,6 +83,18 @@ current: they are the hand-off between sessions.
 - **Polish after 0.6** (2026-11-21, owner trying the UI with Compose `--profile ui`): new-group form puts
   Display name first and suggests the key from it; metrics expanded (below, and `docs/METRICS.md`). Owner
   commits; check `git log` for what is in.
+- **Added to 1.0 (2026-11-21):** group copy (A29), `acr_values=mfa` (A31), app admins (A32 with A15-A24):
+  `app.owner_group_id`; `api/app.go` `appAccess` mirrors `groupAccess` ("admin" or "owner:<key>" as `via`);
+  app routes, `/audit` and `/scopes` are user routes whose handlers check. `db.AppAdminVia`,
+  `AppsAdministeredBy`, `GroupSummaries`. Frontend: `Frame` takes `admin` (from `adminHref(me)`); the admin
+  layout sends app admins to `/admin/apps`. Proof of work (V9): `web/pow.go`, the `pow` template in
+  `layout.html`, the solver at the end of `guardian.js`; e2e `postForm` answers puzzles like the script does
+  (`pow=-` sends none) and `web.PoWMax` is 200 there.
+- **ES256 per app** (2026-11-21): `app.signing_alg` (RS256 default); store functions for signing keys work per
+  algorithm; `LogoutTarget` carries the alg. `keys rotate --alg`. Changing `00001_init.sql` changes the schema
+  revision: the test database (and the owner's Compose volume) must be recreated.
+- **Logs:** `e2e/logs_test.go` fails the e2e run when the server logs an email or IP address. Keep logs to
+  ids and fixed words.
 - **Metrics rule:** labels only from fixed sets (outcome, method, reason, route pattern, app *name*; unknown
   client ids become `unknown`). Never usernames, ids, IPs, user agents or raw request values;
   `TestE2EMetricsCountHowNotWho` checks it. Gauges read from the database live in `httpx/metrics.go`
@@ -245,7 +257,7 @@ current: they are the hand-off between sessions.
     - `internal/api/` — `/api/v1`, described in `docs/openapi.yaml`; `TestOpenAPIDescribesEveryRoute` fails when
       they drift apart. `account.go`, `groups.go`, `app.go`, `audit.go`, `machine.go` (`/apps/self`).
     - `internal/internalapi/` — `/metrics`, `/healthz`, `/readyz`.
-  - `internal/auth/` — argon2id, the encryption keyring, RSA signing keys and their schedule, JWKS, TOTP.
+  - `internal/auth/` — argon2id, the encryption keyring, signing keys (RS256 and ES256, one active per algorithm, `db.SigningAlgs`) and their schedule, JWKS, TOTP. `Keys.Sign(alg, ...)` takes the app's `signing_alg`.
   - `internal/store/` — queries (imported as `db`); goose migrations at startup.
   - `migrations/00001_init.sql` — the whole data model, embedded. Edited in place until 1.0; it records a
     fingerprint of itself and Guardian refuses a database made by another revision, so **after any edit, existing

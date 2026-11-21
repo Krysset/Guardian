@@ -35,6 +35,10 @@
 
 {{define "error-banner"}}{{if .Error}}<div class="message error" role="alert">{{template "icon-warn"}}<span>{{.Error}}</span></div>{{end}}{{end}}
 
+{{define "pow"}}{{with .PoW}}<input type="hidden" name="pow" value="{{.Token}}" data-pow-salt="{{.Salt}}" data-pow-challenge="{{.Challenge}}" data-pow-max="{{.Max}}"><input type="hidden" name="pow_number" value="">
+        <p class="small pow" data-pow-status hidden>Checking that you're a person…</p>
+        <noscript><div class="message">{{template "icon-info"}}<span>This form needs JavaScript, which checks that a person and not a program sends it.</span></div></noscript>{{end}}{{end}}
+
 {{define "hidden-flow"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{if .ReturnTo}}<input type="hidden" name="return_to" value="{{.ReturnTo}}">{{end}}{{end}}
 
 {{define "password"}}<div class="password"><input class="text" id="{{.ID}}" name="{{.ID}}" type="password" autocomplete="{{.Autocomplete}}" required{{if .Error}} aria-invalid="true" aria-describedby="{{.ID}}-error"{{else if .Hint}} aria-describedby="{{.ID}}-hint"{{end}}></div>

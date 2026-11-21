@@ -9,6 +9,13 @@ import (
 // Signing keys and their lifecycle: pending -> active -> retiring -> retired. The decisions (when to
 // rotate) are in the auth package; this file only moves rows, each move in one transaction under an
 // advisory lock, so several replicas can run the same schedule safely.
+//
+// Every algorithm in SigningAlgs has its own active key and its own rotation: an app's tokens are signed
+// with the algorithm the app chose (app.signing_alg), and both keys are always published.
+
+// SigningAlgs are the algorithms Guardian signs with. RS256 comes first: OIDC requires it, and it is the
+// default for apps.
+var SigningAlgs = []string{"RS256", "ES256"}
 
 const signingKeyLock = 727275
 
@@ -42,9 +49,10 @@ func lockSigningKeys(tx *sql.Tx) error {
 	return err
 }
 
-// EnsureSigningKey creates an active key if none exists (the first start: nobody can have cached a key
-// yet, so it signs at once). Safe with several instances starting at once.
-func EnsureSigningKey(generate func() (SigningKey, error)) error {
+// EnsureSigningKeys creates an active key for each algorithm that has none (the first start, or the first
+// start of a version that adds an algorithm: nobody can have used such a key yet, so it signs at once). Safe
+// with several instances starting at once.
+func EnsureSigningKeys(generate func(alg string) (SigningKey, error)) error {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
 		return err
@@ -53,19 +61,21 @@ func EnsureSigningKey(generate func() (SigningKey, error)) error {
 	if err := lockSigningKeys(tx); err != nil {
 		return err
 	}
-	var exists bool
-	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'active')`).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	k, err := generate()
-	if err != nil {
-		return err
-	}
-	if err := insertSigningKey(tx, k, "active"); err != nil {
-		return err
+	for _, alg := range SigningAlgs {
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'active' AND alg = $1)`, alg).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		k, err := generate(alg)
+		if err != nil {
+			return err
+		}
+		if err := insertSigningKey(tx, k, "active"); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -77,10 +87,9 @@ func insertSigningKey(tx *sql.Tx, k SigningKey, status string) error {
 	return err
 }
 
-// GetActiveSigningKey returns the key that signs.
-func GetActiveSigningKey() (SigningKey, error) {
-	return scanSigningKey(GetDatabaseConnection().QueryRow(
-		`SELECT ` + signingKeyColumns + ` FROM signing_key WHERE status = 'active'`))
+// GetActiveSigningKeys returns the keys that sign, one per algorithm.
+func GetActiveSigningKeys() ([]SigningKey, error) {
+	return querySigningKeys(`SELECT ` + signingKeyColumns + ` FROM signing_key WHERE status = 'active' ORDER BY alg`)
 }
 
 // GetPublishedSigningKeys returns the keys in the JWKS: pending, active and retiring.
@@ -110,10 +119,11 @@ type RotationStep struct {
 	KID   string
 }
 
-// AdvanceSigningKeys runs the schedule once: it creates a pending key when the active one is due for
-// replacement, activates a pending key that has been published long enough (the old one starts retiring),
-// and retires keys whose tokens have all expired. generate is called only when a key is created.
-func AdvanceSigningKeys(s KeySchedule, generate func() (SigningKey, error)) ([]RotationStep, error) {
+// AdvanceSigningKeys runs the schedule once, for each algorithm: it creates a pending key when the active
+// one is due for replacement, activates a pending key that has been published long enough (the old one of
+// the same algorithm starts retiring), and retires keys whose tokens have all expired. generate is called
+// only when a key is created.
+func AdvanceSigningKeys(s KeySchedule, generate func(alg string) (SigningKey, error)) ([]RotationStep, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
 		return nil, err
@@ -137,46 +147,49 @@ func AdvanceSigningKeys(s KeySchedule, generate func() (SigningKey, error)) ([]R
 	}
 	rows.Close()
 
-	// A pending key that has been published long enough takes over.
-	var pending string
-	err = tx.QueryRow(`SELECT kid FROM signing_key WHERE status = 'pending' AND created_at <= now() - make_interval(secs => $1)
-		ORDER BY created_at LIMIT 1`, s.Pending.Seconds()).Scan(&pending)
-	switch {
-	case err == nil:
-		if err := activate(tx, pending, s.Skew); err != nil {
+	for _, alg := range SigningAlgs {
+		// A pending key that has been published long enough takes over.
+		var pending string
+		err = tx.QueryRow(`SELECT kid FROM signing_key WHERE status = 'pending' AND alg = $2
+			AND created_at <= now() - make_interval(secs => $1) ORDER BY created_at LIMIT 1`, s.Pending.Seconds(), alg).Scan(&pending)
+		switch {
+		case err == nil:
+			if err := activate(tx, pending, alg, s.Skew); err != nil {
+				return nil, err
+			}
+			steps = append(steps, RotationStep{"signing_key.activated", pending})
+		case !errors.Is(err, sql.ErrNoRows):
 			return nil, err
 		}
-		steps = append(steps, RotationStep{"signing_key.activated", pending})
-	case !errors.Is(err, sql.ErrNoRows):
-		return nil, err
-	}
 
-	// The active key is due: publish its successor, which takes over after s.Pending.
-	var due bool
-	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'active'
-			AND activated_at <= now() - make_interval(secs => $1))
-		AND NOT EXISTS (SELECT 1 FROM signing_key WHERE status = 'pending')`, (s.Lifetime - s.Pending).Seconds()).Scan(&due); err != nil {
-		return nil, err
-	}
-	if due {
-		k, err := generate()
-		if err != nil {
+		// The active key is due: publish its successor, which takes over after s.Pending.
+		var due bool
+		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'active' AND alg = $2
+				AND activated_at <= now() - make_interval(secs => $1))
+			AND NOT EXISTS (SELECT 1 FROM signing_key WHERE status = 'pending' AND alg = $2)`,
+			(s.Lifetime - s.Pending).Seconds(), alg).Scan(&due); err != nil {
 			return nil, err
 		}
-		if err := insertSigningKey(tx, k, "pending"); err != nil {
-			return nil, err
+		if due {
+			k, err := generate(alg)
+			if err != nil {
+				return nil, err
+			}
+			if err := insertSigningKey(tx, k, "pending"); err != nil {
+				return nil, err
+			}
+			steps = append(steps, RotationStep{"signing_key.created", k.KID})
 		}
-		steps = append(steps, RotationStep{"signing_key.created", k.KID})
 	}
 	return steps, tx.Commit()
 }
 
-// activate makes kid the active key; the previous active key starts retiring. It stays published until the
-// longest token lifetime of any app, plus skew, has passed.
-func activate(tx *sql.Tx, kid string, skew time.Duration) error {
+// activate makes kid the active key of its algorithm; the previous one starts retiring. It stays published
+// until the longest token lifetime of any app, plus skew, has passed.
+func activate(tx *sql.Tx, kid, alg string, skew time.Duration) error {
 	if _, err := tx.Exec(`UPDATE signing_key SET status = 'retiring',
 			retire_at = now() + make_interval(secs => $1 + COALESCE((SELECT max(access_token_ttl_seconds) FROM app), 300))
-		WHERE status = 'active'`, skew.Seconds()); err != nil {
+		WHERE status = 'active' AND alg = $2`, skew.Seconds(), alg); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`UPDATE signing_key SET status = 'active', activated_at = now() WHERE kid = $1`, kid)
@@ -184,7 +197,7 @@ func activate(tx *sql.Tx, kid string, skew time.Duration) error {
 }
 
 // AddPendingSigningKey publishes a new key now; the schedule activates it once it has been published long
-// enough (`guardian keys rotate`). It refuses while another key is pending (ErrKeyPending).
+// enough (`guardian keys rotate`). It refuses while another key of its algorithm is pending (ErrKeyPending).
 func AddPendingSigningKey(k SigningKey) error {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
@@ -195,7 +208,7 @@ func AddPendingSigningKey(k SigningKey) error {
 		return err
 	}
 	var pending bool
-	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'pending')`).Scan(&pending); err != nil {
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM signing_key WHERE status = 'pending' AND alg = $1)`, k.Alg).Scan(&pending); err != nil {
 		return err
 	}
 	if pending {
@@ -210,9 +223,9 @@ func AddPendingSigningKey(k SigningKey) error {
 // ErrKeyPending means a new key is already waiting to take over.
 var ErrKeyPending = errors.New("a new signing key is already pending")
 
-// EmergencyRotate is the emergency path: k signs at once, and the current key is retired at once (no
-// longer published, its private key wiped), so tokens it signed stop verifying wherever the JWKS is
-// fetched again. A pending key is retired too. It returns the retired keys.
+// EmergencyRotate is the emergency path: k signs at once, and the current key of its algorithm is retired
+// at once (no longer published, its private key wiped), so tokens it signed stop verifying wherever the
+// JWKS is fetched again. A pending key of that algorithm is retired too. It returns the retired keys.
 func EmergencyRotate(k SigningKey) ([]string, error) {
 	tx, err := GetDatabaseConnection().Begin()
 	if err != nil {
@@ -223,7 +236,7 @@ func EmergencyRotate(k SigningKey) ([]string, error) {
 		return nil, err
 	}
 	rows, err := tx.Query(`UPDATE signing_key SET status = 'retired', retired_at = now(), private_key_encrypted = NULL
-		WHERE status IN ('active', 'pending') RETURNING kid`)
+		WHERE status IN ('active', 'pending') AND alg = $1 RETURNING kid`, k.Alg)
 	if err != nil {
 		return nil, err
 	}

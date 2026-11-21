@@ -32,7 +32,8 @@ func Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(httpx.RequireSameOrigin)
-		r.Post("/signup", signup) // open, rate limited per IP
+		r.Post("/signup", signup) // open, rate limited per IP, with proof of work
+		r.Get("/signup/challenge", signupChallenge)
 
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.Authenticate)
@@ -72,6 +73,16 @@ func Router() http.Handler {
 			r.Put("/groups/{group}/members/{account}", addGroupMember)
 			r.Delete("/groups/{group}/members/{account}", removeGroupMember)
 
+			// Apps: administrators may do everything; an app's admins (its owner group's members) may see and
+			// edit it, rotate its secret, link groups they own, and read its audit entries.
+			r.Get("/apps", listApps)
+			r.Get("/apps/{app}", getApp)
+			r.Patch("/apps/{app}", updateApp)
+			r.Put("/apps/{app}/access", setAppAccess)
+			r.Post("/apps/{app}/secret", rotateAppSecret)
+			r.Get("/audit", listAudit)
+			r.Get("/scopes", listScopes)
+
 			// Everything else is for members of guardian-admins.
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.AdminOnly)
@@ -79,6 +90,7 @@ func Router() http.Handler {
 				r.Patch("/groups/{group}", updateGroup)
 				r.Delete("/groups/{group}", deleteGroup)
 				r.Post("/groups/{group}/bind", bindGroup)
+				r.Post("/groups/{group}/copy", copyGroup)
 
 				r.Get("/accounts", listAccounts)
 				r.Post("/accounts", createAccount)
@@ -90,19 +102,11 @@ func Router() http.Handler {
 				r.Get("/accounts/deleted", listDeletedAccounts)
 				r.Delete("/accounts/{account}/sessions", endAccountSessions)
 				r.Get("/overview", getOverview)
-				r.Get("/scopes", listScopes)
 				r.Post("/accounts/{account}/restore", restoreAccount)
 				r.Post("/accounts/{account}/erase", eraseAccount)
 
-				r.Get("/apps", listApps)
 				r.Post("/apps", createApp)
-				r.Get("/apps/{app}", getApp)
-				r.Patch("/apps/{app}", updateApp)
 				r.Delete("/apps/{app}", deleteApp)
-				r.Put("/apps/{app}/access", setAppAccess)
-				r.Post("/apps/{app}/secret", rotateAppSecret)
-
-				r.Get("/audit", listAudit)
 			})
 		})
 	})

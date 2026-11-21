@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -30,8 +31,8 @@ import (
 
 const keysUsage = `usage:
   guardian keys list
-  guardian keys rotate [--execute --reason TEXT]
-  guardian keys rotate --now --revoke-current [--execute --reason TEXT --confirm HOST]
+  guardian keys rotate [--alg RS256|ES256] [--execute --reason TEXT]
+  guardian keys rotate --now --revoke-current [--alg RS256|ES256] [--execute --reason TEXT --confirm HOST]
   guardian keys reencrypt [--execute --reason TEXT]
   guardian mfa reset-totp --all [--execute --reason TEXT --confirm HOST]
 
@@ -57,13 +58,14 @@ func runKeysCommand(args []string, stdout, stderr io.Writer, loadConfig func() (
 	fs.SetOutput(io.Discard)
 	var (
 		execute, now, revoke, all bool
-		reason, confirm           string
+		reason, confirm, alg      string
 	)
 	switch command {
 	case "keys list":
 	case "keys rotate":
 		fs.BoolVar(&now, "now", false, "")
 		fs.BoolVar(&revoke, "revoke-current", false, "")
+		fs.StringVar(&alg, "alg", "", "")
 		fallthrough
 	case "keys reencrypt":
 		fs.BoolVar(&execute, "execute", false, "")
@@ -85,6 +87,14 @@ func runKeysCommand(args []string, stdout, stderr io.Writer, loadConfig func() (
 	}
 	if now != revoke {
 		return usage("the emergency path takes both --now and --revoke-current")
+	}
+	// Without --alg, the key of every algorithm is rotated.
+	algs := db.SigningAlgs
+	if alg != "" {
+		if !slices.Contains(db.SigningAlgs, alg) {
+			return usage("--alg must be one of " + strings.Join(db.SigningAlgs, ", "))
+		}
+		algs = []string{alg}
 	}
 	if command == "mfa reset-totp" && !all {
 		return usage("reset-totp only works on every account: add --all (one account is reset in the admin area)")
@@ -147,41 +157,55 @@ func runKeysCommand(args []string, stdout, stderr io.Writer, loadConfig func() (
 		return 0
 
 	case "keys rotate":
-		active, err := db.GetActiveSigningKey()
+		actives, err := db.GetActiveSigningKeys()
 		if err != nil {
 			return fail(err)
 		}
+		current := map[string]string{}
+		for _, k := range actives {
+			current[k.Alg] = k.KID
+		}
 		if !execute {
+			for _, a := range algs {
+				if now {
+					fmt.Fprintf(stderr, "Dry run: a new %s key would sign at once, and the current one, %s, would be withdrawn at once.\n", a, current[a])
+				} else {
+					fmt.Fprintf(stderr, "Dry run: a new %s key would be published now and sign in about an hour; %s would then retire.\n", a, current[a])
+				}
+			}
 			if now {
-				fmt.Fprintf(stderr, "Dry run: a new key would sign at once, and the current key %s would be withdrawn at once.\n"+
-					"Tokens it signed stop verifying wherever Guardian's keys are fetched again; apps that cache them keep\n"+
-					"accepting such tokens until their cache expires. Restart or refresh the apps afterwards.\n", active.KID)
-			} else {
-				fmt.Fprintf(stderr, "Dry run: a new key would be published now and sign in about an hour; %s would then retire.\n", active.KID)
+				fmt.Fprint(stderr, "Tokens a withdrawn key signed stop verifying wherever Guardian's keys are fetched again; apps that cache\n"+
+					"them keep accepting such tokens until their cache expires. Restart or refresh the apps afterwards.\n")
 			}
 			return 0
 		}
-		k, err := auth.NewSigningKey()
-		if err != nil {
-			return fail(err)
-		}
-		if now {
-			retired, err := db.EmergencyRotate(k)
+		for _, a := range algs {
+			k, err := auth.NewSigningKey(a)
 			if err != nil {
 				return fail(err)
 			}
-			audit("signing_key.revoked", map[string]any{"kid": k.KID, "retired": retired, "by": "emergency"})
-			fmt.Fprintf(stderr, "Key %s signs now; withdrawn: %s. Every replica follows within a minute.\n"+
-				"Now restart or refresh the apps, so they drop the withdrawn key from their caches.\n", k.KID, strings.Join(retired, ", "))
-			return 0
+			if now {
+				retired, err := db.EmergencyRotate(k)
+				if err != nil {
+					return fail(err)
+				}
+				audit("signing_key.revoked", map[string]any{"kid": k.KID, "alg": a, "retired": retired, "by": "emergency"})
+				fmt.Fprintf(stderr, "%s key %s signs now; withdrawn: %s.\n", a, k.KID, strings.Join(retired, ", "))
+				continue
+			}
+			if err := db.AddPendingSigningKey(k); errors.Is(err, db.ErrKeyPending) {
+				fmt.Fprintf(stderr, "A new %s key is already pending; it signs within the hour.\n", a)
+				continue
+			} else if err != nil {
+				return fail(err)
+			}
+			audit("signing_key.created", map[string]any{"kid": k.KID, "alg": a, "by": "hand"})
+			fmt.Fprintf(stderr, "%s key %s is published and signs in about an hour; %s then retires.\n", a, k.KID, current[a])
 		}
-		if err := db.AddPendingSigningKey(k); errors.Is(err, db.ErrKeyPending) {
-			return fail(errors.New("a new key is already pending; it signs within the hour"))
-		} else if err != nil {
-			return fail(err)
+		if now {
+			fmt.Fprint(stderr, "Every replica follows within a minute. Now restart or refresh the apps, so they drop the withdrawn keys\n"+
+				"from their caches.\n")
 		}
-		audit("signing_key.created", map[string]any{"kid": k.KID, "by": "hand"})
-		fmt.Fprintf(stderr, "Key %s is published and signs in about an hour; %s then retires.\n", k.KID, active.KID)
 		return 0
 
 	case "mfa reset-totp":
@@ -229,7 +253,7 @@ func listKeys(w io.Writer, ring *auth.Keyring) int {
 		return 1
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SIGNING KEY\tSTAGE\tCREATED\tSIGNS FROM\tUNPUBLISHED FROM")
+	fmt.Fprintln(tw, "SIGNING KEY\tALG\tSTAGE\tCREATED\tSIGNS FROM\tUNPUBLISHED FROM")
 	day := func(t *time.Time) string {
 		if t == nil {
 			return "-"
@@ -241,7 +265,7 @@ func listKeys(w io.Writer, ring *auth.Keyring) int {
 		if k.RetiredAt != nil {
 			until = k.RetiredAt
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", k.KID, k.Status, day(&k.CreatedAt), day(k.ActivatedAt), day(until))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", k.KID, k.Alg, k.Status, day(&k.CreatedAt), day(k.ActivatedAt), day(until))
 	}
 	tw.Flush()
 	counts, err := auth.ValuesPerKey()

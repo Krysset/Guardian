@@ -24,7 +24,7 @@ that is not yet part of the plan).
 
 ```mermaid
 flowchart LR
-  V[Visitor] --> U[User] --> O[Group owner] --> AA["App admin (1.x)"] --> GA[Guardian admin]
+  V[Visitor] --> U[User] --> O[Group owner] --> AA["App admin"] --> GA[Guardian admin]
   P[Operator]
   M["App (machine)"]
 ```
@@ -37,14 +37,14 @@ membership: a group owner is not an app admin, but an app admin needs everything
 | **Visitor** | Anyone who is not signed in | — | 0.1 |
 | **User** | Anyone with an account who is signed in | Visitor (a user was a visitor until signing in) | 0.1 |
 | **Group owner** | A member of a group that is set as another group's owner group. Their rights cover only the groups they own | User | 0.1 |
-| **App admin** | A member of an app's owner group: manages that app, and links to it only groups they own | Group owner (for the groups they own) | 1.x |
+| **App admin** | A member of an app's owner group: manages that app, and links to it only groups they own | Group owner (for the groups they own) | 1.0 |
 | **Guardian admin** | A member of the built-in `guardian-admins` group | App admin for every app, and so Group owner for every group | 0.1 |
 | **Operator** | Someone with access to the Kubernetes cluster. Not a Guardian role: usually also a Guardian admin, but neither implies the other | — | 0.1 |
 | **App (machine)** | An app calling Guardian with its own credentials, no person involved | — | 0.1 |
 
-Until app admins exist (1.x), Guardian admins do everything marked **App admin** below. The split is
-documented now so the admin area can be built with it in mind: app-admin screens are scoped to one app, and
-Guardian-admin screens add what only a Guardian admin may do.
+Guardian admins can do everything marked **App admin** below, for every app. An app admin sees the admin
+area with only Apps in it, and only their own apps there; the pages leave out what only a Guardian admin may
+do (deleting the app, choosing its admins, the machine API).
 
 ## Showing personal data
 
@@ -73,6 +73,7 @@ personal details by accident.
 | V6 | See the result of an email confirmation link: confirmed, expired, or the address is now used by another account. | 0.3 | done |
 | V7 | Pass the second factor at sign-in: an authenticator code or a recovery code (0.3), or a security key (0.5). | 0.3, keys 0.5 | done |
 | V8 | Sign in with a passkey, without a password. | 0.5 | done |
+| V9 | Sign-up and forgot-password, and sign-in after several failures from the same address, ask the browser to solve a short proof-of-work puzzle, so bots pay for every attempt. A browser without JavaScript is told why the form needs it; signing in works without it until an address fails repeatedly. | 1.0 | done |
 
 ## User
 
@@ -120,19 +121,20 @@ Everything a user has, plus, for each group they own:
 | O4 | Two-factor is required for them. | 0.3 | done |
 | O5 | See which apps their groups are linked to (names only; linking stays with admins). | 0.1 / 0.4 | done |
 
-## App admin (1.x)
+## App admin
 
-Everything a group owner has, plus, for each app they administer. **In 1.0, Guardian admins do these.**
+Everything a group owner has, plus, for each app they administer: the members of the app's owner group,
+which Guardian admins choose (A32). Guardian admins can do all of these for every app.
 
 | Id | Requirement | API / web | Status |
 |---|---|---|---|
-| A15 | List apps: Guardian admins see all, app admins their own. | 0.1 / 0.4 | done (admins) |
-| A17 | Change the app's settings: names, logo, URLs, redirect URIs, back-channel logout URI, skipping consent, token lifetime, scopes. | 0.1 / 0.4 | done (admins) |
-| A18 | Set the access rule and the linked groups (app admins: only groups they own). Turning machine API access on or off is for Guardian admins only, because it widens what the app can read about users. | 0.1 / 0.4 | done (admins) |
-| A19 | Rotate the client secret, with a grace period for the old one. | 0.1 / 0.4 | done (admins) |
-| A20 | Disable and re-enable the app. | 0.1 / 0.4 | done (admins) |
+| A15 | List apps: Guardian admins see all, app admins their own. | 0.1 / 0.4 | done |
+| A17 | Change the app's settings: names, logo, URLs, redirect URIs, back-channel logout URI, skipping consent, token lifetime, scopes. | 0.1 / 0.4 | done |
+| A18 | Set the access rule and the linked groups (app admins: only groups they own). Turning machine API access on or off is for Guardian admins only, because it widens what the app can read about users. | 0.1 / 0.4 | done |
+| A19 | Rotate the client secret, with a grace period for the old one. | 0.1 / 0.4 | done |
+| A20 | Disable and re-enable the app. | 0.1 / 0.4 | done |
 | A21 | Copy what is needed to configure the app: discovery URL, client id, redirect URIs. | 0.4 | done |
-| A22 | Read the audit log: Guardian admins all of it, app admins the entries about their app (1.x). | 0.1 / 0.4 | done (admins) |
+| A22 | Read the audit log: Guardian admins all of it, app admins the entries about their app (without IP addresses). | 0.1 / 0.4 | done |
 | A24 | Two-factor is required for them. | 0.3 | done |
 
 ## Guardian admin
@@ -164,7 +166,7 @@ Everything an app admin has for every app, and everything a group owner has for 
 | A14 | Set or remove a group's owner group. | 0.1 / 0.4 | done |
 | A26 | Mark a group as hidden from its members: it is left out of their own group list (U18). Owners and admins still see it, and apps still receive it in tokens, which a user's browser can sometimes read, so this hides it from the account area, not from a determined user. | 1.x, if needed | deferred |
 | A27 | Make a group a single-app group, bound to one named app, so a group made for one app can never be reused to grant access elsewhere, not even by moving it. The new-group form asks "Is this group for one app only?" with neither answer preselected; choosing yes means choosing the app. An existing group can be bound if it is linked to that app only. A binding is permanent: it cannot be removed or moved (create a more general group instead), and linking the group to any other app is refused. When the bound app is deleted the group stays, bound to no app, so it can never be linked again and its memberships and audit history stay intact; such groups are deleted automatically once the audit retention period has passed since the app was deleted (0.5, with audit retention). Built-in groups cannot be bound. | 0.1 / 0.4, clean-up 0.5 | done |
-| A29 | Copy a group: a new group, with a new key, starting with the same members (and their expiry dates), after which the two are unrelated. For replacing an app without adding every member again, for two groups that start alike but will grow apart, and for starting a larger group from a smaller one. | 1.x | planned |
+| A29 | Copy a group: a new group, with a new key, starting with the same members (and their expiry dates), after which the two are unrelated. For replacing an app without adding every member again, for two groups that start alike but will grow apart, and for starting a larger group from a smaller one. | 1.0 / 1.0 | done |
 
 **Apps**
 
@@ -172,6 +174,9 @@ Everything an app admin has for every app, and everything a group owner has for 
 |---|---|---|---|
 | A16 | Register an app; a confidential app's secret is shown once. | 0.1 / 0.4 | done |
 | A25 | Delete an app, with its secrets, tokens and consents. | 0.1 / 0.4 | done |
+| A30 | Choose how an app's tokens are signed: RS256 (the default, which every OIDC app handles) or ES256 (smaller and faster, for apps that support it). Each algorithm has its own key and rotation, and a change applies at the app's next sign-in or refresh. | 1.0 / 1.0 | done |
+| A31 | An app can ask for two-factor for a single sign-in (`acr_values=mfa`), for example before a sensitive action; the tokens say whether the sign-in met it (`acr`). | 1.0 / — | done |
+| A32 | Choose an app's admins: an owner group whose members manage the app (A15 to A22), or none. | 1.0 / 1.0 | done |
 
 **Oversight**
 

@@ -197,3 +197,20 @@ func TestQueueDeliversInTheBackground(t *testing.T) {
 		t.Error("email still goes out after it was turned off")
 	}
 }
+
+// A mail server's refusal often quotes the address; the log gets the answer without it.
+func TestFailuresAreLoggedWithoutTheAddress(t *testing.T) {
+	for _, c := range []struct{ err, to, want string }{
+		{"550 5.1.1 <zelda@hyrule.example>: Recipient address rejected", "zelda@hyrule.example", "550 5.1.1 <(address)>: Recipient address rejected"},
+		{"452 too many recipients, last was link@hyrule.example", "zelda@hyrule.example", "452 too many recipients, last was (address)"},
+		{"dial tcp: connection refused", "zelda@hyrule.example", "dial tcp: connection refused"},
+	} {
+		if got := redact(errorString(c.err), c.to); got != c.want {
+			t.Errorf("redact(%q) = %q, want %q", c.err, got, c.want)
+		}
+	}
+}
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }

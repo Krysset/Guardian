@@ -60,10 +60,10 @@ Every admin page carries the one-administrator warning (A23) while it applies. T
 | AD2 Account | Profile and email, status, groups and their expiry, temporary password, sign out everywhere, two-factor reset (0.3), delete or erase, restore during grace (0.3). | A2, A4, A5, A6, A7, A8, A9, A10, A13 | Guardian admin | 0.4 |
 | AD3 New account | Username, password, email. | A3 | Guardian admin | 0.4 |
 | AD4 Groups | All groups: key, name, members, owner group, built-in, bound app (single-app), hidden (1.x), linked apps. | A11, A26, A27 | Guardian admin | 0.4 |
-| AD5 Group | Name, description, owner group, the app it is bound to (single-app), hidden (1.x), copy (1.x), members and expiry, linked apps; delete. | A12, A13, A14, A26, A27, A29, O5 | Guardian admin | 0.4 |
-| AD6 New group | Name, key (suggested from the name; never changes), description, owner group, "Is this group for one app only?" (no preselected answer; yes asks for the app), hidden (1.x). | A12, A26, A27 | Guardian admin | 0.4 |
-| AD7 Apps | All apps (app admins in 1.x: their own). | A15 | App admin | 0.4 |
-| AD8 App | Settings, access (rule, linked groups, machine API for Guardian admins), credentials and secret rotation, setup details to copy, disable, delete (Guardian admins), the app's audit entries. | A17, A18, A19, A20, A21, A22, A25 | App admin | 0.4 |
+| AD5 Group | Name, description, owner group, the app it is bound to (single-app), hidden (1.x), copy, members and expiry, linked apps; delete. | A12, A13, A14, A26, A27, A29, O5 | Guardian admin | 0.4 |
+| AD6 New group | Name, key (suggested from the name; never changes), description, owner group, "Is this group for one app only?" (no preselected answer; yes asks for the app), hidden (1.x). As a copy of a group: every field starts from the original, and the question about one app is left out. | A12, A26, A27, A29 | Guardian admin | 0.4 |
+| AD7 Apps | All apps; app admins see their own, as "Your apps", with no New app. | A15 | App admin | 0.4 |
+| AD8 App | Settings, access (rule, linked groups, machine API for Guardian admins), credentials and secret rotation, setup details to copy, disable, delete (Guardian admins), the app's audit entries. | A17, A18, A19, A20, A21, A22, A25, A30, A32 | App admin | 0.4 |
 | AD9 New app | The settings and access of a new app. | A16 | Guardian admin | 0.4 |
 | AD10 Secret, shown once (dialog) | After registering an app or rotating its secret: copy it, warned it will not be shown again. | A16, A19 | App admin | 0.4 |
 | AD11 Audit log | All entries, filter by event and account, paged, with each entry's details. | A22 | Guardian admin | 0.4 |
@@ -122,6 +122,9 @@ appear from that release; until then the page is drawn without them.
 - States: wrong username or password (the same message whether or not the account exists); too many
   attempts, try again in a few minutes (by default 5 failures for one account from one address, or 50 from one
   address, in 15 minutes; the account itself is never locked); form expired, reload. The username is kept after an error.
+- After 3 failures from one address, the form carries a proof-of-work puzzle (V9) that the page's script
+  solves; a form shown before that is shown again with "a quick check is needed". Without JavaScript, a note
+  says why it is needed.
 
 **S2 Sign up**
 - Fields: username (with its rule: 3–64 letters, digits, `.`, `_`, `-`); password, twice; email (0.3:
@@ -131,8 +134,10 @@ appear from that release; until then the page is drawn without them.
   - Guardian is a hobby project under active development;
   - use a password you use nowhere else.
 - Actions: Create account. "Already have an account? Sign in".
+- Always carries a proof-of-work puzzle (V9), solved by the page's script while the form is filled in.
 - States: username taken; email already in use (0.3); password too short; passwords do not match; too many
-  sign-ups from this address.
+  sign-ups from this address; the page needs JavaScript (a note under the form, and the error if sent
+  without it); the check failed or took too long, try again.
 - After sign-up the user is signed in and continues to the app they came from (or their account). With an
   email (0.3), sign-up is only complete once the address is confirmed: the page says "Check your inbox" (with
   Resend and Change address, S2b), and the confirmation link (S12) signs them in and continues.
@@ -187,7 +192,7 @@ appear from that release; until then the page is drawn without them.
 
 **S10 Forgot password** (0.3)
 - Fields: username or email; a honeypot field that people never see (a filled one gets the usual answer and no
-  email).
+  email); a proof-of-work puzzle (V9), as on S2.
 - Actions: Send reset link; back to sign in.
 - States: afterwards always the same message: "If the account has a confirmed email address, we have sent
   a link." Accounts without one are told, on this page, to contact an administrator.
@@ -366,7 +371,7 @@ appear from that release; until then the page is drawn without them.
 - Fields: display name, description, owner group.
 - **Members:** the same as AC6, except that admins may also search accounts.
 - Actions: Save; Bind to an app (only while it is linked to at most that one app; with a warning that it is
-  permanent); Copy (1.x); Delete (type the key; shows the members and linked apps it affects).
+  permanent); Copy (opens AD6 as a copy); Delete (type the key; shows the members and linked apps it affects).
 - States: built-in groups are read-only, with a note why.
 
 **AD6 New group**
@@ -374,10 +379,15 @@ appear from that release; until then the page is drawn without them.
   by hand; live check of the rule; warning that it never changes); description; owner group (optional).
 - Fields: "Is this group for one app only?" Yes or No, with neither preselected; Yes asks for the app.
 - Actions: Create (opens AD5).
+- **As a copy** (`?copy=<group>`, A29): the name and key start as the original's with "(copy)" and `-copy`, the
+  description and owner group as the original's, all editable. The members and their expiry dates come along;
+  app links do not, so the question about one app is left out. Create copy opens the new group.
 
 **AD7 Apps**
 - Shows a table: logo, name, type (with or without a secret), access rule, linked groups, enabled.
 - Actions: open an app (AD8); New app (AD9).
+- **For an app admin** (the admin area then has only this page and AD8, titled "Your apps"): their own apps;
+  linked groups they do not own are counted, not named; no New app.
 
 **AD8 App**
 - **Setup:** client id, discovery URL and issuer, each with copy; the redirect URIs.
@@ -387,7 +397,9 @@ appear from that release; until then the page is drawn without them.
   - back-channel logout URI;
   - skip consent;
   - token lifetime, with guidance (60 seconds or more; how stale the app's view may get);
-  - scopes.
+  - token signing: RS256 (works with every app) or ES256 (only if the app supports it);
+  - scopes;
+  - app admins: none, or the members of a group (Guardian admins choose; app admins see a note).
 - **Access:**
   - rule: members of linked groups only, or anyone with an account;
   - linked groups (groups bound to another app cannot be picked);
@@ -396,6 +408,9 @@ appear from that release; until then the page is drawn without them.
   leading to AD10.
 - **Activity:** recent audit entries about the app.
 - **Danger zone:** disable or enable; delete (Guardian admins; type the name).
+- **For an app admin:** the same page without choosing the app's admins, the machine API, the audit log link
+  and delete. Linked groups they do not own show "not yours" and cannot be unlinked; only groups they own can
+  be picked.
 
 **AD9 New app**
 - Fields:
@@ -508,9 +523,10 @@ Nothing since 0.4: every page gets its data from `/api/v1`.
 | A23 | every AD page |
 | A24 | S15 |
 | A25 | AD8 |
+| A30 | AD8 |
 | A26 | AD4, AD5, AD6 (1.x, if needed) |
 | A27 | AD4, AD5, AD6 |
 | A28 | AD13 |
-| A29 | AD5 (1.x) |
+| A29 | AD5, AD6 |
 | P1–P7 | CLI |
 | M1, M2 | OIDC, machine API |

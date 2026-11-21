@@ -40,10 +40,12 @@ type App struct {
 	AccessTokenTTL          int      `json:"access_token_ttl_seconds"` // lifetime of access and ID tokens; also how stale the app's view of a user can get
 	RefreshMode             string   `json:"refresh_mode"`             // "stable" (apps with a secret) or "none"
 	Enabled                 bool     `json:"enabled"`
-	AccessRule              string   `json:"access_rule"`      // "groups" (only members of linked groups may sign in) or "anyone"
-	RequireMFA              bool     `json:"require_mfa"`      // signing in to the app needs two-factor
-	GroupIDs                []string `json:"group_ids"`        // groups linked to the app
-	Scopes                  []string `json:"scopes,omitempty"` // scopes the app may request (filled by GetAppByClientID)
+	AccessRule              string   `json:"access_rule"`              // "groups" (only members of linked groups may sign in) or "anyone"
+	RequireMFA              bool     `json:"require_mfa"`              // signing in to the app needs two-factor
+	SigningAlg              string   `json:"signing_alg"`              // RS256 or ES256: the algorithm of the app's tokens
+	OwnerGroupID            string   `json:"owner_group_id,omitempty"` // its members are the app's admins
+	GroupIDs                []string `json:"group_ids"`                // groups linked to the app
+	Scopes                  []string `json:"scopes,omitempty"`         // scopes the app may request (filled by GetAppByClientID)
 }
 
 type Scope struct {
@@ -94,8 +96,9 @@ type SigningKey struct {
 
 // LogoutTarget is an app that must be told (back-channel) that a session ended.
 type LogoutTarget struct {
-	ClientID string
-	URI      string
+	ClientID   string
+	URI        string
+	SigningAlg string // the app's token algorithm, for its logout token
 }
 
 // LogoutNotice is one back-channel logout to send: this app must drop what it holds for this session.

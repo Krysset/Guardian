@@ -187,12 +187,12 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 	accessClaims := jwt.MapClaims{
 		"iss": httpx.Issuer, "sub": acct.ID, "aud": app.ClientID, "client_id": app.ClientID,
 		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "jti": jti,
-		"scope": strings.Join(scopes, " "), "sid": sess.ID, "amr": sess.AMR,
+		"scope": strings.Join(scopes, " "), "sid": sess.ID, "amr": sess.AMR, "acr": acrOf(sess.AMR),
 	}
 	idClaims := jwt.MapClaims{
 		"iss": httpx.Issuer, "sub": acct.ID, "aud": app.ClientID,
 		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "auth_time": sess.AuthTime.Unix(),
-		"sid": sess.ID, "amr": sess.AMR,
+		"sid": sess.ID, "amr": sess.AMR, "acr": acrOf(sess.AMR),
 	}
 	if nonce != "" {
 		idClaims["nonce"] = nonce
@@ -208,12 +208,12 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 		}
 	}
 
-	accessToken, err := signingKeys.Sign(accessClaims, accessTokenType)
+	accessToken, err := signingKeys.Sign(app.SigningAlg, accessClaims, accessTokenType)
 	if err != nil {
 		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false
 	}
-	idToken, err := signingKeys.Sign(idClaims, "")
+	idToken, err := signingKeys.Sign(app.SigningAlg, idClaims, "")
 	if err != nil {
 		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false

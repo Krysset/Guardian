@@ -1,5 +1,7 @@
-<!-- AD6 New group: the display name, the key (suggested from the name, checked as typed; it never changes), an optional owner group, and "Is
-     this group for one app only?" with neither answer chosen; Yes asks for the app. -->
+<!-- AD6 New group: the display name, the key (suggested from the name, checked as typed; it never changes),
+     an optional owner group, and "Is this group for one app only?" with neither answer chosen; Yes asks for
+     the app. With ?copy=<id> it copies a group (A29): every field starts from the original and can be
+     changed, and the members and their expiry dates come along; app links do not. -->
 <script lang="ts">
 	import { goto, refreshAll } from '$app/navigation';
 	import { api, ApiError } from '#lib/api/client.ts';
@@ -8,10 +10,12 @@
 
 	let { data }: PageProps = $props();
 
-	let key = $state('');
-	let displayName = $state('');
-	let description = $state('');
-	let owner = $state('');
+	// svelte-ignore state_referenced_locally
+	const source = data.source;
+	let key = $state(source ? `${source.key}-copy`.slice(0, 63) : '');
+	let displayName = $state(source ? `${source.display_name} (copy)`.slice(0, 128) : '');
+	let description = $state(source?.description ?? '');
+	let owner = $state(source?.owner_group_id ?? '');
 	let oneApp = $state<'' | 'yes' | 'no'>('');
 	let app = $state('');
 	let errors = $state<{ key?: string; name?: string; oneApp?: string; app?: string; form?: string }>({});
@@ -23,7 +27,7 @@
 	function suggestKey(name: string): string {
 		return name
 			.normalize('NFD')
-			.replace(/[̀-ͯ]/g, '')
+			.replace(/[\u0300-\u036f]/g, '')
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-+/, '')
@@ -45,21 +49,23 @@
 		if (!keyOk) e.key = 'Use 2–63 lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit.';
 		else if (taken) e.key = 'A group already has that key.';
 		if (!displayName.trim()) e.name = 'Give the group a name people will see.';
-		if (!oneApp) e.oneApp = 'Choose Yes or No.';
-		else if (oneApp === 'yes' && !app) e.app = 'Choose the app.';
+		if (!source) {
+			if (!oneApp) e.oneApp = 'Choose Yes or No.';
+			else if (oneApp === 'yes' && !app) e.app = 'Choose the app.';
+		}
 		errors = e;
 		if (Object.keys(e).length) return;
 		busy = true;
 		try {
-			const g = await api.post('/groups', {
-				body: {
-					key,
-					display_name: displayName.trim(),
-					...(description.trim() ? { description: description.trim() } : {}),
-					...(owner ? { owner_group_id: owner } : {}),
-					...(oneApp === 'yes' ? { bound_app_id: app } : {})
-				}
-			});
+			const fields = {
+				key,
+				display_name: displayName.trim(),
+				...(description.trim() ? { description: description.trim() } : {}),
+				...(owner ? { owner_group_id: owner } : {})
+			};
+			const g = source
+				? await api.post('/groups/{group}/copy', { path: { group: source.id }, body: fields })
+				: await api.post('/groups', { body: { ...fields, ...(oneApp === 'yes' ? { bound_app_id: app } : {}) } });
 			await refreshAll();
 			await goto(`/admin/groups/${g.id}`);
 		} catch (err) {
@@ -70,9 +76,17 @@
 	}
 </script>
 
-<svelte:head><title>New group · Guardian</title></svelte:head>
+<svelte:head><title>{source ? 'Copy group' : 'New group'} · Guardian</title></svelte:head>
 
-<div class="ph"><p class="crumb"><a href="/admin/groups">Groups</a> / New</p><h1>New group</h1></div>
+{#if source}
+	<div class="ph">
+		<p class="crumb"><a href="/admin/groups">Groups</a> / <a href="/admin/groups/{source.id}">{source.display_name}</a> / Copy</p>
+		<h1>Copy {source.display_name}</h1>
+		<p>A new group with the same {source.member_count === 1 ? 'member' : `${source.member_count} members`} and their expiry dates. Change anything below first.</p>
+	</div>
+{:else}
+	<div class="ph"><p class="crumb"><a href="/admin/groups">Groups</a> / New</p><h1>New group</h1></div>
+{/if}
 
 <form class="card" onsubmit={create} novalidate>
 	<h2 class="sec-h">Group</h2>
@@ -105,6 +119,9 @@
 		</div>
 	</div>
 
+	{#if source}
+		<p class="hint copy-note">The copy is linked to no app. Link it on an app's page, or bind it to one app from its own page.</p>
+	{:else}
 	<fieldset class="one-app" aria-describedby={errors.oneApp ? 'oa-err' : undefined}>
 		<legend class="lbl">Is this group for one app only?</legend>
 		<div class="grid2">
@@ -123,9 +140,10 @@
 			</div>
 		{/if}
 	</fieldset>
+	{/if}
 
 	{#if errors.form}<p class="err-msg msg" role="alert">{errors.form}</p>{/if}
-	<div class="actions"><a class="btn alt" href="/admin/groups">Cancel</a><button class="btn" type="submit" disabled={busy}>Create</button></div>
+	<div class="actions"><a class="btn alt" href={source ? `/admin/groups/${source.id}` : '/admin/groups'}>Cancel</a><button class="btn" type="submit" disabled={busy}>{source ? 'Create copy' : 'Create'}</button></div>
 </form>
 
 <style>
@@ -176,6 +194,9 @@
 	}
 	.msg {
 		margin: 16px 0 0;
+	}
+	.copy-note {
+		margin: 20px 0 0;
 	}
 	.actions {
 		display: flex;

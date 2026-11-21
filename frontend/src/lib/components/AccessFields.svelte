@@ -1,5 +1,6 @@
 <!-- Who may sign in to an app: the rule, and the linked groups as chips with "Link a group". Groups bound to
-     another app cannot be picked. -->
+     another app cannot be picked. For an app admin, `groups` holds only the groups they own: the others that
+     are linked are named from `linked` and cannot be unlinked here. -->
 <script lang="ts">
 	import type { Schema } from '#lib/api/client.ts';
 
@@ -8,11 +9,22 @@
 		groupIds = $bindable([]),
 		groups,
 		appId = '',
-		appName = 'the app'
-	}: { rule: 'groups' | 'anyone'; groupIds?: string[]; groups: Schema<'Group'>[]; appId?: string; appName?: string } = $props();
+		appName = 'the app',
+		linked = [],
+		ownOnly = false
+	}: {
+		rule: 'groups' | 'anyone';
+		groupIds?: string[];
+		groups: Schema<'Group'>[];
+		appId?: string;
+		appName?: string;
+		linked?: { id: string; display_name: string }[];
+		ownOnly?: boolean;
+	} = $props();
 
 	let picking = $state('');
 	const byId = $derived(new Map(groups.map((g) => [g.id, g])));
+	const linkedName = $derived(new Map(linked.map((g) => [g.id, g.display_name])));
 	// A single-app group may only be linked to its own app; one whose app was deleted, to none.
 	const pickable = $derived(
 		groups.filter((g) => !groupIds.includes(g.id) && !g.is_system && (!g.single_app || (g.bound_app_id && g.bound_app_id === appId)))
@@ -34,10 +46,15 @@
 <div class="chips" aria-labelledby="linked-l">
 	{#each groupIds as id (id)}
 		{@const g = byId.get(id)}
+		{@const label = g?.display_name ?? linkedName.get(id) ?? 'A group'}
 		<span class="chip">
-			{g?.display_name ?? 'A group'}
+			{label}
 			{#if g?.single_app}<span class="badge tiny">bound to {appName}</span>{/if}
-			<button type="button" aria-label="Unlink {g?.display_name ?? 'this group'}" onclick={() => (groupIds = groupIds.filter((x) => x !== id))}>✕</button>
+			{#if g || !ownOnly}
+				<button type="button" aria-label="Unlink {label}" onclick={() => (groupIds = groupIds.filter((x) => x !== id))}>✕</button>
+			{:else}
+				<span class="badge tiny" title="Only its owners or an administrator can unlink it">not yours</span>
+			{/if}
 		</span>
 	{:else}
 		<span class="hint none">None linked.</span>
@@ -51,7 +68,7 @@
 	</select>
 	<button class="btn alt" type="button" disabled={!picking} onclick={link}>Link</button>
 </div>
-<p class="hint">Groups bound to another app can't be picked.</p>
+<p class="hint">{ownOnly ? 'You can link the groups you own. ' : ''}Groups bound to another app can't be picked.</p>
 
 <style>
 	.rule {

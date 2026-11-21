@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -756,39 +757,43 @@ func TestSchemaScriptSurvivesConcurrentStartups(t *testing.T) {
 
 // ---- Signing keys -----------------------------------------------------------
 
-func TestEnsureSigningKeyCreatesExactlyOneUnderConcurrency(t *testing.T) {
+// One active key per algorithm, created once however many replicas start together.
+func TestEnsureSigningKeysCreatesExactlyOnePerAlgorithmUnderConcurrency(t *testing.T) {
 	testutil.Reset(t)
 	testutil.DeleteSigningKeys()
 	t.Cleanup(testutil.DeleteSigningKeys)
 
 	var calls int32
-	generate := func() (db.SigningKey, error) {
+	generate := func(alg string) (db.SigningKey, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(25 * time.Millisecond)
-		return db.SigningKey{KID: "k1", Alg: "RS256", PublicJWK: []byte(`{"kty":"RSA","kid":"k1"}`), PrivateKeyEncrypted: "x", Status: "active"}, nil
+		kid := "k1-" + alg
+		return db.SigningKey{KID: kid, Alg: alg, PublicJWK: []byte(`{"kid":"` + kid + `"}`), PrivateKeyEncrypted: "x", Status: "active"}, nil
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := db.EnsureSigningKey(generate); err != nil {
+			if err := db.EnsureSigningKeys(generate); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	wg.Wait()
-	if calls != 1 {
-		t.Fatalf("generate ran %d times, want 1", calls)
+	if calls != 2 {
+		t.Fatalf("generate ran %d times, want once per algorithm", calls)
 	}
-	if err := db.EnsureSigningKey(generate); err != nil || calls != 1 {
+	if err := db.EnsureSigningKeys(generate); err != nil || calls != 2 {
 		t.Fatalf("an existing active key must not be replaced (calls=%d, %v)", calls, err)
 	}
-	active, err := db.GetActiveSigningKey()
-	if err != nil || active.KID != "k1" {
-		t.Fatalf("active key = %+v, %v", active, err)
+	active, err := db.GetActiveSigningKeys()
+	if err != nil || len(active) != 2 || active[0].KID != "k1-ES256" || active[1].KID != "k1-RS256" {
+		t.Fatalf("active keys = %+v, %v", active, err)
 	}
 
+	testutil.Exec(t, `DELETE FROM signing_key WHERE alg = 'ES256'`)
+	testutil.Exec(t, `UPDATE signing_key SET kid = 'k1' WHERE kid = 'k1-RS256'`)
 	testutil.Exec(t, `INSERT INTO signing_key (kid, alg, public_jwk, private_key_encrypted, status) VALUES
 		('k2', 'RS256', '{"kid":"k2"}', 'x', 'retiring'), ('k3', 'RS256', '{"kid":"k3"}', NULL, 'retired'),
 		('k4', 'RS256', '{"kid":"k4"}', 'x', 'pending')`)
@@ -806,15 +811,18 @@ func TestEnsureSigningKeyCreatesExactlyOneUnderConcurrency(t *testing.T) {
 	}
 }
 
+// The stages of one algorithm's keys (TestEachAlgorithmRotatesOnItsOwn covers the two together).
+//
 // Covers: P3
 func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
 	testutil.Reset(t)
 	testutil.DeleteSigningKeys()
+	onlyAlgorithms(t, "RS256")
 	n := 0
-	generate := func() (db.SigningKey, error) {
+	generate := func(alg string) (db.SigningKey, error) {
 		n++
 		kid := fmt.Sprintf("key%d", n)
-		return db.SigningKey{KID: kid, Alg: "RS256", PublicJWK: []byte(`{"kid":"` + kid + `"}`), PrivateKeyEncrypted: "v1:k1:x"}, nil
+		return db.SigningKey{KID: kid, Alg: alg, PublicJWK: []byte(`{"kid":"` + kid + `"}`), PrivateKeyEncrypted: "v1:k1:x"}, nil
 	}
 	sched := db.KeySchedule{Lifetime: 90 * 24 * time.Hour, Pending: time.Hour, Skew: 5 * time.Minute}
 	status := func() string {
@@ -828,7 +836,7 @@ func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
-	if err := db.EnsureSigningKey(generate); err != nil {
+	if err := db.EnsureSigningKeys(generate); err != nil {
 		t.Fatal(err)
 	}
 	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 0 || status() != "key1=active" {
@@ -863,11 +871,11 @@ func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
 	}
 
 	// By hand: a pending key now, refused while one is pending.
-	k3, _ := generate()
+	k3, _ := generate("RS256")
 	if err := db.AddPendingSigningKey(k3); err != nil {
 		t.Fatal(err)
 	}
-	k4, _ := generate()
+	k4, _ := generate("RS256")
 	if err := db.AddPendingSigningKey(k4); !errors.Is(err, db.ErrKeyPending) {
 		t.Errorf("a second pending key: %v", err)
 	}
@@ -875,6 +883,70 @@ func TestSigningKeysMoveThroughTheirStages(t *testing.T) {
 	retired, err := db.EmergencyRotate(k4)
 	if err != nil || len(retired) != 2 || status() != "key1=retired key2=retired key3=retired key4=active" {
 		t.Fatalf("emergency: %v %v, %s", retired, err, status())
+	}
+}
+
+// onlyAlgorithms limits the signing algorithms for one test.
+func onlyAlgorithms(t *testing.T, algs ...string) {
+	t.Helper()
+	previous := db.SigningAlgs
+	db.SigningAlgs = algs
+	t.Cleanup(func() { db.SigningAlgs = previous })
+}
+
+// Each algorithm's key is rotated on its own schedule: one becoming due, being activated or being withdrawn
+// in an emergency leaves the other alone.
+//
+// Covers: P3, A30
+func TestEachAlgorithmRotatesOnItsOwn(t *testing.T) {
+	testutil.Reset(t)
+	testutil.DeleteSigningKeys()
+	t.Cleanup(testutil.DeleteSigningKeys)
+	n := 0
+	generate := func(alg string) (db.SigningKey, error) {
+		n++
+		kid := fmt.Sprintf("%s-%d", alg, n)
+		return db.SigningKey{KID: kid, Alg: alg, PublicJWK: []byte(`{"kid":"` + kid + `"}`), PrivateKeyEncrypted: "v1:k1:x"}, nil
+	}
+	sched := db.KeySchedule{Lifetime: 90 * 24 * time.Hour, Pending: time.Hour, Skew: 5 * time.Minute}
+	// In the order the keys were made (keys made in one transaction share their creation time).
+	status := func() string {
+		keys, _ := db.ListSigningKeys()
+		sort.Slice(keys, func(i, j int) bool {
+			n := func(kid string) int { v, _ := strconv.Atoi(kid[strings.LastIndex(kid, "-")+1:]); return v }
+			return n(keys[i].KID) < n(keys[j].KID)
+		})
+		var out []string
+		for _, k := range keys {
+			out = append(out, k.KID+"="+k.Status)
+		}
+		return strings.Join(out, " ")
+	}
+	if err := db.EnsureSigningKeys(generate); err != nil || status() != "RS256-1=active ES256-2=active" {
+		t.Fatalf("first start: %v, %s", err, status())
+	}
+	// Only the ES256 key is due.
+	testutil.Exec(t, `UPDATE signing_key SET activated_at = now() - interval '90 days', created_at = now() - interval '90 days' WHERE kid = 'ES256-2'`)
+	if steps, err := db.AdvanceSigningKeys(sched, generate); err != nil || len(steps) != 1 || status() != "RS256-1=active ES256-2=active ES256-3=pending" {
+		t.Fatalf("due: %v %v, %s", steps, err, status())
+	}
+	// A pending key of one algorithm does not stop the other from getting one by hand.
+	k, _ := generate("RS256")
+	if err := db.AddPendingSigningKey(k); err != nil {
+		t.Fatalf("an RS256 key while an ES256 one is pending: %v", err)
+	}
+	testutil.Exec(t, `UPDATE signing_key SET created_at = now() - interval '61 minutes' WHERE kid = 'ES256-3'`)
+	if steps, _ := db.AdvanceSigningKeys(sched, generate); len(steps) != 1 || status() != "RS256-1=active ES256-2=retiring ES256-3=active RS256-4=pending" {
+		t.Fatalf("activation: %v, %s", steps, status())
+	}
+	// The emergency path withdraws the keys of its own algorithm only.
+	e, _ := generate("ES256")
+	retired, err := db.EmergencyRotate(e)
+	if err != nil || len(retired) != 1 || retired[0] != "ES256-3" {
+		t.Fatalf("emergency: %v %v", retired, err)
+	}
+	if got := status(); got != "RS256-1=active ES256-2=retiring ES256-3=retired RS256-4=pending ES256-5=active" {
+		t.Fatalf("after the emergency: %s", got)
 	}
 }
 

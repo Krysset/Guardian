@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"log/slog"
 	"regexp"
 )
@@ -16,15 +17,21 @@ const appColumns = `id, name, pretty_name, description, COALESCE(logo_url, ''), 
 	client_id, client_type, token_endpoint_auth_method, grant_types, redirect_uris, post_logout_redirect_uris,
 	COALESCE(backchannel_logout_uri, ''), require_pkce, is_first_party, access_token_ttl_seconds, refresh_mode, enabled,
 	ARRAY(SELECT scope_name FROM app_scope WHERE app_scope.app_id = app.id ORDER BY scope_name),
-	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1), require_mfa`
+	access_rule, ARRAY(SELECT group_id::text FROM app_group WHERE app_group.app_id = app.id ORDER BY 1), require_mfa,
+	signing_alg, COALESCE(owner_group_id::text, '')`
 
-func scanApp(s scanner) (App, error) {
-	var a App
-	err := s.Scan(&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
+// appFields are the scan destinations for appColumns, in order; a query may select more after them.
+func appFields(a *App) []any {
+	return []any{&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
 		&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
 		scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
 		&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
-		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &a.RequireMFA)
+		scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &a.RequireMFA, &a.SigningAlg, &a.OwnerGroupID}
+}
+
+func scanApp(s scanner) (App, error) {
+	var a App
+	err := s.Scan(appFields(&a)...)
 	return a, err
 }
 
@@ -47,13 +54,13 @@ func AddApp(a App, scopes []string, secretHash string) (App, error) {
 	err = tx.QueryRow(
 		`INSERT INTO app (name, pretty_name, description, logo_url, homepage_url, client_type, token_endpoint_auth_method,
 			redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, is_first_party, access_token_ttl_seconds, access_rule,
-			grant_types, refresh_mode, require_mfa)
+			grant_types, refresh_mode, require_mfa, signing_alg, owner_group_id)
 		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, COALESCE(NULLIF($12, 0), 300),
-		         COALESCE(NULLIF($13, ''), 'groups'), $14, $15, $16)
+		         COALESCE(NULLIF($13, ''), 'groups'), $14, $15, $16, COALESCE(NULLIF($17, ''), 'RS256'), NULLIF($18, '')::uuid)
 		 RETURNING id`,
 		a.Name, a.PrettyName, a.Description, a.LogoURL, a.HomepageURL, a.ClientType, authMethod,
 		strArray(a.RedirectURIs), strArray(a.PostLogoutRedirectURIs), a.BackchannelLogoutURI, a.IsFirstParty,
-		a.AccessTokenTTL, a.AccessRule, grants, refreshMode, a.RequireMFA).Scan(&id)
+		a.AccessTokenTTL, a.AccessRule, grants, refreshMode, a.RequireMFA, a.SigningAlg, a.OwnerGroupID).Scan(&id)
 	if err != nil {
 		slog.Error("failed to create an app", "app", a.Name, "error", err)
 		return App{}, err
@@ -221,15 +228,48 @@ func AppsForHome(accountID string) ([]HomeApp, error) {
 	for rows.Next() {
 		var a App
 		var connected bool
-		err := rows.Scan(&a.ID, &a.Name, &a.PrettyName, &a.Description, &a.LogoURL, &a.HomepageURL,
-			&a.ClientID, &a.ClientType, &a.TokenEndpointAuthMethod,
-			scanArray(&a.GrantTypes), scanArray(&a.RedirectURIs), scanArray(&a.PostLogoutRedirectURIs),
-			&a.BackchannelLogoutURI, &a.RequirePKCE, &a.IsFirstParty, &a.AccessTokenTTL, &a.RefreshMode, &a.Enabled,
-			scanArray(&a.Scopes), &a.AccessRule, scanArray(&a.GroupIDs), &a.RequireMFA, &connected)
+		err := rows.Scan(append(appFields(&a), &connected)...)
 		if err != nil {
 			return nil, err
 		}
 		apps = append(apps, HomeApp{App: a, Connected: connected})
 	}
 	return apps, rows.Err()
+}
+
+// AppAdminVia reports whether the account is one of the app's admins (an active member of its owner group),
+// and the owner group's key for the audit log.
+func AppAdminVia(accountID, appID string) (ownerKey string, ok bool, err error) {
+	if !IsUUID(appID) {
+		return "", false, nil
+	}
+	err = GetDatabaseConnection().QueryRow(
+		`SELECT o.key FROM app a
+		 JOIN user_group o ON o.id = a.owner_group_id
+		 JOIN group_member m ON m.group_id = o.id AND m.account_id = $1 AND `+activeMember+`
+		 WHERE a.id = $2`, accountID, appID).Scan(&ownerKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return ownerKey, err == nil, err
+}
+
+// AppsAdministeredBy returns the apps the account is an admin of, by name.
+func AppsAdministeredBy(accountID string) ([]App, error) {
+	rows, err := GetDatabaseConnection().Query(`SELECT `+appColumns+` FROM app
+		WHERE EXISTS (SELECT 1 FROM group_member m WHERE m.group_id = app.owner_group_id AND m.account_id = $1 AND `+activeMember+`)
+		ORDER BY pretty_name`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []App
+	for rows.Next() {
+		a, err := scanApp(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

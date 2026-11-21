@@ -144,6 +144,13 @@ const passkeyCookie = "guardian_passkey"
 // browser's passkey suggestions in the username field; without JavaScript they are simply not offered.
 func renderLogin(w http.ResponseWriter, r *http.Request, page Page, status int) {
 	page.Title, page.CSRF = "Sign in", httpx.CSRFToken(w, r)
+	if loginNeedsPoW(r) {
+		if p, err := NewPoW(); err != nil {
+			slog.Error("failed to make a proof-of-work puzzle", "error", err)
+		} else {
+			page.PoW = &p
+		}
+	}
 	if opts, token, err := passkey.BeginPasskeyLogin(); err != nil {
 		if !errors.Is(err, passkey.ErrOff) {
 			slog.Error("failed to start a passkey sign-in", "error", err)
@@ -239,6 +246,19 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		auth.DummyVerify(password) // a refusal takes as long as a check
 		showError(http.StatusTooManyRequests, "Too many failed attempts. Try again in a few minutes.")
 		return
+	}
+	// After a few failures from this address, every attempt must answer a puzzle first.
+	if ipFails >= PoWAfterFailures {
+		if r.PostFormValue("pow") == "" {
+			// The form was shown before the address got here: show it again, with its puzzle.
+			powChecks.WithLabelValues("login", "missing").Inc()
+			showError(http.StatusBadRequest, "After several failed sign-ins from your network, a quick check is needed. Sign in again.")
+			return
+		}
+		if msg := checkFormPoW(r, "login"); msg != "" {
+			showError(http.StatusBadRequest, msg)
+			return
+		}
 	}
 
 	valid, reason := false, "wrong_password"

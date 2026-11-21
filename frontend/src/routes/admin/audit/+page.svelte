@@ -69,7 +69,7 @@
 
 <svelte:head><title>Audit log · Guardian</title></svelte:head>
 
-<div class="ph"><h1>Audit log</h1><p>Everything that happened in Guardian, newest first. Entries are kept for {formatDays(data.overview.audit_retention_days)}.</p></div>
+<div class="ph"><h1>Audit log</h1><p>Everything that happened in Guardian, newest first. Entries are kept for {formatDays(data.overview!.audit_retention_days)}.</p></div>
 
 <section class="card">
 	<div class="filters">

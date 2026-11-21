@@ -140,6 +140,16 @@
 
 <GroupMembers groupId={group.id} groupName={group.display_name} members={data.members} search accountLinks />
 
+<section class="card">
+	<div class="row">
+		<span class="grow">
+			<strong>Copy this group</strong>
+			<span class="hint block">A new, separate group that starts with the same members and expiry dates. For example to replace an app, or to start a group that will grow apart.</span>
+		</span>
+		<a class="btn alt" href="/admin/groups/new?copy={group.id}">Copy</a>
+	</div>
+</section>
+
 {#if !group.is_system}
 	<section class="card danger-card">
 		<h2 class="sec-h">Other actions</h2>

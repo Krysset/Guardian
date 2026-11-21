@@ -685,7 +685,7 @@ func TestE2ERPInitiatedLogout(t *testing.T) {
 	short := b.signIn(app, secret, "alice", "openid")
 	old := parseJWT(t, short.ID).Claims.(jwt.MapClaims)
 	old["iat"], old["exp"] = time.Now().Add(-2*time.Hour).Unix(), time.Now().Add(-time.Hour).Unix()
-	expiredHint, err := testKeys.Sign(old, "")
+	expiredHint, err := testKeys.Sign("RS256", old, "")
 	if err != nil {
 		t.Fatal(err)
 	}

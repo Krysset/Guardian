@@ -33,7 +33,7 @@ func issueClientToken(w http.ResponseWriter, app db.App) {
 	}
 	now := time.Now()
 	ttl := time.Duration(app.AccessTokenTTL) * time.Second
-	token, err := signingKeys.Sign(jwt.MapClaims{
+	token, err := signingKeys.Sign(app.SigningAlg, jwt.MapClaims{
 		"iss": httpx.Issuer, "sub": app.ClientID, "aud": clientTokenAudience(), "client_id": app.ClientID,
 		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "jti": jti,
 	}, accessTokenType)
@@ -59,7 +59,7 @@ func VerifyClientToken(authorization string) (clientID string, ok bool) {
 	}
 	claims := jwt.MapClaims{}
 	tok, err := jwt.ParseWithClaims(strings.TrimSpace(authorization[7:]), claims, signingKeys.Keyfunc,
-		jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer(httpx.Issuer), jwt.WithAudience(clientTokenAudience()),
+		jwt.WithValidMethods(auth.Algorithms), jwt.WithIssuer(httpx.Issuer), jwt.WithAudience(clientTokenAudience()),
 		jwt.WithExpirationRequired())
 	if err != nil || !tok.Valid {
 		return "", false

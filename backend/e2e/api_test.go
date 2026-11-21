@@ -160,7 +160,6 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 		{"PUT", members(adminGroup, plainAcct.ID), nil}, // nobody may make themselves an administrator
 		{"DELETE", members(team, plainAcct.ID), nil},
 		{"DELETE", "/api/v1/groups/" + team, nil},
-		{"GET", "/api/v1/apps", nil}, // app settings and redirect URIs are not for everyone
 		{"GET", "/api/v1/apps/" + app.ID, nil},
 		{"POST", "/api/v1/apps", map[string]any{"name": "x1", "pretty_name": "x", "redirect_uris": []string{"https://x1.test/cb"}}},
 		{"PATCH", "/api/v1/apps/" + app.ID, map[string]any{"pretty_name": "Mine"}},
@@ -184,6 +183,11 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	}
 	if n := testutil.Count(t, `SELECT count(*) FROM user_group WHERE key = 'new-group'`); n != 0 {
 		t.Error("an ordinary account created a group")
+	}
+
+	// the app listing answers everyone who is signed in, with the apps they are an admin of: none here
+	if apps := items(t, plain.call("GET", "/api/v1/apps", nil, http.StatusOK)); len(apps) != 0 {
+		t.Errorf("an ordinary account lists apps: %v", apps)
 	}
 
 	// the group listing answers everyone who is signed in, but only with what they may manage
@@ -211,7 +215,10 @@ func TestE2EGroupAndAppAPIsAreForAdministrators(t *testing.T) {
 	plain.call("POST", "/api/v1/groups", map[string]any{"key": "new-group", "display_name": "New"}, 201)
 	// ...and losing it closes it again
 	admin.call("DELETE", members(adminGroup, plainAcct.ID), nil, 204)
-	plain.call("GET", "/api/v1/apps", nil, http.StatusForbidden)
+	plain.call("GET", "/api/v1/accounts", nil, http.StatusForbidden)
+	if apps := items(t, plain.call("GET", "/api/v1/apps", nil, 200)); len(apps) != 0 {
+		t.Errorf("a former administrator still lists apps: %v", apps)
+	}
 }
 
 // Covers: O2, O3
@@ -915,9 +922,9 @@ func TestE2EAppRegistrationAPI(t *testing.T) {
 	if !strings.Contains(body, "newsvc") || strings.Contains(body, `"client_secret":`) || strings.Contains(body, "secret_hash") {
 		t.Errorf("list leaks or lacks data: %.300s", body)
 	}
-	forbidden := plain.get("/api/v1/apps")
-	wantStatus(t, forbidden, http.StatusForbidden)
-	drain(forbidden)
+	if apps := items(t, plain.call("GET", "/api/v1/apps", nil, 200)); len(apps) != 0 {
+		t.Errorf("an ordinary account lists apps: %v", apps) // only an app's admins see it
+	}
 	one := admin.get("/api/v1/apps/not-a-uuid")
 	wantStatus(t, one, http.StatusNotFound)
 	drain(one)
@@ -1124,12 +1131,12 @@ func TestE2EEveryAPIRouteRefusesWhoMayNotUseIt(t *testing.T) {
 		}
 		return nil
 	})
-	if len(routes) < 40 || len(admin) < 20 {
+	if len(routes) < 40 || len(admin) < 15 {
 		t.Fatalf("walked %d routes, %d for administrators", len(routes), len(admin))
 	}
 	for _, r := range routes {
 		method, path := r[0], r[1]
-		if path == "/signup" {
+		if path == "/signup" || path == "/signup/challenge" {
 			continue
 		}
 		resp := anon.sendJSON(method, "/api/v1"+path, map[string]any{})

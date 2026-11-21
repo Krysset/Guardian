@@ -59,6 +59,11 @@ func signupSubmit(w http.ResponseWriter, r *http.Request) {
 		show(http.StatusBadRequest)
 		return
 	}
+	if msg := checkFormPoW(r, "signup"); msg != "" {
+		page.Error = msg
+		show(http.StatusBadRequest)
+		return
+	}
 	if !ValidUsername(username) {
 		page.FieldErrors["username"] = "Use 3–64 letters, digits, dots, dashes or underscores."
 	}

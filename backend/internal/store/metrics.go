@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"time"
 )
 
@@ -23,8 +22,8 @@ type MetricCounts struct {
 	// Apps by enabled or disabled; groups by shared (may be linked to any app) or single_app.
 	Apps   map[string]int
 	Groups map[string]int
-	// SigningKeyActivated is when the signing key in use started signing (zero if there is none).
-	SigningKeyActivated time.Time
+	// SigningKeyActivated is when each algorithm's signing key in use started signing.
+	SigningKeyActivated map[string]time.Time
 }
 
 // CountForMetrics reads MetricCounts. idleTimeout is the session idle timeout: sessions unused for longer
@@ -102,10 +101,19 @@ func CountForMetrics(idleTimeout time.Duration) (MetricCounts, error) {
 		return c, err
 	}
 
-	var activated sql.NullTime
-	if err := conn.QueryRow(`SELECT max(activated_at) FROM signing_key WHERE status = 'active'`).Scan(&activated); err != nil {
+	c.SigningKeyActivated = map[string]time.Time{}
+	rows, err := conn.Query(`SELECT alg, activated_at FROM signing_key WHERE status = 'active' AND activated_at IS NOT NULL`)
+	if err != nil {
 		return c, err
 	}
-	c.SigningKeyActivated = activated.Time
-	return c, nil
+	defer rows.Close()
+	for rows.Next() {
+		var alg string
+		var at time.Time
+		if err := rows.Scan(&alg, &at); err != nil {
+			return c, err
+		}
+		c.SigningKeyActivated[alg] = at
+	}
+	return c, rows.Err()
 }

@@ -61,6 +61,22 @@ func Mount(r chi.Router) {
 	r.Post("/logout", logoutSubmit)
 }
 
+// Authentication context classes (acr). An app asks for one with acr_values; the ID and access tokens say
+// which one the sign-in met. "mfa": the session passed two-factor (a code, a security key, or a passkey);
+// "password": it did not.
+const (
+	ACRPassword = "password"
+	ACRMFA      = "mfa"
+)
+
+// acrOf is the acr a session with these methods meets.
+func acrOf(amr []string) string {
+	if httpx.TwoFactor(amr) {
+		return ACRMFA
+	}
+	return ACRPassword
+}
+
 func discovery(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"issuer":                                     httpx.Issuer,
@@ -73,13 +89,14 @@ func discovery(w http.ResponseWriter, r *http.Request) {
 		"response_types_supported":                   []string{"code"},
 		"grant_types_supported":                      []string{"authorization_code", "refresh_token", "client_credentials"},
 		"subject_types_supported":                    []string{"public"},
-		"id_token_signing_alg_values_supported":      []string{"RS256"},
+		"id_token_signing_alg_values_supported":      auth.Algorithms,
 		"scopes_supported":                           []string{"openid", "profile", "email", "groups", "offline_access"},
 		"token_endpoint_auth_methods_supported":      []string{"client_secret_basic", "client_secret_post", "none"},
 		"revocation_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		"code_challenge_methods_supported":           []string{"S256"},
 		"claims_supported": []string{"sub", "name", "given_name", "family_name", "preferred_username", "picture",
-			"locale", "zoneinfo", "updated_at", "email", "email_verified", "groups", "sid", "auth_time", "amr"},
+			"locale", "zoneinfo", "updated_at", "email", "email_verified", "groups", "sid", "auth_time", "amr", "acr"},
+		"acr_values_supported":                 []string{ACRPassword, ACRMFA},
 		"backchannel_logout_supported":         true,
 		"backchannel_logout_session_supported": true,
 	})

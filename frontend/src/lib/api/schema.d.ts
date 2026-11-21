@@ -764,6 +764,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/groups/{group}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a group
+         * @description Makes a new group with the given key, names and owner group, starting with the current members of this
+         *     one and their expiry dates. The copy is linked to no app and bound to none; from then on the two groups
+         *     are unrelated. Administrators only.
+         */
+        post: operations["copyGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/groups/{group}/members": {
         parameters: {
             query?: never;
@@ -824,7 +848,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List apps */
+        /**
+         * List apps
+         * @description Guardian admins get every app; anyone else the apps they are an admin of (members of the app's owner group), possibly none.
+         */
         get: operations["listApps"];
         put?: never;
         /**
@@ -848,7 +875,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** One app */
+        /**
+         * One app
+         * @description For Guardian admins and the app's admins. linked_groups names the linked groups, which an app admin cannot list.
+         */
         get: operations["getApp"];
         put?: never;
         post?: never;
@@ -861,7 +891,7 @@ export interface paths {
         head?: never;
         /**
          * Change an app's settings
-         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh.
+         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id.
          */
         patch: operations["updateApp"];
         trace?: never;
@@ -883,7 +913,8 @@ export interface paths {
          *     sign in; with "anyone", every account may, and the linked groups only decide which groups the app is
          *     told about. machine_api (optional) turns the app's own read-only machine API access on or off; only
          *     confidential apps may have it. A group bound to another app cannot be linked (409, group_bound). A
-         *     refused request changes nothing.
+         *     refused request changes nothing. The app's admins may change the rule, and link or unlink only groups
+         *     they own (403, not_group_owner); turning the machine API on or off is for Guardian admins.
          */
         put: operations["setAppAccess"];
         post?: never;
@@ -925,7 +956,7 @@ export interface paths {
         };
         /**
          * Read the audit log
-         * @description Newest first.
+         * @description Newest first. Guardian admins read all of it; an app's admins only the entries about their app (app is then required), without ip_address.
          */
         get: operations["listAudit"];
         put?: never;
@@ -1094,6 +1125,8 @@ export interface components {
         };
         Me: components["schemas"]["Account"] & {
             is_admin: boolean;
+            /** @description An admin of at least one app; the admin area then shows those apps. */
+            app_admin: boolean;
             mfa: {
                 /** @description The account has an authenticator app. */
                 totp?: boolean;
@@ -1315,7 +1348,19 @@ export interface components {
             scopes?: string[];
             /** @description Signing in to the app needs two-factor: Guardian asks for it, or has it set up, before issuing a code. */
             require_mfa?: boolean;
+            signing_alg: components["schemas"]["SigningAlg"];
+            /**
+             * Format: uuid
+             * @description The app's owner group: its members are the app's admins.
+             */
+            owner_group_id?: string;
         };
+        /**
+         * @description The algorithm of the app's tokens (ID, access and logout tokens). RS256 is what OIDC apps expect when they say nothing; ES256 gives smaller tokens and faster signing, for apps whose library handles it. Both keys are always published, so a change takes effect at the next token.
+         * @default RS256
+         * @enum {string}
+         */
+        SigningAlg: "RS256" | "ES256";
         AuditEntry: {
             /** Format: int64 */
             id: number;
@@ -2894,6 +2939,43 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    copyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group: components["parameters"]["GroupID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    key: components["schemas"]["GroupKey"];
+                    display_name: string;
+                    description?: string;
+                    /** Format: uuid */
+                    owner_group_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The new group. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     listGroupMembers: {
         parameters: {
             query?: never;
@@ -3081,6 +3163,12 @@ export interface operations {
                     group_ids?: string[];
                     /** @description Signing in to the app needs two-factor. */
                     require_mfa?: boolean;
+                    signing_alg?: components["schemas"]["SigningAlg"];
+                    /**
+                     * Format: uuid
+                     * @description Its members become the app's admins.
+                     */
+                    owner_group_id?: string;
                 };
             };
         };
@@ -3122,7 +3210,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["App"];
+                    "application/json": components["schemas"]["App"] & {
+                        linked_groups: {
+                            /** Format: uuid */
+                            id: string;
+                            key: string;
+                            display_name: string;
+                        }[];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -3183,6 +3278,9 @@ export interface operations {
                     scopes?: string[];
                     enabled?: boolean;
                     require_mfa?: boolean;
+                    signing_alg?: components["schemas"]["SigningAlg"];
+                    /** @description The group whose members are the app's admins, or "" for none. Guardian admins only. */
+                    owner_group_id?: string;
                 };
             };
         };

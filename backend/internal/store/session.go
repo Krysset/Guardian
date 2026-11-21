@@ -89,7 +89,7 @@ func RevokeSession(sessionID string) ([]LogoutTarget, error) {
 	}
 
 	rows, err := tx.Query(
-		`SELECT a.client_id, a.backchannel_logout_uri FROM session_app sa JOIN app a ON a.id = sa.app_id
+		`SELECT a.client_id, a.backchannel_logout_uri, a.signing_alg FROM session_app sa JOIN app a ON a.id = sa.app_id
 		 WHERE sa.session_id = $1 AND a.backchannel_logout_uri IS NOT NULL`, sessionID)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func RevokeSession(sessionID string) ([]LogoutTarget, error) {
 	var targets []LogoutTarget
 	for rows.Next() {
 		var t LogoutTarget
-		if err := rows.Scan(&t.ClientID, &t.URI); err != nil {
+		if err := rows.Scan(&t.ClientID, &t.URI, &t.SigningAlg); err != nil {
 			rows.Close()
 			return nil, err
 		}

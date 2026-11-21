@@ -10,6 +10,7 @@
 		access_token_ttl_seconds: number;
 		scopes: string[];
 		require_mfa: boolean;
+		signing_alg: 'RS256' | 'ES256';
 	};
 
 	export const ttlChoices: [number, string][] = [
@@ -46,6 +47,14 @@
 			{#each choices as [seconds, label] (seconds)}<option value={seconds}>{label}</option>{/each}
 		</select>
 		<p class="hint">Also how long {appName} may show outdated groups.</p>
+	</div>
+	<div>
+		<label class="lbl" for="as-alg">Token signing</label>
+		<select class="in" id="as-alg" bind:value={value.signing_alg}>
+			<option value="RS256">RS256 (works with every app)</option>
+			<option value="ES256">ES256 (smaller and faster)</option>
+		</select>
+		<p class="hint">Choose ES256 only if {appName} supports it. A change applies to the next sign-in or refresh.</p>
 	</div>
 	<div class="wide"><UriList id="as-logout" label="Sign-out redirect URIs" bind:uris={value.post_logout_redirect_uris} hint="Where {appName} may send people after signing out. Optional." /></div>
 	<div class="wide"><label class="lbl" for="as-bc">Back-channel logout URI</label><input class="in" id="as-bc" type="url" bind:value={value.backchannel_logout_uri} placeholder="Not set" /><p class="hint">Lets Guardian sign users out of {appName} at once.</p></div>

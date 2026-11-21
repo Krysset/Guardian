@@ -52,7 +52,8 @@ paths:
       description: >-
         Open to everyone, limited to 10 sign-ups per client IP per hour. Takes no email address: a sign-up with
         one goes through the sign-up page, which waits for the confirmation link in the same browser. With
-        REQUIRE_EMAIL set, this route refuses every request (error email_required).
+        REQUIRE_EMAIL set, this route refuses every request (error email_required). It needs the answer to a
+        proof-of-work puzzle from GET /signup/challenge (error pow_failed otherwise).
       operationId: signup
       security: []
       requestBody:
@@ -62,10 +63,12 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [username, password]
+              required: [username, password, pow_token, pow_number]
               properties:
                 username: { $ref: '#/components/schemas/Username' }
                 password: { $ref: '#/components/schemas/Password' }
+                pow_token: { type: string, description: The token of a puzzle from GET /signup/challenge. }
+                pow_number: { type: string, description: 'The number, in decimal, such that the hex SHA-256 of salt + number is the challenge.' }
       responses:
         '201':
           description: The new account.
@@ -83,6 +86,30 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /signup/challenge:
+    get:
+      tags: [me]
+      summary: A proof-of-work puzzle for sign-up
+      description: >-
+        Find the number from 0 to max whose SHA-256, of the salt followed by the number in decimal, is the
+        challenge (hex). Send it with the token to POST /signup within 30 minutes. Each puzzle is accepted once.
+      operationId: signupChallenge
+      security: []
+      responses:
+        '200':
+          description: The puzzle.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [algorithm, salt, challenge, max, token]
+                properties:
+                  algorithm: { type: string, enum: [SHA-256] }
+                  salt: { type: string }
+                  challenge: { type: string }
+                  max: { type: integer }
+                  token: { type: string }
 
   /me:
     get:
@@ -1188,6 +1215,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /groups/{group}/copy:
+    parameters:
+      - $ref: '#/components/parameters/GroupID'
+    post:
+      tags: [groups]
+      summary: Copy a group
+      description: |
+        Makes a new group with the given key, names and owner group, starting with the current members of this
+        one and their expiry dates. The copy is linked to no app and bound to none; from then on the two groups
+        are unrelated. Administrators only.
+      operationId: copyGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key, display_name]
+              properties:
+                key: { $ref: '#/components/schemas/GroupKey' }
+                display_name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 1024 }
+                owner_group_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: The new group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /groups/{group}/members:
     parameters:
       - $ref: '#/components/parameters/GroupID'
@@ -1285,6 +1348,7 @@ paths:
     get:
       tags: [apps]
       summary: List apps
+      description: Guardian admins get every app; anyone else the apps they are an admin of (members of the app's owner group), possibly none.
       operationId: listApps
       responses:
         '200':
@@ -1329,6 +1393,8 @@ paths:
                 access_rule: { $ref: '#/components/schemas/AccessRule' }
                 group_ids: { type: array, items: { type: string, format: uuid } }
                 require_mfa: { type: boolean, description: Signing in to the app needs two-factor. }
+                signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+                owner_group_id: { type: string, format: uuid, description: "Its members become the app's admins." }
       responses:
         '201':
           description: The app, and its secret if it is confidential.
@@ -1351,20 +1417,35 @@ paths:
     get:
       tags: [apps]
       summary: One app
+      description: For Guardian admins and the app's admins. linked_groups names the linked groups, which an app admin cannot list.
       operationId: getApp
       responses:
         '200':
           description: The app.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/App' }
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/App'
+                  - type: object
+                    required: [linked_groups]
+                    properties:
+                      linked_groups:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, key, display_name]
+                          properties:
+                            id: { type: string, format: uuid }
+                            key: { type: string }
+                            display_name: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [apps]
       summary: Change an app's settings
-      description: Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh.
+      description: Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id.
       operationId: updateApp
       requestBody:
         required: true
@@ -1386,6 +1467,8 @@ paths:
                 scopes: { type: array, items: { type: string }, description: Replaces the allowed scopes; must include openid. }
                 enabled: { type: boolean }
                 require_mfa: { type: boolean }
+                signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+                owner_group_id: { type: string, description: 'The group whose members are the app''s admins, or "" for none. Guardian admins only.' }
       responses:
         '200':
           description: The updated app.
@@ -1418,7 +1501,8 @@ paths:
         sign in; with "anyone", every account may, and the linked groups only decide which groups the app is
         told about. machine_api (optional) turns the app's own read-only machine API access on or off; only
         confidential apps may have it. A group bound to another app cannot be linked (409, group_bound). A
-        refused request changes nothing.
+        refused request changes nothing. The app's admins may change the rule, and link or unlink only groups
+        they own (403, not_group_owner); turning the machine API on or off is for Guardian admins.
       operationId: setAppAccess
       requestBody:
         required: true
@@ -1480,7 +1564,7 @@ paths:
     get:
       tags: [audit]
       summary: Read the audit log
-      description: Newest first.
+      description: Newest first. Guardian admins read all of it; an app's admins only the entries about their app (app is then required), without ip_address.
       operationId: listAudit
       parameters:
         - name: event
@@ -1796,9 +1880,10 @@ components:
       allOf:
         - $ref: '#/components/schemas/Account'
         - type: object
-          required: [is_admin, mfa, email_settings]
+          required: [is_admin, app_admin, mfa, email_settings]
           properties:
             is_admin: { type: boolean }
+            app_admin: { type: boolean, description: An admin of at least one app; the admin area then shows those apps. }
             mfa:
               type: object
               properties:
@@ -1974,7 +2059,7 @@ components:
       type: object
       required: [id, name, pretty_name, description, client_id, client_type, grant_types, redirect_uris,
                  post_logout_redirect_uris, require_pkce, is_first_party, access_token_ttl_seconds, refresh_mode,
-                 enabled, access_rule, group_ids]
+                 enabled, access_rule, group_ids, signing_alg]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -1998,6 +2083,14 @@ components:
         group_ids: { type: array, items: { type: string, format: uuid } }
         scopes: { type: array, items: { type: string } }
         require_mfa: { type: boolean, description: 'Signing in to the app needs two-factor: Guardian asks for it, or has it set up, before issuing a code.' }
+        signing_alg: { $ref: '#/components/schemas/SigningAlg' }
+        owner_group_id: { type: string, format: uuid, description: "The app's owner group: its members are the app's admins." }
+
+    SigningAlg:
+      type: string
+      enum: [RS256, ES256]
+      default: RS256
+      description: 'The algorithm of the app''s tokens (ID, access and logout tokens). RS256 is what OIDC apps expect when they say nothing; ES256 gives smaller tokens and faster signing, for apps whose library handles it. Both keys are always published, so a change takes effect at the next token.'
 
     AuditEntry:
       type: object

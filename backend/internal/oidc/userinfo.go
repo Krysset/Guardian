@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"guardian/internal/auth"
 	"guardian/internal/httpx"
 	db "guardian/internal/store"
 )
@@ -69,7 +70,7 @@ func userinfo(w http.ResponseWriter, r *http.Request) {
 func parseAccessToken(raw string) (jwt.MapClaims, bool) {
 	claims := jwt.MapClaims{}
 	tok, err := jwt.ParseWithClaims(raw, claims, signingKeys.Keyfunc,
-		jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer(httpx.Issuer), jwt.WithExpirationRequired())
+		jwt.WithValidMethods(auth.Algorithms), jwt.WithIssuer(httpx.Issuer), jwt.WithExpirationRequired())
 	if err != nil || !tok.Valid {
 		return nil, false
 	}

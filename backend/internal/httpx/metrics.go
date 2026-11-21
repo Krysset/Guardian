@@ -98,9 +98,10 @@ var (
 	appsDesc         = stateDesc("apps", "Registered apps: enabled or disabled.", "state")
 	groupsDesc       = stateDesc("groups", "Groups: shared (may be linked to any number of apps) or single_app (bound to one app).", "kind")
 	keyActivatedDesc = stateDesc("signing_key_activated_timestamp_seconds",
-		"When the signing key in use started signing (Unix time); 0 if there is none.")
+		"When each algorithm's signing key in use started signing (Unix time).", "alg")
 	keyRotationDesc = stateDesc("signing_key_rotation_due_timestamp_seconds",
-		"When the signing key in use is due to be replaced (Unix time). Rotation is automatic; time() well past this means it is stuck.")
+		"When each algorithm's signing key in use is due to be replaced (Unix time). Rotation is automatic; time() "+
+			"well past this means it is stuck.", "alg")
 	stateUpDesc = prometheus.NewDesc("guardian_state_metrics_up",
 		"1 if the database counts above could be read at the last scrape, 0 if not (they are then missing).", nil, nil)
 )
@@ -153,13 +154,10 @@ func (c *stateCollector) Collect(ch chan<- prometheus.Metric) {
 	gauges(groupsDesc, counts.Groups)
 	ch <- prometheus.MustNewConstMetric(adminsNoMFADesc, prometheus.GaugeValue, float64(counts.AdminsWithoutSecondFactor))
 	ch <- prometheus.MustNewConstMetric(sessionsDesc, prometheus.GaugeValue, float64(counts.Sessions))
-	activated, due := 0.0, 0.0
-	if !counts.SigningKeyActivated.IsZero() {
-		activated = float64(counts.SigningKeyActivated.Unix())
-		due = float64(counts.SigningKeyActivated.Add(c.keyLifetime).Unix())
+	for alg, at := range counts.SigningKeyActivated {
+		ch <- prometheus.MustNewConstMetric(keyActivatedDesc, prometheus.GaugeValue, float64(at.Unix()), alg)
+		ch <- prometheus.MustNewConstMetric(keyRotationDesc, prometheus.GaugeValue, float64(at.Add(c.keyLifetime).Unix()), alg)
 	}
-	ch <- prometheus.MustNewConstMetric(keyActivatedDesc, prometheus.GaugeValue, activated)
-	ch <- prometheus.MustNewConstMetric(keyRotationDesc, prometheus.GaugeValue, due)
 }
 
 type statusRecorder struct {

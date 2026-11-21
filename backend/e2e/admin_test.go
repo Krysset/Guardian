@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -349,4 +350,76 @@ func TestE2EDeletingAnAppRemovesEverythingItHeld(t *testing.T) {
 	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'app.removed'`); n != 1 {
 		t.Errorf("%d app removals audited", n)
 	}
+}
+
+// Copying a group: the copy has the key, names and owner group asked for, the current members with their
+// expiry dates (expired memberships stay behind), and no app links or binding; afterwards the two are
+// unrelated. Only administrators copy.
+//
+// Covers: A29
+func TestE2ECopyingAGroup(t *testing.T) {
+	testutil.Reset(t)
+	testutil.AdminAccount(t, "root")
+	wiki, _ := testutil.CreateApp(t, "wiki", testutil.AppOptions{})
+	alice := testutil.CreateAccount(t, "alice")
+	bob := testutil.CreateAccount(t, "bob")
+	carol := testutil.CreateAccount(t, "carol")
+	admin := newBrowser(t)
+	admin.mustLogin("root")
+
+	owners := admin.call("POST", "/api/v1/groups", map[string]any{"key": "leads", "display_name": "Leads"}, 201)
+	source := admin.call("POST", "/api/v1/groups", map[string]any{"key": "wiki-editors", "display_name": "Wiki editors",
+		"bound_app_id": wiki.ID, "owner_group_id": owners["id"]}, 201)
+	src := str(source["id"])
+	until := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	admin.call("PUT", "/api/v1/groups/"+src+"/members/"+alice.ID, map[string]any{}, 204)
+	admin.call("PUT", "/api/v1/groups/"+src+"/members/"+bob.ID, map[string]any{"expires_at": until.Format(time.RFC3339)}, 204)
+	admin.call("PUT", "/api/v1/groups/"+src+"/members/"+carol.ID, map[string]any{}, 204)
+	testutil.Exec(t, `UPDATE group_member SET expires_at = now() - interval '1 day' WHERE account_id = $1`, carol.ID)
+
+	resp := admin.sendJSON("POST", "/api/v1/groups/"+src+"/copy", map[string]any{"key": "wiki-editors", "display_name": "Copy"})
+	wantStatus(t, resp, http.StatusConflict) // the key is taken
+	drain(resp)
+
+	cp := admin.call("POST", "/api/v1/groups/"+src+"/copy", map[string]any{"key": "docs-editors", "display_name": "Docs editors",
+		"description": "Moved from the wiki", "owner_group_id": owners["id"]}, 201)
+	if cp["key"] != "docs-editors" || cp["display_name"] != "Docs editors" || cp["description"] != "Moved from the wiki" ||
+		cp["owner_group_id"] != owners["id"] || cp["single_app"] != false || cp["member_count"] != float64(2) {
+		t.Fatalf("copy: %v", cp)
+	}
+	if ids, _ := cp["app_ids"].([]any); len(ids) != 0 {
+		t.Errorf("the copy must be linked to no app: %v", cp["app_ids"])
+	}
+	expiry := map[string]string{}
+	rows, err := db.GetDatabaseConnection().Query(`SELECT account_id::text,
+		COALESCE(to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'), '') FROM group_member WHERE group_id = $1`, cp["id"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, at string
+		rows.Scan(&id, &at)
+		expiry[id] = at
+	}
+	rows.Close()
+	if len(expiry) != 2 || expiry[alice.ID] != "" || expiry[bob.ID] != until.Format("2006-01-02T15:04:05") {
+		t.Errorf("copied members = %v", expiry)
+	}
+
+	// Unrelated afterwards: a change to one does not touch the other.
+	admin.call("DELETE", "/api/v1/groups/"+src+"/members/"+alice.ID, nil, 204)
+	if n := testutil.Count(t, `SELECT count(*) FROM group_member WHERE group_id = $1`, cp["id"]); n != 2 {
+		t.Errorf("removing from the original changed the copy: %d members", n)
+	}
+	if n := testutil.Count(t, `SELECT count(*) FROM audit_log WHERE event_type = 'group.copied'`); n != 1 {
+		t.Errorf("%d copies audited, want 1", n)
+	}
+
+	// Not for group owners.
+	testutil.AddMember(t, str(owners["id"]), alice.ID)
+	owner := newBrowser(t)
+	owner.mustLogin("alice")
+	resp = owner.sendJSON("POST", "/api/v1/groups/"+src+"/copy", map[string]any{"key": "mine", "display_name": "Mine"})
+	wantStatus(t, resp, http.StatusForbidden)
+	drain(resp)
 }

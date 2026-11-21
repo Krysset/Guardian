@@ -122,6 +122,13 @@ CREATE TABLE IF NOT EXISTS app (
 	                            CHECK (access_rule IN ('groups', 'anyone')),
 	-- Signing in to this app needs two-factor. Guardian asks for it, or has it set up, before the code.
 	require_mfa                 BOOLEAN NOT NULL DEFAULT FALSE,
+	-- The algorithm of the app's tokens (ID, access and logout tokens). RS256 is what OIDC apps expect when
+	-- they say nothing; ES256 is smaller and faster, for apps whose library handles it.
+	signing_alg                 TEXT NOT NULL DEFAULT 'RS256'
+	                            CHECK (signing_alg IN ('RS256', 'ES256')),
+	-- App admins: the active members of this group may edit the app, rotate its secret, disable it, read its
+	-- audit entries, and link to it only groups they own. Set by Guardian admins.
+	owner_group_id              UUID,
 	created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -192,6 +199,13 @@ CREATE TABLE IF NOT EXISTS user_group (
 	CHECK (NOT (is_system AND bound_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS ix_user_group_owner ON user_group (owner_group_id);
+-- The app's owner group (declared above, before user_group existed). Deleting the group leaves the app
+-- without app admins.
+DO $$ BEGIN
+	ALTER TABLE app ADD CONSTRAINT app_owner_group_fk FOREIGN KEY (owner_group_id) REFERENCES user_group(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE INDEX IF NOT EXISTS ix_app_owner_group ON app (owner_group_id);
 
 -- Membership. A row with expires_at in the past no longer counts.
 CREATE TABLE IF NOT EXISTS group_member (
@@ -305,12 +319,13 @@ CREATE TABLE IF NOT EXISTS session_app (
 );
 
 -- Keys for signing ID/access tokens; public half is served at /jwks.json
+-- Each algorithm (RS256, ES256) has its own active key and rotation; an app's tokens use its signing_alg.
 -- Signing keys move through pending (published, not signing yet, so apps learn the key before it signs),
 -- active (exactly one signs), retiring (published until tokens it signed have expired) and retired (no
 -- longer published; the private key is wiped).
 CREATE TABLE IF NOT EXISTS signing_key (
 	kid                    TEXT PRIMARY KEY,
-	alg                    TEXT NOT NULL DEFAULT 'RS256',
+	alg                    TEXT NOT NULL DEFAULT 'RS256' CHECK (alg IN ('RS256', 'ES256')),
 	public_jwk             JSONB NOT NULL,
 	private_key_encrypted  TEXT,                       -- keyring value (v1:<key id>:...); NULL once retired
 	status                 TEXT NOT NULL DEFAULT 'active'

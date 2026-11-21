@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +30,7 @@ import (
 	"guardian/internal/server"
 	db "guardian/internal/store"
 	"guardian/internal/testutil"
+	"guardian/internal/web"
 )
 
 const testIssuer = "http://guardian.test"
@@ -45,6 +49,7 @@ func TestMain(m *testing.M) {
 	// Hundreds of passwords are hashed and checked here; at 64 MiB each the race detector makes that most of
 	// the run. The hashing code is the same, and auth's own tests keep the real parameters.
 	auth.UseCheapHashesInTests()
+	captureLogs()
 	if testutil.Enabled() {
 		if err := testutil.Setup(); err != nil {
 			fmt.Fprintln(os.Stderr, "test setup:", err)
@@ -73,12 +78,16 @@ func TestMain(m *testing.M) {
 		testKeys, testConfig = k, cfg
 		server.Configure(cfg, k)
 		httpx.RegisterDBMetrics(cfg.SigningKeyLifetime)
+		web.PoWMax = 200             // a quick puzzle: the tests solve hundreds
 		httpx.StateMetricsMaxAge = 0 // every scrape reads the database
 		mail.Configure(mailbox, mail.Site{Name: "Test Guardian", Host: "guardian.test"})
 		pubSrv = httptest.NewServer(server.PublicRouter())
 		intSrv = httptest.NewServer(server.InternalRouter())
 	}
 	code := m.Run()
+	if code == 0 {
+		code = checkLogs()
+	}
 	if pubSrv != nil {
 		pubSrv.Close()
 		intSrv.Close()
@@ -164,14 +173,75 @@ func (b *browser) get(p string) *http.Response {
 	return b.do(req)
 }
 
+// postForm posts a form. Like a browser running the pages' script, it answers the proof-of-work puzzle of
+// the sign-up, forgot-password and sign-in forms when the page carries one. pow=- sends no answer, as a
+// browser without JavaScript.
 func (b *browser) postForm(p string, v url.Values) *http.Response {
+	if form := strings.SplitN(p, "?", 2)[0]; (form == "/signup" || form == "/forgot" || form == "/login") && v.Get("pow") == "" {
+		if token, number, ok := b.solvePage(form); ok {
+			v = cloneValues(v)
+			v.Set("pow", token)
+			v.Set("pow_number", number)
+		}
+	} else if v.Get("pow") == "-" {
+		v = cloneValues(v)
+		v.Del("pow")
+	}
 	req, _ := http.NewRequest("POST", b.abs(p), strings.NewReader(v.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return b.do(req)
 }
 
+func cloneValues(v url.Values) url.Values {
+	out := url.Values{}
+	for k, vs := range v {
+		out[k] = append([]string(nil), vs...)
+	}
+	return out
+}
+
+var powRe = regexp.MustCompile(`name="pow" value="([^"]+)" data-pow-salt="([0-9a-f]+)" data-pow-challenge="([0-9a-f]+)" data-pow-max="(\d+)"`)
+
+// solvePage opens the form's page and answers its puzzle, if it has one.
+func (b *browser) solvePage(form string) (token, number string, ok bool) {
+	b.t.Helper()
+	m := powRe.FindStringSubmatch(readBody(b.t, b.get(form)))
+	if m == nil {
+		return "", "", false
+	}
+	return html.UnescapeString(m[1]), solvePoW(b.t, m[2], m[3], m[4]), true
+}
+
+// solvePoW finds the number whose SHA-256 with the salt is the challenge, as guardian.js does.
+func solvePoW(t *testing.T, salt, challenge, max string) string {
+	t.Helper()
+	n, _ := strconv.Atoi(max)
+	for i := 0; i <= n; i++ {
+		sum := sha256.Sum256([]byte(salt + strconv.Itoa(i)))
+		if hex.EncodeToString(sum[:]) == challenge {
+			return strconv.Itoa(i)
+		}
+	}
+	t.Fatalf("no answer to the puzzle %s", challenge)
+	return ""
+}
+
+// signupBody adds the answer to a puzzle from GET /api/v1/signup/challenge to a sign-up request.
+func (b *browser) signupBody(body map[string]any) map[string]any {
+	b.t.Helper()
+	p := decodeMap(b.t, b.get("/api/v1/signup/challenge"))
+	out := map[string]any{"pow_token": p["token"], "pow_number": solvePoW(b.t, str(p["salt"]), str(p["challenge"]), fmt.Sprint(p["max"]))}
+	for k, v := range body {
+		out[k] = v
+	}
+	return out
+}
+
 // sendJSON sends a JSON request; headers are name/value pairs (e.g. "Origin", "https://evil.example").
 func (b *browser) sendJSON(method, p string, body any, headers ...string) *http.Response {
+	if m, ok := body.(map[string]any); ok && method == "POST" && p == "/api/v1/signup" && m["pow_token"] == nil {
+		body = b.signupBody(m)
+	}
 	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequest(method, b.abs(p), bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")

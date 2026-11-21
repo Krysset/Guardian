@@ -120,16 +120,8 @@ func createGroup(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if !groupKeyRe.MatchString(req.Key) {
-		httpx.Error(w, http.StatusBadRequest, "key must be 2-63 characters: lower-case letters, digits, dot, dash or underscore, starting with a letter or digit")
-		return
-	}
-	if req.DisplayName == "" || len(req.DisplayName) > 128 || len(req.Description) > 1024 {
-		httpx.Error(w, http.StatusBadRequest, "display_name is required (up to 128 characters); description may be up to 1024 characters")
-		return
-	}
-	if req.OwnerGroupID != "" && !db.IsUUID(req.OwnerGroupID) {
-		httpx.Error(w, http.StatusBadRequest, "owner_group_id must be another existing group")
+	if msg := checkNewGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, msg)
 		return
 	}
 	id, err := db.CreateGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID, req.BoundAppID)
@@ -145,6 +137,55 @@ func createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, group)
+}
+
+// copyGroup makes a new group with the members (and their expiry dates) of the group in the URL. The new
+// group's key, names and owner group are given like a new group's; it is linked to no app.
+func copyGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key          string `json:"key"`
+		DisplayName  string `json:"display_name"`
+		Description  string `json:"description"`
+		OwnerGroupID string `json:"owner_group_id"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if msg := checkNewGroup(req.Key, req.DisplayName, req.Description, req.OwnerGroupID); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, msg)
+		return
+	}
+	source := chi.URLParam(r, "group")
+	if !db.IsUUID(source) {
+		groupFail(w, db.ErrGroupNotFound)
+		return
+	}
+	id, n, err := db.CopyGroup(source, req.Key, req.DisplayName, req.Description, req.OwnerGroupID, httpx.AccountID(r))
+	if err != nil {
+		groupFail(w, err)
+		return
+	}
+	db.Audit("group.copied", httpx.AccountID(r), "", httpx.ClientIP(r),
+		map[string]any{"group": id, "key": req.Key, "from": source, "members": n, "owner_group": req.OwnerGroupID})
+	group, err := db.GetGroup(id)
+	if err != nil {
+		groupFail(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, group)
+}
+
+// checkNewGroup checks the fields of a new group, and returns what is wrong ("" if nothing).
+func checkNewGroup(key, displayName, description, ownerGroupID string) string {
+	switch {
+	case !groupKeyRe.MatchString(key):
+		return "key must be 2-63 characters: lower-case letters, digits, dot, dash or underscore, starting with a letter or digit"
+	case displayName == "" || len(displayName) > 128 || len(description) > 1024:
+		return "display_name is required (up to 128 characters); description may be up to 1024 characters"
+	case ownerGroupID != "" && !db.IsUUID(ownerGroupID):
+		return "owner_group_id must be another existing group"
+	}
+	return ""
 }
 
 // bindGroup makes a group a single-app group: bound to one app for good and linked to it. Only a group

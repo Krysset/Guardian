@@ -31,6 +31,7 @@ Counters are per replica. Use `sum(rate(...))` across replicas.
 | `guardian_rate_limited_total` | `endpoint`: login, register, reauth, mfa, mail, forgot, honeypot | Requests refused by a rate limiter, and honeypot hits (bots). |
 | `guardian_csrf_refusals_total` | `check`: form, origin | Requests refused as possibly cross-site (below). |
 | `guardian_passkey_clone_warnings_total` | none | Security key uses refused because the key may have been copied (below). |
+| `guardian_pow_checks_total` | `form`: signup, forgot, login, api_signup. `result`: passed, missing, invalid | Proof-of-work answers checked (below). |
 | `guardian_signups_total` | `result`: awaiting_email, confirmed, active | Self-service sign-ups (below). |
 | `guardian_mail_sent_total` | `result`: sent, failed, dropped | Emails: sent, given up after retries, or dropped because the queue was full. |
 | `guardian_http_requests_total` | `listener`, `route` (pattern), `method`, `code` | Every HTTP request. |
@@ -80,6 +81,12 @@ to watch.
 - **If it fires:** ask the account's owner whether they still have the key. Remove the key from the account
   either way, and have them add it again only if they are sure it is the original.
 
+**Proof of work.**
+- Sign-up and forgot-password always carry a puzzle; sign-in does once an address has failed three times.
+- `missing` is a form sent without an answer: a browser without JavaScript, or a bot that does not run it.
+  `invalid` is a wrong, expired or reused answer, which a browser running the page never sends.
+- Many `missing` or `invalid` at once mean bots are trying; the puzzle is making each attempt cost them.
+
 **Sign-ups.**
 - `awaiting_email` is an account created and waiting for the link in the email; `confirmed` is the link
   followed.
@@ -102,8 +109,8 @@ These are read from the database, at most every 30 seconds, so several scrapers 
 | `guardian_app_sessions` | `app` | Live sessions that have received tokens for the app. Every app is listed, with 0 when unused. |
 | `guardian_apps` | `state`: enabled, disabled | Registered apps. |
 | `guardian_groups` | `kind`: shared, single_app | Groups. |
-| `guardian_signing_key_activated_timestamp_seconds` | none | When the signing key in use started signing. |
-| `guardian_signing_key_rotation_due_timestamp_seconds` | none | When it is due to be replaced (`SIGNING_KEY_LIFETIME` later). Rotation is automatic. |
+| `guardian_signing_key_activated_timestamp_seconds` | `alg`: RS256, ES256 | When each algorithm's signing key in use started signing. |
+| `guardian_signing_key_rotation_due_timestamp_seconds` | `alg` | When it is due to be replaced (`SIGNING_KEY_LIFETIME` later). Rotation is automatic. |
 | `guardian_backup_last_success_timestamp_seconds` | none | When the last backup was written; 0 if there is none. |
 | `guardian_keyring_values` | `key_id` | Encrypted values per keyring key. A key may leave the keyring once it has none. |
 
@@ -137,7 +144,7 @@ Per replica, not from the database:
   expr: max(guardian_admins_without_second_factor) > 0
   for: 1d
 - alert: GuardianSigningKeyRotationStuck
-  expr: time() - max(guardian_signing_key_rotation_due_timestamp_seconds) > 3600
+  expr: time() - max by (alg) (guardian_signing_key_rotation_due_timestamp_seconds) > 3600
 - alert: GuardianMailQueueFilling
   expr: max(guardian_mail_queue_depth) > 128
   for: 5m

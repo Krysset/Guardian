@@ -1,5 +1,7 @@
 <!-- AD8 App: what to copy into the app (client id, discovery URL, issuer), its settings, who may sign in, the
-     secret (rotated with a grace period, shown once in AD10), recent activity, and disable or delete. -->
+     secret (rotated with a grace period, shown once in AD10), recent activity, and disable or delete. An app
+     admin gets the same page without what only administrators do: choosing the app's admins, the machine API,
+     the audit log link and delete; they link only groups they own. -->
 <script lang="ts">
 	import { goto, refreshAll } from '$app/navigation';
 	import { api, ApiError, type Schema } from '#lib/api/client.ts';
@@ -16,11 +18,12 @@
 
 	let { data }: PageProps = $props();
 	const app = $derived(data.app);
+	const isAdmin = $derived(data.me.is_admin);
 	const name = $derived(app.pretty_name);
 	const issuer = location.origin;
 	const confidential = $derived(app.client_type === 'confidential');
 
-	type Editable = AppSettingsValue & { pretty_name: string; redirect_uris: string[] };
+	type Editable = AppSettingsValue & { pretty_name: string; redirect_uris: string[]; owner_group_id: string };
 	const fromApp = (a: Schema<'App'>): Editable => ({
 		pretty_name: a.pretty_name,
 		description: a.description,
@@ -32,7 +35,9 @@
 		is_first_party: a.is_first_party,
 		access_token_ttl_seconds: a.access_token_ttl_seconds,
 		scopes: [...(a.scopes ?? ['openid'])],
-		require_mfa: a.require_mfa ?? false
+		require_mfa: a.require_mfa ?? false,
+		signing_alg: a.signing_alg,
+		owner_group_id: a.owner_group_id ?? ''
 	});
 	const accessOf = (a: Schema<'App'>) => ({ rule: a.access_rule, groupIds: [...a.group_ids], machine: a.grant_types.includes('client_credentials') });
 
@@ -62,7 +67,12 @@
 		try {
 			const updated = await api.patch('/apps/{app}', {
 				path: { app: app.id },
-				body: { ...form, pretty_name: form.pretty_name.trim(), description: form.description.trim() }
+				body: (({ owner_group_id, ...rest }) => ({
+					...rest,
+					pretty_name: form.pretty_name.trim(),
+					description: form.description.trim(),
+					...(isAdmin ? { owner_group_id } : {})
+				}))(form)
 			});
 			form = fromApp(updated);
 			say('settings', true, 'Saved.');
@@ -78,13 +88,21 @@
 		try {
 			const updated = await api.put('/apps/{app}/access', {
 				path: { app: app.id },
-				body: { access_rule: access.rule, group_ids: access.groupIds, ...(confidential ? { machine_api: access.machine } : {}) }
+				body: { access_rule: access.rule, group_ids: access.groupIds, ...(confidential && isAdmin ? { machine_api: access.machine } : {}) }
 			});
 			access = accessOf(updated);
 			say('access', true, 'Saved.');
 			await refreshAll();
 		} catch (e) {
-			say('access', false, e instanceof ApiError && e.code === 'group_bound' ? 'One of the groups is bound to another app.' : messageOf(e));
+			say(
+				'access',
+				false,
+				e instanceof ApiError && e.code === 'group_bound'
+					? 'One of the groups is bound to another app.'
+					: e instanceof ApiError && e.code === 'not_group_owner'
+						? 'You can only link and unlink groups you own.'
+						: messageOf(e)
+			);
 		}
 	}
 
@@ -134,7 +152,7 @@
 {/snippet}
 
 <div class="ph">
-	<p class="crumb"><a href="/admin/apps">Apps</a> / {name}</p>
+	<p class="crumb"><a href="/admin/apps">{isAdmin ? 'Apps' : 'Your apps'}</a> / {name}</p>
 	<div class="title">
 		<AppLogo name={name} logo={app.logo_url} size={52} />
 		<div>
@@ -167,6 +185,19 @@
 		<div class="wide"><UriList id="ru" label="Redirect URIs" bind:uris={form.redirect_uris} required hint="Where {name} receives people after they sign in." /></div>
 	</div>
 	<div class="more"><AppSettings bind:value={form} scopes={data.scopes} appName={name} /></div>
+	<div class="owner">
+		{#if isAdmin}
+			<label class="lbl" for="og">App admins</label>
+			<select class="in" id="og" bind:value={form.owner_group_id}>
+				<option value="">None: only Guardian administrators</option>
+				{#each data.groups as g (g.id)}<option value={g.id}>Members of {g.display_name}</option>{/each}
+			</select>
+			<p class="hint">They can change these settings, who may sign in (linking only groups they own), the secret, and disable {name}. They see its activity, without IP addresses.</p>
+		{:else}
+			<span class="lbl">App admins</span>
+			<p class="hint">You and the other members of your group. Only a Guardian administrator can change this, delete {name} or turn its machine API on.</p>
+		{/if}
+	</div>
 	{@render message('settings')}
 	<div class="end"><button class="btn" type="submit">Save settings</button></div>
 </form>
@@ -174,8 +205,8 @@
 <form class="card" onsubmit={saveAccess} novalidate>
 	<h2 class="sec-h">Access</h2>
 	<p class="hint intro">Who may sign in to {name}, and which groups it is told about.</p>
-	<AccessFields bind:rule={access.rule} bind:groupIds={access.groupIds} groups={data.groups} appId={app.id} appName={name} />
-	{#if confidential}
+	<AccessFields bind:rule={access.rule} bind:groupIds={access.groupIds} groups={data.groups} appId={app.id} appName={name} linked={app.linked_groups} ownOnly={!isAdmin} />
+	{#if confidential && isAdmin}
 		<label class="switch">
 			<span><strong>Machine API</strong><span class="hint block">{name} may read its linked groups and their members with its own credentials.</span></span>
 			<input type="checkbox" bind:checked={access.machine} />
@@ -206,7 +237,7 @@
 {/if}
 
 <section class="card">
-	<div class="split"><h2 class="sec-h">Recent activity</h2><a href="/admin/audit?app={app.id}">Open in the audit log</a></div>
+	<div class="split"><h2 class="sec-h">Recent activity</h2>{#if isAdmin}<a href="/admin/audit?app={app.id}">Open in the audit log</a>{/if}</div>
 	{#if data.activity.length}
 		<div class="scroll list">
 			<table class="tbl">
@@ -236,10 +267,12 @@
 				<button class="btn" type="button" onclick={() => setEnabled(true)}>Enable</button>
 			{/if}
 		</div>
-		<div class="row">
-			<span><strong>Delete {name}</strong><span class="hint block">Removes its secrets, tokens and consents. You type its name to confirm.</span></span>
-			<button class="btn danger" type="button" onclick={remove}>Delete</button>
-		</div>
+		{#if isAdmin}
+			<div class="row">
+				<span><strong>Delete {name}</strong><span class="hint block">Removes its secrets, tokens and consents. You type its name to confirm.</span></span>
+				<button class="btn danger" type="button" onclick={remove}>Delete</button>
+			</div>
+		{/if}
 	</div>
 </section>
 
@@ -248,6 +281,10 @@
 {/if}
 
 <style>
+	.owner {
+		margin-top: 20px;
+		max-width: 520px;
+	}
 	.title {
 		display: flex;
 		align-items: center;

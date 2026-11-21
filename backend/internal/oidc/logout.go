@@ -22,7 +22,7 @@ func parseIDTokenHint(hint string) (jwt.MapClaims, bool) {
 	if hint == "" {
 		return nil, false
 	}
-	tok, err := jwt.Parse(hint, signingKeys.Keyfunc, jwt.WithValidMethods([]string{"RS256"}), jwt.WithoutClaimsValidation())
+	tok, err := jwt.Parse(hint, signingKeys.Keyfunc, jwt.WithValidMethods(auth.Algorithms), jwt.WithoutClaimsValidation())
 	if err != nil || !tok.Valid {
 		return nil, false
 	}
@@ -142,7 +142,7 @@ func SendLogoutNotices(notices []db.LogoutNotice) {
 func sendBackchannelLogout(t db.LogoutTarget, accountID, sessionID string) {
 	jti, _ := auth.RandomToken(16)
 	now := time.Now()
-	token, err := signingKeys.Sign(jwt.MapClaims{
+	token, err := signingKeys.Sign(t.SigningAlg, jwt.MapClaims{
 		"iss": httpx.Issuer, "aud": t.ClientID, "iat": now.Unix(), "exp": now.Add(2 * time.Minute).Unix(), "jti": jti,
 		"sub": accountID, "sid": sessionID,
 		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},

@@ -58,14 +58,17 @@ func HasSecondFactor(accountID string) (bool, error) {
 }
 
 // MFARequirement says why an account must use two-factor, or "" if it need not: members of
-// guardian-admins, and owners (members of a group that owns another group).
+// guardian-admins, owners (members of a group that owns another group), and app admins (members of a group
+// that owns an app).
 func MFARequirement(accountID string) (string, error) {
-	var admin, owner bool
+	var admin, owner, appAdmin bool
 	err := GetDatabaseConnection().QueryRow(`SELECT
 		EXISTS (SELECT 1 FROM group_member m JOIN user_group g ON g.id = m.group_id
 		        WHERE m.account_id = $1 AND g.key = $2 AND `+activeMember+`),
 		EXISTS (SELECT 1 FROM group_member m JOIN user_group owned ON owned.owner_group_id = m.group_id
-		        WHERE m.account_id = $1 AND `+activeMember+`)`, accountID, AdminGroupKey).Scan(&admin, &owner)
+		        WHERE m.account_id = $1 AND `+activeMember+`),
+		EXISTS (SELECT 1 FROM group_member m JOIN app a ON a.owner_group_id = m.group_id
+		        WHERE m.account_id = $1 AND `+activeMember+`)`, accountID, AdminGroupKey).Scan(&admin, &owner, &appAdmin)
 	switch {
 	case err != nil:
 		return "", err
@@ -73,6 +76,8 @@ func MFARequirement(accountID string) (string, error) {
 		return "Administrators must use two-factor.", nil
 	case owner:
 		return "Group owners must use two-factor.", nil
+	case appAdmin:
+		return "App admins must use two-factor.", nil
 	}
 	return "", nil
 }

@@ -16,12 +16,15 @@ import (
 // so a new route is refused to ordinary users unless it is added here on purpose.
 var (
 	// No session needed: open sign-up (rate limited per address).
-	openRoutes = map[string]bool{"POST /signup": true}
-	// Any signed-in user: their own account, and groups (the handlers let a group's owners in, and only them).
+	openRoutes = map[string]bool{"POST /signup": true, "GET /signup/challenge": true}
+	// Any signed-in user: their own account, groups (the handlers let a group's owners in, and only them),
+	// and apps and their audit entries (the handlers let an app's admins in, and only them).
 	userRoutes = map[string]bool{
 		"GET /groups": true, "GET /groups/{group}": true, "GET /groups/{group}/members": true,
 		"POST /groups/{group}/members": true, "PUT /groups/{group}/members/{account}": true,
 		"DELETE /groups/{group}/members/{account}": true,
+		"GET /apps": true, "GET /apps/{app}": true, "PATCH /apps/{app}": true, "PUT /apps/{app}/access": true,
+		"POST /apps/{app}/secret": true, "GET /audit": true, "GET /scopes": true,
 	}
 )
 

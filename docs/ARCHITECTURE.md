@@ -62,7 +62,7 @@ How Guardian is built and why. `docs/ROADMAP.md` (section 2) lists every design 
 
 The steady load is refreshes: about `signed-in users × apps ÷ token lifetime` per second. 10,000 signed-in
 users with one app each on the default 300 seconds is about 33 refreshes per second. Each refresh is a few
-indexed reads and one RS256 signature.
+indexed reads and one signature (RS256, or the cheaper ES256 for apps set to it).
 
 Watch `guardian_http_request_duration_seconds{route="/token"}`, `guardian_tokens_issued_total` and the
 `guardian_db_*` pool gauges (all metrics: METRICS.md). If they become a problem, in this order: longer token lifetimes for apps that do

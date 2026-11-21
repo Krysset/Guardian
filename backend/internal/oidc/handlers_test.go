@@ -65,7 +65,8 @@ func TestDiscoveryDocument(t *testing.T) {
 	if got := asStrings("grant_types_supported"); strings.Join(got, ",") != "authorization_code,refresh_token,client_credentials" {
 		t.Errorf("grant types = %v", got)
 	}
-	if got := asStrings("id_token_signing_alg_values_supported"); len(got) != 1 || got[0] != "RS256" {
+	// RS256 first: OIDC requires it, and apps that say nothing get it.
+	if got := asStrings("id_token_signing_alg_values_supported"); strings.Join(got, ",") != "RS256,ES256" {
 		t.Errorf("signing algs = %v", got)
 	}
 	if m["backchannel_logout_supported"] != true || m["backchannel_logout_session_supported"] != true {

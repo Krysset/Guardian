@@ -29,12 +29,26 @@ var (
 
 var validEmail = web.ValidEmail
 
+// signupChallenge hands out a proof-of-work puzzle for POST /signup.
+func signupChallenge(w http.ResponseWriter, r *http.Request) {
+	p, err := web.NewPoW()
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "Failed to make a challenge")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, http.StatusOK, p)
+}
+
 // signup is open to everyone, so it is limited per client IP (counters live in Postgres and are shared by
-// all replicas). Accounts created by administrators (POST /accounts) are not limited.
+// all replicas), and it needs the answer to a puzzle from GET /signup/challenge. Accounts created by
+// administrators (POST /accounts) are not limited.
 func signup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		PoWToken  string `json:"pow_token"`
+		PoWNumber string `json:"pow_number"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -42,6 +56,10 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	if web.RequireEmail() {
 		// Confirming the address needs the sign-up page, which waits for the link in the same browser.
 		httpx.ErrorCode(w, http.StatusBadRequest, "email_required", "Sign-up needs an email address here: use the sign-up page")
+		return
+	}
+	if err := web.CheckPoW("api_signup", req.PoWToken, req.PoWNumber); err != nil {
+		httpx.ErrorCode(w, http.StatusBadRequest, "pow_failed", "Answer a puzzle from GET /api/v1/signup/challenge: pow_token, and pow_number such that SHA-256(salt + pow_number) is the challenge")
 		return
 	}
 	acct, err := web.CreateAccount(r, req.Username, req.Password, false)
@@ -138,6 +156,11 @@ func getMe(w http.ResponseWriter, r *http.Request) {
 		accountFail(w, err)
 		return
 	}
+	administered, err := db.AppsAdministeredBy(acct.ID)
+	if err != nil {
+		accountFail(w, err)
+		return
+	}
 	pending, pendingUntil, err := db.PendingEmail(acct.ID)
 	if err != nil {
 		accountFail(w, err)
@@ -157,10 +180,11 @@ func getMe(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, struct {
 		db.Account
-		IsAdmin bool      `json:"is_admin"`
-		MFA     mfaInfo   `json:"mfa"`
-		Email   emailInfo `json:"email_settings"`
-	}{acct, admin, mfaInfo{mfa, required != "", required},
+		IsAdmin  bool      `json:"is_admin"`
+		AppAdmin bool      `json:"app_admin"` // an admin of at least one app: the admin area shows its apps
+		MFA      mfaInfo   `json:"mfa"`
+		Email    emailInfo `json:"email_settings"`
+	}{acct, admin, len(administered) > 0, mfaInfo{mfa, required != "", required},
 		emailInfo{mail.Enabled(), web.RequireEmail(), pending, pendingUntil}})
 }
 

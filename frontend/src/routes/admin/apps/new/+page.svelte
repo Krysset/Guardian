@@ -27,7 +27,8 @@
 		is_first_party: false,
 		access_token_ttl_seconds: 300,
 		scopes: ['openid', 'profile', 'email', 'groups'],
-		require_mfa: false
+		require_mfa: false,
+		signing_alg: 'RS256'
 	});
 	let errors = $state<{ name?: string; display?: string; redirects?: string; form?: string }>({});
 	let busy = $state(false);
@@ -65,7 +66,8 @@
 					is_first_party: settings.is_first_party,
 					access_token_ttl_seconds: settings.access_token_ttl_seconds,
 					scopes: settings.scopes,
-					require_mfa: settings.require_mfa
+					require_mfa: settings.require_mfa,
+					signing_alg: settings.signing_alg
 				}
 			});
 			await refreshAll();

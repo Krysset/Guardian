@@ -9,6 +9,7 @@ package mail
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -149,13 +150,27 @@ func deliver(m Message) {
 		}
 		if attempt == len(retryDelays) {
 			sent.WithLabelValues("failed").Inc()
-			// The recipient's address is personal data and stays out of the log.
-			slog.Error("an email could not be sent", "subject", m.Subject, "error", err)
+			// The recipient's address is personal data and stays out of the log, also when the mail
+			// server's answer repeats it.
+			slog.Error("an email could not be sent", "subject", m.Subject, "error", redact(err, m.To))
 			return
 		}
-		slog.Warn("sending an email failed; trying again", "subject", m.Subject, "error", err, "attempt", attempt+1)
+		slog.Warn("sending an email failed; trying again", "subject", m.Subject, "error", redact(err, m.To), "attempt", attempt+1)
 		time.Sleep(retryDelays[attempt])
 	}
+}
+
+// addressRe finds anything shaped like an email address in a mail server's answer.
+var addressRe = regexp.MustCompile(`[^\s<>"'(),;:]+@[^\s<>"'(),;:]+`)
+
+// redact is an error's text without the recipient's address or anything else that looks like one. Mail
+// servers often quote the address when they refuse it ("550 5.1.1 <someone@example.com>: unknown user").
+func redact(err error, to string) string {
+	text := err.Error()
+	if to != "" {
+		text = strings.ReplaceAll(text, to, "(address)")
+	}
+	return addressRe.ReplaceAllString(text, "(address)")
 }
 
 // Capture is a Sender for tests: it keeps every message.

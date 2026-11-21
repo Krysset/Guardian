@@ -64,6 +64,8 @@ type Page struct {
 	QRCode       template.URL // S15: the QR code, a data: URI that html/template would otherwise refuse
 	SecretGroups string       // S15: the secret in groups of four
 	Codes        []string     // S16: the recovery codes, shown once
+
+	PoW *PoW // the form's proof-of-work puzzle (always on S2 and S10; on S1 after failures)
 }
 
 // Link is a button that leads somewhere.
@@ -168,6 +170,13 @@ const contentSecurityPolicy = "default-src 'none'; style-src 'self'; script-src 
 
 // Render writes the named page with the headers every sign-in page needs.
 func Render(w http.ResponseWriter, status int, name string, data Page) {
+	if (name == "signup" || (name == "forgot" && !data.Sent)) && data.PoW == nil {
+		if p, err := NewPoW(); err != nil {
+			slog.Error("failed to make a proof-of-work puzzle", "error", err)
+		} else {
+			data.PoW = &p
+		}
+	}
 	t, ok := pages[name]
 	var buf bytes.Buffer
 	if !ok {

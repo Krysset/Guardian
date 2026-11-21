@@ -180,7 +180,7 @@ func RemoveAppAccess(accountID, appID string) ([]LogoutNotice, error) {
 	}
 	defer tx.Rollback()
 	notices, err := logoutNotices(tx,
-		`SELECT a.client_id, a.backchannel_logout_uri, s.account_id, s.id
+		`SELECT a.client_id, a.backchannel_logout_uri, a.signing_alg, s.account_id, s.id
 		 FROM session s JOIN session_app sa ON sa.session_id = s.id JOIN app a ON a.id = sa.app_id
 		 WHERE s.account_id = $1 AND a.id = $2 AND s.revoked_at IS NULL AND s.expires_at > now()
 		   AND a.backchannel_logout_uri IS NOT NULL`, accountID, appID)

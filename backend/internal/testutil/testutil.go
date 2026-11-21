@@ -205,6 +205,7 @@ type AppOptions struct {
 	AccessRule     string   // "anyone" by default in tests, so every account may sign in; set "groups" to test the rule
 	GroupIDs       []string // groups linked to the app
 	MachineAPI     bool     // allow the client_credentials grant (machine API)
+	SigningAlg     string   // "RS256" by default, or "ES256"
 }
 
 // CreateApp registers an app and returns it with its plaintext client secret ("" for public apps).
@@ -238,7 +239,7 @@ func CreateApp(t testing.TB, name string, o AppOptions) (db.App, string) {
 		Name: name, PrettyName: "App " + name, Description: "test app", ClientType: clientType,
 		RedirectURIs: o.RedirectURIs, PostLogoutRedirectURIs: o.PostLogoutURIs,
 		BackchannelLogoutURI: o.BackchannelURI, IsFirstParty: o.FirstParty, AccessTokenTTL: o.TTLSeconds,
-		AccessRule: o.AccessRule, GroupIDs: o.GroupIDs,
+		AccessRule: o.AccessRule, GroupIDs: o.GroupIDs, SigningAlg: o.SigningAlg,
 	}, o.Scopes, secretHash)
 	if err != nil {
 		t.Fatalf("create app %s: %v", name, err)

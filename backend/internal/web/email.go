@@ -249,6 +249,12 @@ func forgotSubmit(w http.ResponseWriter, r *http.Request) {
 		Render(w, http.StatusOK, "forgot", Page{Title: "Forgot password", Sent: true})
 		return
 	}
+	if msg := checkFormPoW(r, "forgot"); msg != "" {
+		page.Error = msg
+		page.CSRF = httpx.CSRFToken(w, r)
+		Render(w, http.StatusBadRequest, "forgot", page)
+		return
+	}
 	n, err := db.RateLimitHit("forgot:ip:"+ip, mailWindow)
 	if err != nil {
 		Error(w, ServerError)

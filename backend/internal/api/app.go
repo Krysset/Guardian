@@ -34,9 +34,15 @@ type createAppRequest struct {
 	AccessRule             string   `json:"access_rule"`              // "groups" (default) or "anyone"
 	GroupIDs               []string `json:"group_ids"`                // groups linked to the app
 	RequireMFA             bool     `json:"require_mfa"`              // signing in to the app needs two-factor
+	SigningAlg             string   `json:"signing_alg"`              // "RS256" (default) or "ES256"
+	OwnerGroupID           string   `json:"owner_group_id"`           // optional: its members are the app's admins
 }
 
 func validAccessRule(rule string) bool { return rule == "groups" || rule == "anyone" }
+
+const signingAlgRule = "signing_alg must be 'RS256' or 'ES256'"
+
+func validSigningAlg(alg string) bool { return slices.Contains(db.SigningAlgs, alg) }
 
 func createApp(w http.ResponseWriter, r *http.Request) {
 	var req createAppRequest
@@ -80,6 +86,16 @@ func createApp(w http.ResponseWriter, r *http.Request) {
 	if req.AccessRule == "" {
 		req.AccessRule = "groups"
 	}
+	if req.SigningAlg == "" {
+		req.SigningAlg = "RS256"
+	}
+	if !validSigningAlg(req.SigningAlg) {
+		httpx.Error(w, http.StatusBadRequest, signingAlgRule)
+		return
+	}
+	if !validOwnerGroup(w, req.OwnerGroupID) {
+		return
+	}
 	if !validAccessRule(req.AccessRule) || !allUUIDs(req.GroupIDs...) {
 		httpx.Error(w, http.StatusBadRequest, "access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
 		return
@@ -101,6 +117,7 @@ func createApp(w http.ResponseWriter, r *http.Request) {
 		RedirectURIs: req.RedirectURIs, PostLogoutRedirectURIs: req.PostLogoutRedirectURIs,
 		BackchannelLogoutURI: req.BackchannelLogoutURI, IsFirstParty: req.IsFirstParty,
 		AccessTokenTTL: req.AccessTokenTTLSeconds, AccessRule: req.AccessRule, GroupIDs: req.GroupIDs, RequireMFA: req.RequireMFA,
+		SigningAlg: req.SigningAlg, OwnerGroupID: req.OwnerGroupID,
 	}, req.Scopes, secretHash)
 	if err != nil {
 		appFail(w, err)
@@ -131,21 +148,34 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "access_rule must be 'groups' or 'anyone'; group_ids must be group ids")
 		return
 	}
-	id := chi.URLParam(r, "app")
+	app, via, ok := appAccess(w, r)
+	if !ok {
+		return
+	}
+	id := app.ID
+	// Checked first, so a refused request changes nothing.
 	if req.MachineAPI != nil {
-		// Checked first, so a refused request changes nothing.
-		app, err := db.GetApp(id)
-		if errors.Is(err, sql.ErrNoRows) {
-			httpx.Error(w, http.StatusNotFound, "App not found")
-			return
-		}
-		if err != nil {
-			httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
+		if via != "admin" && *req.MachineAPI != slices.Contains(app.GrantTypes, "client_credentials") {
+			httpx.Error(w, http.StatusForbidden, "Only administrators turn the machine API on or off")
 			return
 		}
 		if *req.MachineAPI && app.ClientType != "confidential" {
 			httpx.Error(w, http.StatusBadRequest, "Only apps with a secret can have machine API access")
 			return
+		}
+	}
+	// An app's admins link and unlink only groups they own: a link tells the app who is in the group.
+	if via != "admin" {
+		for _, g := range changedGroups(app.GroupIDs, req.GroupIDs) {
+			_, owns, err := db.OwnsGroup(httpx.AccountID(r), g)
+			if err != nil {
+				httpx.Error(w, http.StatusInternalServerError, "Failed to update the app")
+				return
+			}
+			if !owns {
+				httpx.ErrorCode(w, http.StatusForbidden, "not_group_owner", "App admins may only link and unlink groups they own")
+				return
+			}
 		}
 	}
 	switch err := db.SetAppAccess(id, req.AccessRule, req.GroupIDs); {
@@ -166,13 +196,29 @@ func setAppAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Audit("app.access_changed", httpx.AccountID(r), id, httpx.ClientIP(r),
-		map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs, "machine_api": req.MachineAPI})
+		map[string]any{"access_rule": req.AccessRule, "groups": req.GroupIDs, "machine_api": req.MachineAPI, "via": via})
 	app, err := db.GetApp(id)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "Failed to load the app")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, app)
+}
+
+// changedGroups are the groups in one list but not the other: those a change links or unlinks.
+func changedGroups(before, after []string) []string {
+	var out []string
+	for _, g := range after {
+		if !slices.Contains(before, g) {
+			out = append(out, g)
+		}
+	}
+	for _, g := range before {
+		if !slices.Contains(after, g) {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func allUUIDs(ids ...string) bool {
@@ -199,8 +245,68 @@ func deleteApp(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+// appAccess decides whether the caller may manage the app in the URL: Guardian admins may, and so may the
+// app's admins (the active members of its owner group). Both need a session that passed two-factor. It
+// returns how the right was obtained ("admin" or "owner:<owner group key>") for the audit log. When access
+// is refused it has already written the response.
+func appAccess(w http.ResponseWriter, r *http.Request) (app db.App, via string, ok bool) {
+	app, err := db.GetApp(chi.URLParam(r, "app"))
+	if err != nil {
+		appFail(w, err)
+		return db.App{}, "", false
+	}
+	admin, err := db.IsAdmin(httpx.AccountID(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
+		return db.App{}, "", false
+	}
+	via = "admin"
+	if !admin {
+		ownerKey, owns, err := db.AppAdminVia(httpx.AccountID(r), app.ID)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
+			return db.App{}, "", false
+		}
+		if !owns {
+			httpx.Error(w, http.StatusForbidden, "Only administrators and the app's admins may do this")
+			return db.App{}, "", false
+		}
+		via = "owner:" + ownerKey
+	}
+	if !httpx.RequireMFASession(w, r) {
+		return db.App{}, "", false
+	}
+	return app, via, true
+}
+
+// validOwnerGroup checks an app's owner group: "" (none) or an existing group. It answers 400 if not.
+func validOwnerGroup(w http.ResponseWriter, id string) bool {
+	if id == "" {
+		return true
+	}
+	if _, err := db.GetGroup(id); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "owner_group_id must be an existing group")
+		return false
+	}
+	return true
+}
+
+// listApps returns every app to an administrator, and to anyone else the apps they are an admin of.
 func listApps(w http.ResponseWriter, r *http.Request) {
-	apps, err := db.GetApps()
+	admin, err := db.IsAdmin(httpx.AccountID(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	var apps []db.App
+	if admin {
+		if !httpx.RequireMFASession(w, r) {
+			return
+		}
+		apps, err = db.GetApps()
+	} else {
+		apps, err = db.AppsAdministeredBy(httpx.AccountID(r))
+	}
 	if err != nil {
 		appFail(w, err)
 		return
@@ -208,13 +314,21 @@ func listApps(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, list(apps))
 }
 
+// getApp returns the app, with the names of its linked groups (an app admin cannot list every group).
 func getApp(w http.ResponseWriter, r *http.Request) {
-	app, err := db.GetApp(chi.URLParam(r, "app"))
+	app, _, ok := appAccess(w, r)
+	if !ok {
+		return
+	}
+	linked, err := db.GroupSummaries(app.GroupIDs)
 	if err != nil {
 		appFail(w, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, app)
+	httpx.JSON(w, http.StatusOK, struct {
+		db.App
+		LinkedGroups []db.GroupSummary `json:"linked_groups"`
+	}{app, linked})
 }
 
 // updateApp changes an app's settings. Only fields present in the body change. The name, client id and
@@ -233,6 +347,8 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 		Scopes                 *[]string `json:"scopes"`
 		Enabled                *bool     `json:"enabled"`
 		RequireMFA             *bool     `json:"require_mfa"`
+		SigningAlg             *string   `json:"signing_alg"`
+		OwnerGroupID           *string   `json:"owner_group_id"` // "" removes it; Guardian admins only
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -265,25 +381,46 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 	case req.Scopes != nil && !slices.Contains(*req.Scopes, "openid"):
 		httpx.Error(w, http.StatusBadRequest, "scopes must include openid")
 		return
+	case req.SigningAlg != nil && !validSigningAlg(*req.SigningAlg):
+		httpx.Error(w, http.StatusBadRequest, signingAlgRule)
+		return
 	}
 	if msg := checkURIs(vals(req.RedirectURIs), vals(req.PostLogoutRedirectURIs), val(req.BackchannelLogoutURI),
 		val(req.LogoURL), val(req.HomepageURL)); msg != "" {
 		httpx.Error(w, http.StatusBadRequest, msg)
 		return
 	}
-	id := chi.URLParam(r, "app")
-	app, err := db.UpdateApp(id, db.AppUpdate{
+	current, via, ok := appAccess(w, r)
+	if !ok {
+		return
+	}
+	if req.OwnerGroupID != nil {
+		if via != "admin" {
+			httpx.Error(w, http.StatusForbidden, "Only administrators choose an app's admins")
+			return
+		}
+		if !validOwnerGroup(w, *req.OwnerGroupID) {
+			return
+		}
+	}
+	app, err := db.UpdateApp(current.ID, db.AppUpdate{
 		PrettyName: req.PrettyName, Description: req.Description, LogoURL: req.LogoURL, HomepageURL: req.HomepageURL,
 		BackchannelLogoutURI: req.BackchannelLogoutURI, RedirectURIs: req.RedirectURIs,
 		PostLogoutRedirectURIs: req.PostLogoutRedirectURIs, Scopes: req.Scopes,
 		IsFirstParty: req.IsFirstParty, Enabled: req.Enabled, AccessTokenTTL: req.AccessTokenTTLSeconds,
-		RequireMFA: req.RequireMFA,
+		RequireMFA: req.RequireMFA, SigningAlg: req.SigningAlg, OwnerGroupID: req.OwnerGroupID,
 	})
 	if err != nil {
 		appFail(w, err)
 		return
 	}
-	detail := map[string]any{"app": app.ID}
+	detail := map[string]any{"app": app.ID, "via": via}
+	if req.OwnerGroupID != nil {
+		detail["owner_group"] = *req.OwnerGroupID
+	}
+	if req.SigningAlg != nil {
+		detail["signing_alg"] = *req.SigningAlg
+	}
 	if req.Enabled != nil {
 		detail["enabled"] = *req.Enabled
 	}
@@ -307,9 +444,8 @@ func rotateAppSecret(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "grace_seconds must be from 0 to 604800 (7 days)")
 		return
 	}
-	app, err := db.GetApp(chi.URLParam(r, "app"))
-	if err != nil {
-		appFail(w, err)
+	app, via, ok := appAccess(w, r)
+	if !ok {
 		return
 	}
 	if app.ClientType != "confidential" {
@@ -325,7 +461,7 @@ func rotateAppSecret(w http.ResponseWriter, r *http.Request) {
 		appFail(w, err)
 		return
 	}
-	db.Audit("app.secret_rotated", httpx.AccountID(r), app.ID, httpx.ClientIP(r), map[string]any{"grace_seconds": req.GraceSeconds})
+	db.Audit("app.secret_rotated", httpx.AccountID(r), app.ID, httpx.ClientIP(r), map[string]any{"grace_seconds": req.GraceSeconds, "via": via})
 	httpx.JSON(w, http.StatusCreated, map[string]any{"client_secret": secret}) // shown once; only the hash is stored
 }
 

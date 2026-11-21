@@ -23,6 +23,7 @@
             <li>Use a password you use nowhere else.</li>
           </ul>
         </div>
+        {{template "pow" .}}
         <button class="button" type="submit">Create account</button>
       </form>
       <p class="small">Already have an account? <a href="/login{{if .ReturnTo}}?return_to={{.ReturnTo}}{{end}}">Sign in</a></p>

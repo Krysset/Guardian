@@ -51,16 +51,32 @@ The token response holds:
 
 | Token | What it is | Lifetime |
 |---|---|---|
-| `id_token` | Who the user is: `sub`, profile claims, `groups`, `sid`, `amr`. For your login code. | `access_token_ttl_seconds` |
-| `access_token` | A signed JWT (`typ: at+jwt`, RFC 9068) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr` and `groups`. No profile data. Send it to your own APIs. | `access_token_ttl_seconds` |
+| `id_token` | Who the user is: `sub`, profile claims, `groups`, `sid`, `amr`, `acr`. For your login code. | `access_token_ttl_seconds` |
+| `access_token` | A signed JWT (`typ: at+jwt`, RFC 9068) with `sub`, `aud`, `client_id`, `scope`, `sid`, `amr`, `acr` and `groups`. No profile data. Send it to your own APIs. | `access_token_ttl_seconds` |
 | `refresh_token` | Gets new tokens. Only for apps with a client secret. It stays the same until the user's Guardian session ends. | the session |
 
 Keep tokens on your server, never in the browser.
 
+### Two-factor for one sign-in
+
+To require two-factor for every sign-in, an administrator turns on **Require two-factor** for the app. To
+require it only sometimes, for example before deleting something, send the user through a sign-in with
+`acr_values=mfa`:
+
+- If their Guardian session already passed two-factor (a code, a security key or a passkey), they come
+  straight back. If not, Guardian asks for it first, or has them set it up.
+- The tokens carry `acr`: `mfa` when the session passed two-factor, `password` when it did not. **Check
+  `acr` in the ID token** rather than trusting that the redirect happened.
+- Add `max_age=0` to also make them type their password again ("confirm it's you, right now").
+- With `prompt=none`, a session without two-factor gets `interaction_required` back.
+
+Other `acr_values` are accepted and ignored. The supported values are in discovery
+(`acr_values_supported`).
+
 ## 3. Check access tokens yourself
 
-Validate every access token locally: signature against Guardian's JWKS (`jwks_uri`, RS256), `iss`, `aud`
-(your `client_id`), `exp`, and the header `typ` must be `at+jwt`. Every JWT library does this. Then read
+Validate every access token locally: signature against Guardian's JWKS (`jwks_uri`; RS256, or ES256 if
+your app is set to it), `iss`, `aud` (your `client_id`), `exp`, and the header `typ` must be `at+jwt`. Every JWT library does this. Then read
 `groups` and decide what the user may do.
 
 Identify users by `sub`. Never by username or email: both can change, and a freed username can be taken by

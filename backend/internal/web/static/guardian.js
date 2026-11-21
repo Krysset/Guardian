@@ -200,3 +200,85 @@
     });
   });
 })();
+
+// Proof of work: a form with a puzzle (input[name=pow]) gets its answer before it is sent. The browser tries
+// numbers until the SHA-256 of the salt followed by the number is the challenge; that takes about half a
+// second, and starts as soon as the page opens, so it is usually done before the form is filled in.
+(function () {
+  var subtle = window.crypto && window.crypto.subtle;
+  document.querySelectorAll('input[name="pow"]').forEach(function (input) {
+    var form = input.form;
+    var answer = form.querySelector('input[name="pow_number"]');
+    var status = form.querySelector('[data-pow-status]');
+    var salt = input.getAttribute('data-pow-salt');
+    var challenge = input.getAttribute('data-pow-challenge');
+    var max = parseInt(input.getAttribute('data-pow-max'), 10);
+    var done = false;
+    var submitting = false;
+    if (!subtle) {
+      // Only on plain http away from localhost: the server then says the check failed.
+      return;
+    }
+    function hex(buffer) {
+      var bytes = new Uint8Array(buffer);
+      var out = '';
+      for (var i = 0; i < bytes.length; i++) {
+        out += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+      }
+      return out;
+    }
+    var encoder = new TextEncoder();
+    function attempt(n) {
+      return subtle.digest('SHA-256', encoder.encode(salt + n)).then(function (sum) {
+        return hex(sum) === challenge;
+      });
+    }
+    // Batches of digests in parallel, then the next batch.
+    function search(from) {
+      if (from > max) {
+        return Promise.resolve(-1);
+      }
+      var batch = [];
+      for (var n = from; n <= max && n < from + 500; n++) {
+        batch.push(attempt(n));
+      }
+      return Promise.all(batch).then(function (hits) {
+        var i = hits.indexOf(true);
+        return i >= 0 ? from + i : search(from + 500);
+      });
+    }
+    var solved = search(0).then(function (n) {
+      if (n >= 0) {
+        answer.value = String(n);
+      }
+      done = true;
+      if (status) {
+        status.hidden = true;
+      }
+    });
+    form.addEventListener('submit', function (event) {
+      if (done || submitting) {
+        return;
+      }
+      event.preventDefault();
+      submitting = true;
+      if (status) {
+        status.hidden = false;
+      }
+      var button = form.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = true;
+      }
+      solved.then(function () {
+        if (button) {
+          button.disabled = false;
+        }
+        if (form.requestSubmit) {
+          form.requestSubmit(button || undefined);
+        } else {
+          form.submit();
+        }
+      });
+    });
+  });
+})();

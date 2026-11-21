@@ -10,6 +10,7 @@
         {{if mail}}<div class="label-row"><label for="password">Password</label><a href="/forgot">Forgot password?</a></div>
         {{else}}<label for="password">Password</label>
         {{end}}<div class="password"><input class="text" id="password" name="password" type="password" autocomplete="current-password" required{{if .Login}} autofocus{{end}}></div>
+        {{template "pow" .}}
         <button class="button" type="submit">Sign in</button>
       </form>
       {{if .KeyOptions}}<form class="passkey" method="post" action="/login/passkey" data-webauthn="passkey" data-options="{{.KeyOptions}}" hidden>
