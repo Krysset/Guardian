@@ -117,6 +117,15 @@ func refuseAuthRequest(w http.ResponseWriter, r *http.Request, req *authRequest,
 	web.Error(w, web.BrokenLink)
 }
 
+// loginAfterParam marks a request that Guardian sent to the sign-in page because the app asked for a fresh
+// sign-in (prompt=login, or max_age exceeded). It holds when that was, in Unix milliseconds: a session that signed
+// in since then meets the app's demand when the browser comes back, so the request cannot loop, without a
+// leeway that would let a sign-in from a moment before count as fresh. Only recent values count.
+const (
+	loginAfterParam = "login_after"
+	loginAfterValid = 30 * time.Minute
+)
+
 func authorize(w http.ResponseWriter, r *http.Request) {
 	req, aerr := parseAuthRequest(r.URL.Query())
 	if aerr != nil {
@@ -125,22 +134,27 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess, loggedIn := httpx.SessionFromRequest(r)
-	needLogin := !loggedIn || slices.Contains(req.Prompts, "login") ||
-		(req.MaxAge >= 0 && time.Since(sess.AuthTime) > time.Duration(req.MaxAge)*time.Second)
-	if needLogin {
+	forceLogin := slices.Contains(req.Prompts, "login") ||
+		(loggedIn && req.MaxAge >= 0 && time.Since(sess.AuthTime) > time.Duration(req.MaxAge)*time.Second)
+	if after, err := strconv.ParseInt(r.URL.Query().Get(loginAfterParam), 10, 64); err == nil && loggedIn && forceLogin {
+		since := time.UnixMilli(after)
+		if time.Since(since) < loginAfterValid && !sess.AuthTime.Before(since) {
+			forceLogin = false // signed in after Guardian asked: the fresh sign-in the app wanted
+		}
+	}
+	if !loggedIn || forceLogin {
 		if slices.Contains(req.Prompts, "none") {
 			redirectWithError(w, r, req.RedirectURI, req.State, "login_required", "")
 			return
 		}
-		// Come back to the same request after login, minus the parts that would force another login.
+		// Come back to the same request after signing in, marked with when the sign-in was asked for.
 		q := r.URL.Query()
-		q.Del("max_age")
-		if rest := without(req.Prompts, "login"); len(rest) > 0 {
-			q.Set("prompt", strings.Join(rest, " "))
-		} else {
-			q.Del("prompt")
+		q.Set(loginAfterParam, strconv.FormatInt(time.Now().UnixMilli(), 10))
+		target := "/login?return_to=" + url.QueryEscape("/authorize?"+q.Encode())
+		if loggedIn {
+			target += "&again=1" // the sign-in page shows its form even though a session exists
 		}
-		http.Redirect(w, r, "/login?return_to="+url.QueryEscape("/authorize?"+q.Encode()), http.StatusFound)
+		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
 

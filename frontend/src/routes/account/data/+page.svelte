@@ -9,6 +9,28 @@
 	let { data }: PageProps = $props();
 	const username = $derived(data.me.username);
 
+	let downloading = $state(false);
+	let downloadError = $state('');
+
+	// Fetched through the API client rather than a plain link, so the "Confirm it's you" dialog can open.
+	async function download() {
+		downloadError = '';
+		downloading = true;
+		try {
+			const data = await api.get('/me/export', { reason: 'download your data' });
+			const href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+			const a = document.createElement('a');
+			a.href = href;
+			a.download = `guardian-data-${new Date().toISOString().slice(0, 10)}.json`;
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(href), 1000);
+		} catch (e) {
+			if (!(e instanceof ApiError && e.code === 'cancelled')) downloadError = messageOf(e);
+		} finally {
+			downloading = false;
+		}
+	}
+
 	let typed = $state('');
 	let error = $state('');
 	let busy = $state(false);
@@ -41,7 +63,8 @@
 <section class="card">
 	<h2 class="sec-h">Download your data</h2>
 	<p class="text">Your profile, groups, sessions, connected apps and your own audit entries, as a JSON file.</p>
-	<a class="btn" href="/api/v1/me/export" download data-sveltekit-reload><Icon name="data" />Download</a>
+	<button class="btn" type="button" onclick={download} disabled={downloading}><Icon name="data" />Download</button>
+	{#if downloadError}<p class="err-msg msg" role="alert">{downloadError}</p>{/if}
 </section>
 
 <form class="card danger-card" onsubmit={remove} novalidate>

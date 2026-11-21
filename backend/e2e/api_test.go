@@ -638,7 +638,8 @@ func TestE2ELoginThrottlingAndNoUserEnumeration(t *testing.T) {
 	resp := br.login("carol", testutil.DefaultPassword, "")
 	wantStatus(t, resp, http.StatusTooManyRequests)
 	drain(resp)
-	if testutil.Count(t, `SELECT hits FROM rate_limit WHERE key = $1`, "login:account:"+carol+":ip:127.0.0.1") != 5 {
+	// Attempts are counted before they are checked, so the refused one counts too.
+	if testutil.Count(t, `SELECT hits FROM rate_limit WHERE key = $1`, "login:account:"+carol+":ip:127.0.0.1") != 6 {
 		t.Error("failed attempts were not counted per account and address")
 	}
 	// ...but not from another address: the account is not locked

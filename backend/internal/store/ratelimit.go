@@ -32,3 +32,11 @@ func RateLimitReset(key string, window time.Duration) error {
 		`DELETE FROM rate_limit WHERE key = $1 AND window_start = `+windowStartSQL, key, window.Seconds())
 	return err
 }
+
+// RateLimitRefund takes back one event counted in the current window, for an attempt that was counted
+// before it was checked and turned out fine.
+func RateLimitRefund(key string, window time.Duration) error {
+	_, err := GetDatabaseConnection().Exec(
+		`UPDATE rate_limit SET hits = greatest(hits - 1, 0) WHERE key = $1 AND window_start = `+windowStartSQL, key, window.Seconds())
+	return err
+}

@@ -7,11 +7,10 @@ Guardian is a hobby project under active development. It is not ready for produc
 
 ## Status
 
-Release 0.1 (it runs locally) is done: OIDC with signed JWT access tokens, groups and per-app access rules,
-the sign-in pages, a simple Home, the JSON API at `/api/v1`, and a read-only machine API for apps. 0.2 is in
-progress: the Helm chart and encrypted backups (`guardian backup`, `guardian restore`) are built, and wait for
-the cluster. 0.3 (accounts: email, two-factor, deletion, key rotation) is built. The management UI (the account and admin areas, in `frontend/`) is being built in 0.4. The plan is in
-[docs/ROADMAP.md](docs/ROADMAP.md).
+Everything planned for 1.0 is built (see [CHANGELOG.md](CHANGELOG.md)): OIDC with signed access tokens,
+two-factor and passkeys, groups with owners, requests to join and app admins, the management UI (the account
+and admin areas, in `frontend/`), the Helm chart, encrypted backups, metrics and key rotation. The release
+waits for the checks that need a real Kubernetes cluster; the plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Run it locally
 
@@ -63,6 +62,13 @@ For app developers:
 - [docs/INSTALL.md](docs/INSTALL.md): installing Guardian in Kubernetes with the Helm chart.
 - [docs/openapi.yaml](docs/openapi.yaml): the JSON API, `/api/v1`.
 - [docs/LOCAL-GRAFANA.md](docs/LOCAL-GRAFANA.md): try the whole sign-in flow locally with Grafana.
+
+For operators:
+
+- [docs/INSTALL.md](docs/INSTALL.md): installing, backups, keys and runbooks.
+- [docs/METRICS.md](docs/METRICS.md): the metrics and alerts to start from.
+- [docs/DATA-PROTECTION.md](docs/DATA-PROTECTION.md): what Guardian stores, for how long, and people's rights.
+- [CHANGELOG.md](CHANGELOG.md): what each release changed.
 
 For working on Guardian:
 

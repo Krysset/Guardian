@@ -54,14 +54,14 @@ or when a test names an id that is not a requirement, and generates this table. 
 | Id | Status | Tests |
 |---|---|---|
 | V1 | done | `TestE2ESignInWithEmailAddress`, `TestE2ESingleSignOnAndLogoutEverywhere`, `TestLoginPageStructure` |
-| V2 | done | `TestE2EAbuseProtection`, `TestE2ELoginThrottlingAndNoUserEnumeration` |
+| V2 | done | `TestE2EAbuseProtection`, `TestE2EGuessingFromManyAddressesMakesTheAccountAskForAPuzzle`, `TestE2EIPv6AddressesCountPerBlock`, `TestE2ELoginThrottlingAndNoUserEnumeration`, `TestLimitAddressGroupsIPv6PerBlock` |
 | V3 | done | `TestE2EAbuseProtection`, `TestE2EEmailOffAndEmailRequired`, `TestE2ESignUpIsOpenButRateLimited`, `TestE2ESignUpPageCreatesAnAccountAndSignsItIn`, `TestE2ESignUpValidation`, `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestSignupPageStructure` |
 | V4 | done | `TestE2EAuthorizeRequestValidation`, `TestE2ECSRFProtections`, `TestE2EPagesRoutingAndStaticFiles`, `TestErrorPagesNeverShowDetails` |
 | V5 | done | `TestE2EPasswordResetByEmail` |
 | V6 | done | `TestE2EAConfirmationLinkOpenedElsewhereDoesNotSignIn`, `TestE2ESignUpWithAnEmailWaitsForItsConfirmation`, `TestE2ETheFirstAccountToConfirmAnAddressGetsIt` |
 | V7 | done | `TestE2ESecurityKeyIsASecondFactor`, `TestE2ETwoFactorAttemptsAreLimitedAndCanBeCancelled`, `TestE2ETwoFactorThroughTheAPIAndAtSignIn` |
 | V8 | done | `TestE2EPasskeyOfARemovedKeyIsRefused`, `TestE2EPasskeySignsInWithoutAPassword` |
-| V9 | done | `TestE2EProofOfWorkOnTheFormsBotsLike` |
+| V9 | done | `TestE2EGuessingFromManyAddressesMakesTheAccountAskForAPuzzle`, `TestE2EProofOfWorkOnTheFormsBotsLike` |
 | U1 | done | `TestConsentPageListsScopesAndEscapesHiddenRequest`, `TestE2EConsentFlowForThirdPartyApps` |
 | U2 | done | `TestE2EAppAccessRuleDecidesWhoMaySignIn` |
 | U3 | done | `TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged`, `TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn` |
@@ -77,7 +77,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | U13 | done | `TestE2EHomeAndConnectedApps` |
 | U14 | done | `TestE2EDownloadMyData` |
 | U15 | done | `TestE2EDeletingYourOwnAccountAndRestoringIt`, `TestE2ETheLastAdministratorCannotDeleteItself` |
-| U16 | done | `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt`, `TestE2EKeysConfirmItsYouAndFollowTheRemovalRules`, `TestE2EProtectedChangesNeedARecentSignIn`, `TestE2EReauthIsLimited` |
+| U16 | done | `TestE2EAdminActionsThatTakeOverAccountsNeedARecentSignIn`, `TestE2EEveryAPIRouteRefusesWhoMayNotUseIt`, `TestE2EKeysConfirmItsYouAndFollowTheRemovalRules`, `TestE2EProtectedChangesNeedARecentSignIn`, `TestE2EReauthIsLimited` |
 | U17 | done | `TestE2EAdministratorsResetTwoFactor`, `TestE2EChangingTheEmailAddress`, `TestE2EPasswordResetByEmail`, `TestE2ETwoFactorThroughTheAPIAndAtSignIn` |
 | U18 | done | `TestAccountGroupsListsActiveMemberships`, `TestE2EMyGroupsAndAddingMembersByLogin` |
 | U19 | done | `TestE2EHomeListsTheAppsTheAccountMayUse` |
@@ -100,8 +100,8 @@ or when a test names an id that is not a requirement, and generates this table. 
 | A3 | done | `TestE2EAdminsListCreateAndEditAccounts` |
 | A4 | done | `TestAccountUpdatesChangeOnlyWhatIsGiven`, `TestE2EAdminsListCreateAndEditAccounts` |
 | A5 | done | `TestDisablingAnAccountEndsItsSessionsAndSparesTheLastAdmin`, `TestE2EDisablingAnAccountLocksItOutAndEnablingLetsItBackIn`, `TestE2ETheLastAdministratorIsProtected` |
-| A6 | done | `TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged`, `TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn` |
-| A7 | done | `TestDeletedAccountsAreErasedAfterTheGracePeriod`, `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EErasingAnAccountNow` |
+| A6 | done | `TestE2EAnAdminSetPasswordEndsSessionsAndMustBeChanged`, `TestE2ETemporaryPasswordMustBeReplacedBeforeSignIn`, `TestE2ETemporaryPasswordsBlockTheAPI` |
+| A7 | done | `TestDeletedAccountsAreErasedAfterTheGracePeriod`, `TestE2EAdminActionsThatTakeOverAccountsNeedARecentSignIn`, `TestE2EAdminDeletionLocksTheUserOutImmediately`, `TestE2EErasingAnAccountNow` |
 | A8 | done | `TestE2EDeletingYourOwnAccountAndRestoringIt` |
 | A9 | done | `TestE2EAdministratorsResetTwoFactor` |
 | A10 | done | `TestE2EAdminAccountsPagesFiltersAndActivity` |
@@ -126,7 +126,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | P3 | done | `TestEachAlgorithmRotatesOnItsOwn`, `TestKeyringRotationReencryptsEverything`, `TestKeysCommandLine`, `TestKeysFollowARotation`, `TestSigningKeysMoveThroughTheirStages` |
 | P4 | done | `TestKeysCommandLine`, `TestResettingEveryAuthenticatorAppKeepsSecurityKeys` |
 | P5 | done | `TestSeededAdminHasNoPasswordUntilBootstrapped` |
-| P6 | done | `TestCountsForMetrics`, `TestE2EInternalListenerProbesAndMetrics`, `TestE2EMetricsCountHowNotWho`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
+| P6 | done | `TestCountsForMetrics`, `TestE2EInternalListenerProbesAndMetrics`, `TestE2EMetricsCountHowNotWho`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus`, `TestReadinessFollowsTheDatabaseAndShutdown` |
 | P7 | done | `TestTheRunbookRecoversALockedOutAdministrator` |
 | M1 | done | `TestAnAppOnlySeesTheGroupsLinkedToIt`, `TestE2EAuthorizationCodeAndPKCE`, `TestE2EDiscoveryAndJWKS`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens`, `TestE2EGroupChangesReachTheAppAtItsNextRefresh`, `TestE2ELoginIssuesSignedAccessAndIDTokens` |
 | M2 | done | `TestAnAppMayKnowItsGroupMembersAndItsUsersOnly`, `TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers`, `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers`, `TestMachineAccessIsOnlyForAppsWithASecret` |

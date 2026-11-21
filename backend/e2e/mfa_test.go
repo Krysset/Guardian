@@ -209,12 +209,26 @@ func setUpOnPage(t *testing.T, br *browser, wantReason string) *http.Response {
 	}
 	secret := strings.ReplaceAll(m[1], " ", "")
 	token := html.UnescapeString(tokenRe.FindStringSubmatch(page)[1])
-	resp := br.postForm("/mfa/setup", url.Values{"csrf": {br.csrf()}, "step": {"scan"}, "token": {token}, "code": {"123456"}})
+	// Setting up from a session that is already signed in asks for the password too, so a borrowed session
+	// cannot add a second factor of its own.
+	scan := url.Values{"csrf": {br.csrf()}, "step": {"scan"}, "token": {token}}
+	if strings.Contains(page, `name="current_password"`) {
+		scan.Set("code", codeAt(t, secret, 0))
+		resp := br.postForm("/mfa/setup", scan)
+		wantStatus(t, resp, http.StatusBadRequest)
+		if body := readBody(t, resp); !strings.Contains(body, "password") {
+			t.Error("setting up without the password must say it is needed")
+		}
+		scan.Set("current_password", testutil.DefaultPassword)
+	}
+	scan.Set("code", "123456")
+	resp := br.postForm("/mfa/setup", scan)
 	wantStatus(t, resp, http.StatusBadRequest)
 	if body := readBody(t, resp); !strings.Contains(body, "Scan this new QR code") {
 		t.Error("a wrong first code must say so")
 	}
-	resp = br.postForm("/mfa/setup", url.Values{"csrf": {br.csrf()}, "step": {"scan"}, "token": {token}, "code": {codeAt(t, secret, 0)}})
+	scan.Set("code", codeAt(t, secret, 0))
+	resp = br.postForm("/mfa/setup", scan)
 	wantStatus(t, resp, http.StatusOK)
 	page = readBody(t, resp)
 	codes := codesRe.FindAllStringSubmatch(page, -1)

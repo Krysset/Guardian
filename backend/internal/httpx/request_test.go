@@ -177,3 +177,19 @@ func TestRequireSameOrigin(t *testing.T) {
 		}
 	}
 }
+
+// Covers: V2
+func TestLimitAddressGroupsIPv6PerBlock(t *testing.T) {
+	for in, want := range map[string]string{
+		"203.0.113.9":          "203.0.113.9",
+		"2001:db8:1:2::1":      "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff::9": "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+		"::ffff:203.0.113.9":   "::ffff:203.0.113.9", // an IPv4 address written as IPv6 stays one address
+		"not an address":       "not an address",
+	} {
+		if got := LimitAddress(in); got != want {
+			t.Errorf("LimitAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -32,7 +32,7 @@ func CreateSession(accountID, sessionHash, ip, userAgent string, maxLifetime tim
 
 // liveSession is the one definition of "this session can still be used": not revoked, before its
 // absolute end, used within the idle timeout ($2, in seconds), and its account is active.
-const liveSession = `SELECT s.id, s.account_id, s.auth_time, s.amr, s.expires_at, s.last_seen_at
+const liveSession = `SELECT s.id, s.account_id, s.auth_time, s.amr, s.expires_at, s.last_seen_at, a.must_change_password
 	FROM session s JOIN account a ON a.id = s.account_id
 	WHERE %s = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
 	  AND s.last_seen_at > now() - make_interval(secs => $2)
@@ -41,7 +41,7 @@ const liveSession = `SELECT s.id, s.account_id, s.auth_time, s.amr, s.expires_at
 func loadLiveSession(column, value string, idleTimeout time.Duration) (Session, error) {
 	var s Session
 	err := GetDatabaseConnection().QueryRow(fmt.Sprintf(liveSession, column), value, idleTimeout.Seconds()).
-		Scan(&s.ID, &s.AccountID, &s.AuthTime, scanArray(&s.AMR), &s.ExpiresAt, &s.LastSeenAt)
+		Scan(&s.ID, &s.AccountID, &s.AuthTime, scanArray(&s.AMR), &s.ExpiresAt, &s.LastSeenAt, &s.MustChangePassword)
 	if err != nil {
 		return Session{}, err
 	}

@@ -61,6 +61,8 @@ type Session struct {
 	AMR        []string  // how the user proved who they are, for the OIDC amr claim
 	ExpiresAt  time.Time // absolute end of the session
 	LastSeenAt time.Time
+	// MustChangePassword: the account has a temporary password, so it may do nothing else until it chooses one.
+	MustChangePassword bool
 }
 
 type AuthCode struct {

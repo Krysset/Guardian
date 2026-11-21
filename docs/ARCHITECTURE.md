@@ -105,7 +105,11 @@ sequenceDiagram
   B->>G: GET /authorize
   alt no session cookie
     G-->>B: sign-in page
-    B->>G: POST /login (password)
+    B->>G: POST /login (password, or a passkey)
+    opt two-factor (account has it, or must)
+      G-->>B: code or security key page
+      B->>G: POST /mfa
+    end
     G-->>B: session cookie, redirect back
   end
   opt temporary password set by an admin
@@ -135,6 +139,63 @@ sequenceDiagram
   A->>G: POST /token (refresh)
   G->>D: session, account, access rule, groups (live)
   G-->>A: new tokens without the group, or invalid_grant
+```
+
+### Signing out
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as App
+  participant G as Guardian
+  participant O as Other apps
+  B->>A: Sign out
+  A-->>B: redirect to /logout (id_token_hint, post_logout_redirect_uri)
+  B->>G: GET /logout
+  G-->>B: "Sign out?" page
+  B->>G: POST /logout
+  Note over G: session ended, its refresh tokens stop working at once
+  G-)O: back-channel logout token to every app the session used (that has a URI)
+  G-->>B: redirect to post_logout_redirect_uri
+  O->>G: POST /token (refresh) without back-channel logout
+  G-->>O: invalid_grant: the app treats it as signed out
+```
+
+### Two-factor for one sign-in (`acr_values`)
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as App
+  participant G as Guardian
+  B->>A: delete something important
+  A-->>B: redirect to /authorize with acr_values=mfa (and max_age=0 for a fresh password)
+  B->>G: GET /authorize
+  alt the session passed two-factor
+    G-->>B: redirect with code
+  else it did not
+    G-->>B: code or security key page (or set two-factor up)
+    B->>G: POST /mfa
+    G-->>B: redirect with code
+  end
+  A->>G: POST /token
+  G-->>A: ID token with acr "mfa"
+  Note over A: the app checks acr itself before going ahead
+```
+
+### Machine API
+
+```mermaid
+sequenceDiagram
+  participant A as App backend
+  participant G as Guardian
+  A->>G: POST /token (client_credentials, client id and secret)
+  G-->>A: access token for Guardian itself (audience = issuer)
+  A->>G: GET /api/v1/apps/self/groups (Bearer token)
+  G-->>A: the app's linked groups
+  A->>G: GET /api/v1/apps/self/groups/{key}/members
+  G-->>A: their members (only accounts in the app's groups)
+  Note over A,G: read-only, turned on per app by a Guardian admin
 ```
 
 ### Data model (main tables)

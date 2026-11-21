@@ -57,18 +57,22 @@ func TestE2ESignUpWithAnEmailWaitsForItsConfirmation(t *testing.T) {
 	if page := readBody(t, br.get("/signup")); !strings.Contains(page, `name="email"`) || !strings.Contains(page, "Optional.") {
 		t.Fatal("the sign-up page has no optional email field")
 	}
-	for _, c := range []struct{ email, want string }{
-		{"not-an-address", "Enter an email address"},
-		{"ZELDA@castle.example", "already in use"},
-	} {
-		resp := signupForm(br, "link", c.email, returnTo)
-		wantStatus(t, resp, http.StatusBadRequest)
-		if body := readBody(t, resp); !strings.Contains(body, c.want) || !strings.Contains(body, `value="`+c.email+`"`) {
-			t.Errorf("%s: the page lacks %q or the typed address", c.email, c.want)
-		}
+	resp := signupForm(br, "link", "not-an-address", returnTo)
+	wantStatus(t, resp, http.StatusBadRequest)
+	if body := readBody(t, resp); !strings.Contains(body, "Enter an email address") || !strings.Contains(body, `value="not-an-address"`) {
+		t.Error("an invalid address: the page lacks the error or the typed address")
+	}
+	// Covers: V3
+	// An address in use is not revealed: the sign-up goes on as usual, and the address's owner is told.
+	impa := newBrowser(t)
+	resp = signupForm(impa, "impa", "ZELDA@castle.example", "")
+	wantStatus(t, resp, http.StatusSeeOther)
+	drain(resp)
+	if m, ok := mailbox.WaitFor("ZELDA@castle.example", "You already have an account"); !ok || strings.Contains(m.Text, "/confirm?") {
+		t.Error("signing up with a taken address did not tell its owner, or sent a confirmation link")
 	}
 
-	resp := signupForm(br, "link", "link@hyrule.example", returnTo)
+	resp = signupForm(br, "link", "link@hyrule.example", returnTo)
 	wantStatus(t, resp, http.StatusSeeOther)
 	drain(resp)
 	if loc := resp.Header.Get("Location"); loc != "/signup/inbox" {
@@ -192,10 +196,14 @@ func TestE2ETheFirstAccountToConfirmAnAddressGetsIt(t *testing.T) {
 	}
 
 	// The loser chooses another address on the check-your-inbox page.
+	// A taken address looks like any other here; its owner is told instead, and no link is made.
 	resp = a.postForm("/signup/inbox", url.Values{"csrf": {a.csrf()}, "action": {"change"}, "email": {"kokiri@forest.example"}})
-	wantStatus(t, resp, http.StatusBadRequest)
-	if body := readBody(t, resp); !strings.Contains(body, "already in use") {
-		t.Error("changing to a taken address must be refused")
+	wantStatus(t, resp, http.StatusOK)
+	if body := readBody(t, resp); strings.Contains(body, "in use") || !strings.Contains(body, "k•••@forest.example") {
+		t.Error("changing to a taken address must look like any other change")
+	}
+	if m, ok := mailbox.WaitFor("kokiri@forest.example", "You already have an account"); !ok || strings.Contains(m.Text, "/confirm?") {
+		t.Error("the taken address's owner was not told, or got a confirmation link")
 	}
 	resp = a.postForm("/signup/inbox", url.Values{"csrf": {a.csrf()}, "action": {"change"}, "email": {"saria@forest.example"}})
 	wantStatus(t, resp, http.StatusOK)

@@ -10,6 +10,9 @@
       <form method="post" action="/mfa/setup" data-webauthn="create" data-options="{{.KeyOptions}}">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="key">
         <input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="credential">
+        {{if .AskPassword}}<p class="step"><label for="current_password">First, your password, to confirm it's you.</label></p>
+        <div class="password"><input class="text" id="current_password" name="current_password" type="password" autocomplete="current-password" required{{if .FieldErrors.current_password}} aria-invalid="true" aria-describedby="current-password-error"{{end}}></div>
+        {{with .FieldErrors.current_password}}<p class="field-error" id="current-password-error">{{.}}</p>{{end}}{{end}}
         <p class="step"><label for="name">1. Name it, so you can tell your keys apart.</label></p>
         <input class="text" id="name" name="name" type="text" maxlength="64" placeholder="Security key" autocomplete="off"{{if .FieldErrors.name}} aria-invalid="true" aria-describedby="name-error"{{end}}>
         {{with .FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
@@ -22,6 +25,9 @@
       <form method="post" action="/mfa/setup">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="step" value="scan">
         <input type="hidden" name="token" value="{{.Token}}">
+        {{if .AskPassword}}<p class="step"><label for="current_password">First, your password, to confirm it's you.</label></p>
+        <div class="password"><input class="text" id="current_password" name="current_password" type="password" autocomplete="current-password" required{{if .FieldErrors.current_password}} aria-invalid="true" aria-describedby="current-password-error"{{end}}></div>
+        {{with .FieldErrors.current_password}}<p class="field-error" id="current-password-error">{{.}}</p>{{end}}{{end}}
         <p class="step">1. Scan this with your authenticator app.</p>
         {{with .QRCode}}<img class="qr" src="{{.}}" width="168" height="168" alt="QR code for your authenticator app">{{end}}
         <p class="hint center">Can't scan it? Type this key instead:</p>

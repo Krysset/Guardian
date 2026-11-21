@@ -78,7 +78,7 @@ export interface paths {
         };
         /**
          * Download my data
-         * @description Everything Guardian holds about the signed-in account, as a JSON file: the profile, two-factor status, groups, consents, apps used, sessions, and its audit entries. Secrets (password hash, two-factor secrets, tokens) are left out.
+         * @description Everything Guardian holds about the signed-in account, as a JSON file: the profile, two-factor status, groups, consents, apps used, sessions, and its audit entries. Secrets (password hash, two-factor secrets, tokens) are left out. A protected change (403 reauth_required), so nobody at an unlocked computer walks off with it.
          */
         get: operations["exportMe"];
         put?: never;
@@ -569,7 +569,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an account
-         * @description The account is disabled at once, all of its sessions end, apps with back-channel logout are told, and it leaves its groups. It is erased after the grace period (DELETION_GRACE_PERIOD, 30 days by default), and can be restored until then (POST /accounts/{account}/restore). The last administrator cannot be deleted (409 last_admin).
+         * @description The account is disabled at once, all of its sessions end, apps with back-channel logout are told, and it leaves its groups. It is erased after the grace period (DELETION_GRACE_PERIOD, 30 days by default), and can be restored until then (POST /accounts/{account}/restore). The last administrator cannot be deleted (409 last_admin). A protected change (403 reauth_required).
          */
         delete: operations["deleteAccount"];
         options?: never;
@@ -578,7 +578,7 @@ export interface paths {
          * Change an account
          * @description Only fields present change. An email set here counts as verified; "" removes it. Disabling ends all of
          *     the account's sessions and sends back-channel logout; the last administrator cannot be disabled
-         *     (409 last_admin).
+         *     (409 last_admin). Changing email or status is a protected change (403 reauth_required).
          */
         patch: operations["updateAccount"];
         trace?: never;
@@ -700,7 +700,7 @@ export interface paths {
         put?: never;
         /**
          * Erase an account now
-         * @description "Erase now": deletes the account for good, without waiting for the grace period, deleting it first if it is not deleted yet (refused for the last administrator). Its IP addresses and personal details are removed from its audit entries, and its id goes into the deletion log. Confirmed by typing its username.
+         * @description "Erase now": deletes the account for good, without waiting for the grace period, deleting it first if it is not deleted yet (refused for the last administrator). Its IP addresses and personal details are removed from its audit entries, and its id goes into the deletion log. Confirmed by typing its username; a protected change (403 reauth_required).
          */
         post: operations["eraseAccount"];
         delete?: never;
@@ -721,7 +721,7 @@ export interface paths {
         get?: never;
         /**
          * Set someone's password
-         * @description For someone who cannot reset their own password, for example an account without an email. All of the account's sessions end, and the user must choose a new password at their next sign-in (must_change_password).
+         * @description For someone who cannot reset their own password, for example an account without an email. All of the account's sessions end, and the user must choose a new password at their next sign-in (must_change_password). A protected change (403 reauth_required).
          */
         put: operations["setAccountPassword"];
         post?: never;
@@ -744,7 +744,7 @@ export interface paths {
         put?: never;
         /**
          * Reset someone's two-factor
-         * @description The last step of the recovery ladder, for someone who lost their authenticator app and their recovery codes. Removes the account's two-factor methods, signs it out everywhere, records the reason in the audit log and emails it to the user. An account that must use two-factor sets it up again at its next sign-in.
+         * @description The last step of the recovery ladder, for someone who lost their authenticator app and their recovery codes. Removes the account's two-factor methods, signs it out everywhere, records the reason in the audit log and emails it to the user. An account that must use two-factor sets it up again at its next sign-in. A protected change (403 reauth_required).
          */
         post: operations["resetAccountMFA"];
         delete?: never;
@@ -1001,7 +1001,7 @@ export interface paths {
         head?: never;
         /**
          * Change an app's settings
-         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id.
+         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party and scopes (an app admin may send their current values).
          */
         patch: operations["updateApp"];
         trace?: never;
@@ -1560,7 +1560,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description Signed in, but not allowed (error forbidden); an administrator or group owner whose session did not pass two-factor (error mfa_required: sign in again); or a cross-origin request. */
+        /** @description Signed in, but not allowed (error forbidden); an administrator or group owner whose session did not pass two-factor (error mfa_required: sign in again); an account with a temporary password, which may only call GET /me and PUT /me/password until it chooses its own (error password_change_required); a protected change from a session that did not confirm who its user is within the last 5 minutes (error reauth_required: call POST /me/reauth, then retry); or a cross-origin request. */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -1815,6 +1815,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ProtectedChange"];
         };
     };
     reauth: {

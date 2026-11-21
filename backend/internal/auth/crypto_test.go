@@ -90,13 +90,18 @@ func TestParseKeyringRefusesBadInput(t *testing.T) {
 	}
 }
 
-func TestSealedValuesAreNotStoredValues(t *testing.T) {
+// A sealed token opens only as the kind it was made for: never as a stored value, nor as another kind of
+// token (a setup token as a sign-in flow, say).
+func TestSealedValuesOpenOnlyAsTheirKind(t *testing.T) {
 	useRing(t, "k1:"+keyB64(1))
-	s, _ := Seal([]byte("flow"))
+	s, _ := Seal("mfa-flow", []byte("flow"))
 	if _, err := Decrypt(s, AAD("account_mfa", "secret", "x")); err == nil {
 		t.Error("a sealed token decrypted as a stored value")
 	}
-	if got, err := Open(s); err != nil || string(got) != "flow" {
+	if _, err := Open("totp-setup", s); err == nil {
+		t.Error("a sealed token opened as another kind")
+	}
+	if got, err := Open("mfa-flow", s); err != nil || string(got) != "flow" {
 		t.Errorf("open: %v", err)
 	}
 }

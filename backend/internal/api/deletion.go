@@ -50,6 +50,10 @@ func deleteMe(w http.ResponseWriter, r *http.Request) {
 
 // exportMe is "download my data": a JSON file with everything Guardian holds about the account.
 func exportMe(w http.ResponseWriter, r *http.Request) {
+	// Everything about the account in one file: someone at an unlocked computer must not walk off with it.
+	if !httpx.RequireReauth(w, r) {
+		return
+	}
 	data, err := db.ExportAccountData(httpx.AccountID(r))
 	if err != nil {
 		accountFail(w, err)
@@ -62,6 +66,9 @@ func exportMe(w http.ResponseWriter, r *http.Request) {
 
 // deleteAccount deletes someone else's account (A7). It waits out the grace period like a self-deletion.
 func deleteAccount(w http.ResponseWriter, r *http.Request) {
+	if !httpx.RequireReauth(w, r) {
+		return
+	}
 	id := chi.URLParam(r, "account")
 	if _, err := db.GetAccount(id); err != nil {
 		accountFail(w, err)
@@ -126,6 +133,9 @@ func eraseAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.EqualFold(strings.TrimSpace(req.Username), username) {
 		httpx.Error(w, http.StatusBadRequest, "Type the account's username to confirm")
+		return
+	}
+	if !httpx.RequireReauth(w, r) {
 		return
 	}
 	if _, err := db.GetDeletedAccount(id); err != nil {

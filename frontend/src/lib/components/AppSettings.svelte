@@ -27,8 +27,9 @@
 	let {
 		value = $bindable(),
 		scopes,
-		appName = 'the app'
-	}: { value: AppSettingsValue; scopes: { name: string; description: string }[]; appName?: string } = $props();
+		appName = 'the app',
+		locked = false
+	}: { value: AppSettingsValue; scopes: { name: string; description: string }[]; appName?: string; locked?: boolean } = $props();
 
 	const choices = $derived(ttlChoices.some(([s]) => s === value.access_token_ttl_seconds) ? ttlChoices : [...ttlChoices, [value.access_token_ttl_seconds, `${value.access_token_ttl_seconds} seconds`] as [number, string]]);
 
@@ -62,8 +63,8 @@
 
 <div class="switches">
 	<label class="switch">
-		<span><strong>Skip the consent screen</strong><span class="hint block">For apps you run yourself.</span></span>
-		<input type="checkbox" bind:checked={value.is_first_party} />
+		<span><strong>Skip the consent screen</strong><span class="hint block">{locked ? 'Only a Guardian administrator can change this.' : 'For apps you run yourself.'}</span></span>
+		<input type="checkbox" bind:checked={value.is_first_party} disabled={locked} />
 	</label>
 	<label class="switch">
 		<span><strong>Require two-factor</strong><span class="hint block">Signing in to {appName} asks for a code, or sets two-factor up first.</span></span>
@@ -73,9 +74,10 @@
 
 <fieldset class="scopes">
 	<legend class="lbl">Scopes {appName} may ask for</legend>
+	{#if locked}<p class="hint">Only a Guardian administrator can change these.</p>{/if}
 	{#each scopes as s (s.name)}
 		<label class="scope">
-			<input type="checkbox" checked={value.scopes.includes(s.name)} disabled={s.name === 'openid'} onchange={(e) => toggleScope(s.name, e.currentTarget.checked)} />
+			<input type="checkbox" checked={value.scopes.includes(s.name)} disabled={locked || s.name === 'openid'} onchange={(e) => toggleScope(s.name, e.currentTarget.checked)} />
 			<span><code>{s.name}</code><span class="hint block">{s.name === 'openid' ? 'Always on: needed to sign in.' : s.description}</span></span>
 		</label>
 	{/each}

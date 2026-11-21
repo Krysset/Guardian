@@ -65,6 +65,8 @@ type Page struct {
 	SecretGroups string       // S15: the secret in groups of four
 	Codes        []string     // S16: the recovery codes, shown once
 
+	AskPassword bool // S15 in a step-up: confirm the password before adding the first second factor
+
 	PoW *PoW // the form's proof-of-work puzzle (always on S2 and S10; on S1 after failures)
 
 	Requestable []db.RequestableGroup // S7: the app's groups the user may ask to join

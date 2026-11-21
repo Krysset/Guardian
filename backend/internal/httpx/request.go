@@ -26,6 +26,17 @@ func ClientIP(r *http.Request) string {
 	return host
 }
 
+// LimitAddress is the address rate limits count under: an IPv4 address as it is, and an IPv6 address as
+// its /64 network, because one home or server usually gets a whole /64 and could otherwise take a fresh
+// address for every attempt.
+func LimitAddress(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() != nil {
+		return ip
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
+
 // SafeReturnTo only allows returning to our own /authorize endpoint or to a page of the management UI
 // (/account and /admin, with their pages and query strings); anything else is dropped, which prevents open
 // redirects.

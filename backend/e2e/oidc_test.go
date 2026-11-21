@@ -507,6 +507,7 @@ func TestE2EAuthorizeRequestValidation(t *testing.T) {
 	}
 }
 
+// The session signed in a moment before the request, so a leeway would wrongly count it as fresh.
 func TestE2EPromptAndMaxAgeForceReauthentication(t *testing.T) {
 	testutil.Reset(t)
 	testutil.CreateAccount(t, "alice")
@@ -530,8 +531,17 @@ func TestE2EPromptAndMaxAgeForceReauthentication(t *testing.T) {
 		}
 		u, _ := url.Parse(loc)
 		returnTo := u.Query().Get("return_to")
-		if strings.Contains(returnTo, "prompt=") || strings.Contains(returnTo, "max_age=") {
-			t.Errorf("%s: return_to %q would loop forever", name, returnTo)
+		if !strings.Contains(returnTo, "login_after=") {
+			t.Errorf("%s: return_to %q does not say when the sign-in was asked for, so it would loop", name, returnTo)
+		}
+		if !strings.Contains(loc, "again=1") {
+			t.Errorf("%s: the sign-in page is not told to show its form despite the session: %q", name, loc)
+		}
+		// Coming back without signing in again still asks for it: the session is older than the request.
+		if again := b.get(returnTo); !strings.HasPrefix(again.Header.Get("Location"), "/login?") {
+			t.Errorf("%s: the marked request went on without a fresh sign-in: %q", name, again.Header.Get("Location"))
+		} else {
+			drain(again)
 		}
 		lr := b.login("alice", testutil.DefaultPassword, returnTo)
 		wantStatus(t, lr, http.StatusSeeOther)

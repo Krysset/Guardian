@@ -27,6 +27,7 @@ func TestEveryEmailRendersBothPartsAndEscapes(t *testing.T) {
 		"mfa added":   TwoFactorChanged("a@b.test", true, "Authenticator app", when, ""),
 		"mfa removed": TwoFactorChanged("a@b.test", false, "Authenticator app", when, ""),
 		"mfa reset":   TwoFactorReset("a@b.test", "Lost <phone>", when, ""),
+		"has account": AddressHasAccount("a@b.test", link, link),
 	} {
 		if m.To != "a@b.test" || m.Subject == "" {
 			t.Errorf("%s: to %q, subject %q", name, m.To, m.Subject)

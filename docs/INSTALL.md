@@ -177,6 +177,11 @@ Check the installation:
 - metrics are on the `guardian-internal` Service, port 3002, `/metrics`, inside the cluster only (what they
   are, and alerts to start from: `docs/METRICS.md`).
 
+On a rollout each old pod first stops being ready while it keeps serving for 5 seconds, then finishes the
+requests it has (up to 15 seconds) and sends the emails still queued (up to 10 seconds), within the 45-second
+grace period. `/readyz` also fails while the database is unreachable, so traffic goes to pods that can answer;
+`/healthz` does not, so pods are not restarted for it.
+
 ## Backup and restore
 
 Backups are taken on a schedule onto a volume, or by hand with `kubectl exec`, landing on your machine. They are encrypted with

@@ -97,6 +97,17 @@ current: they are the hand-off between sessions.
 - **ES256 per app** (2026-11-21): `app.signing_alg` (RS256 default); store functions for signing keys work per
   algorithm; `LogoutTarget` carries the alg. `keys rotate --alg`. Changing `00001_init.sql` changes the schema
   revision: the test database (and the owner's Compose volume) must be recreated.
+- **Security review fixes (2026-11-21, list in ROADMAP "1.0: release"):** `auth.Seal(kind, ...)`/`Open(kind, ...)`
+  bind a kind as AAD ("mfa-flow", "totp-setup", "pow", "passkey"). Attempt limits count first (`RateLimitHit`,
+  then `n > limit`) and successes reset or refund (`RateLimitRefund`). Limit keys use `httpx.LimitAddress`
+  (IPv6 → /64). Sign-in keys: `login:account:<id>:ip:<addr>`, `login:ip:<addr>`, account-wide
+  `login:account:<id>` (PoW after `PoWAfterAccountFailures`). `/authorize` forces the form for `prompt=login` or
+  exceeded `max_age` and adds `login_after` (Unix ms) to the return URL; `/login?again=1` shows the form despite a
+  session. `httpx.Authenticate` refuses everything but `GET /me` and `PUT /me/password` with
+  `password_change_required` for temporary passwords (`Session.MustChangePassword` from `liveSession`). Admin
+  takeover actions and `/me/export` call `RequireReauth` (the data page downloads through the API client).
+  App admins: `is_first_party` and `scopes` are admin-only (`AppSettings` `locked`). Sign-up with a taken
+  address sends E9 (`mail.AddressHasAccount`) and looks like success. Tests: `e2e/hardening_test.go`.
 - **Logs:** `e2e/logs_test.go` fails the e2e run when the server logs an email or IP address. Keep logs to
   ids and fixed words.
 - **Metrics rule:** labels only from fixed sets (outcome, method, reason, route pattern, app *name*; unknown

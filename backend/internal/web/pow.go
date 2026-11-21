@@ -35,6 +35,9 @@ var (
 	PoWMax = 50000
 	// PoWAfterFailures is how many failed sign-ins from an address make its sign-in form carry a puzzle.
 	PoWAfterFailures = 3
+	// PoWAfterAccountFailures is how many failed sign-ins to one account, from any addresses, make every
+	// sign-in to it answer a puzzle. It slows guessing spread over many addresses without locking anyone out.
+	PoWAfterAccountFailures = 10
 )
 
 // powLifetime is how long a puzzle may be answered: long enough to fill in a form slowly.
@@ -67,7 +70,7 @@ func NewPoW() (PoW, error) {
 	}
 	p := PoW{Algorithm: "SHA-256", Salt: hex.EncodeToString(salt), Max: PoWMax}
 	p.Challenge = powHash(p.Salt, n.String())
-	if p.Token, err = seal(sealedPoW{p.Salt, p.Challenge, time.Now().Add(powLifetime).Unix()}); err != nil {
+	if p.Token, err = seal("pow", sealedPoW{p.Salt, p.Challenge, time.Now().Add(powLifetime).Unix()}); err != nil {
 		return PoW{}, err
 	}
 	return p, nil
@@ -109,7 +112,7 @@ func CheckPoW(form, token, number string) error {
 		return ErrPoWMissing
 	}
 	var p sealedPoW
-	if len(number) > 12 || !unseal(token, &p) || time.Now().Unix() > p.Expires {
+	if len(number) > 12 || !unseal("pow", token, &p) || time.Now().Unix() > p.Expires {
 		return ErrPoWInvalid
 	}
 	if _, err := strconv.ParseUint(number, 10, 64); err != nil || powHash(p.Salt, number) != p.Challenge {
@@ -138,6 +141,6 @@ func checkFormPoW(r *http.Request, form string) string {
 
 // loginNeedsPoW reports whether sign-in from this request's address must answer a puzzle.
 func loginNeedsPoW(r *http.Request) bool {
-	n, err := db.RateLimitCount("login:ip:"+httpx.ClientIP(r), loginLimits.Window)
+	n, err := db.RateLimitCount("login:ip:"+httpx.LimitAddress(httpx.ClientIP(r)), loginLimits.Window)
 	return err == nil && n >= PoWAfterFailures
 }

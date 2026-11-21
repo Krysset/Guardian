@@ -30,3 +30,12 @@ func TestMetricsMiddlewareRecordsRoutePatternAndStatus(t *testing.T) {
 		t.Errorf("/boom 500 count = %v, want 1", got)
 	}
 }
+
+// A client can send any word as the method; only the standard ones become label values.
+func TestMetricMethodIsAFixedSet(t *testing.T) {
+	for in, want := range map[string]string{"GET": "GET", "DELETE": "DELETE", "BREW": "other", "get": "other", "": "other"} {
+		if got := metricMethod(in); got != want {
+			t.Errorf("metricMethod(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

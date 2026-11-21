@@ -184,7 +184,7 @@
 		<div></div>
 		<div class="wide"><UriList id="ru" label="Redirect URIs" bind:uris={form.redirect_uris} required hint="Where {name} receives people after they sign in." /></div>
 	</div>
-	<div class="more"><AppSettings bind:value={form} scopes={data.scopes} appName={name} /></div>
+	<div class="more"><AppSettings bind:value={form} scopes={data.scopes} appName={name} locked={!isAdmin} /></div>
 	<div class="owner">
 		{#if isAdmin}
 			<label class="lbl" for="og">App admins</label>

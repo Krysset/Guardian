@@ -136,7 +136,7 @@ func sealCeremony(c ceremony) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return auth.Seal(b)
+	return auth.Seal("passkey", b)
 }
 
 func openCeremony(token, kind, accountID string) (ceremony, error) {
@@ -144,7 +144,7 @@ func openCeremony(token, kind, accountID string) (ceremony, error) {
 	if wa == nil {
 		return c, ErrOff
 	}
-	b, err := auth.Open(token)
+	b, err := auth.Open("passkey", token)
 	if err != nil || json.Unmarshal(b, &c) != nil || c.Kind != kind || c.Account != accountID ||
 		time.Now().After(c.Session.Expires) {
 		return ceremony{}, ErrExpired

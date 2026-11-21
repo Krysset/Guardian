@@ -49,24 +49,38 @@ type mfaFlow struct {
 	Reason   string `json:"r"` // why it is required, for S15
 	ReturnTo string `json:"t"`
 	Expires  int64  `json:"e"`
+	// Password is a fingerprint of the account's password hash when the flow began: a password change or
+	// reset in between ends the flow.
+	Password string `json:"w"`
 }
 
-func seal(v any) (string, error) {
+// passwordFingerprint identifies the account's current password hash without revealing it.
+func passwordFingerprint(accountID string) string {
+	hash, err := db.GetPasswordHash(accountID)
+	if err != nil {
+		return ""
+	}
+	return auth.HashToken("pw:" + hash)[:16]
+}
+
+// seal and unseal carry a value through the browser, encrypted and bound to its kind (see auth.Seal).
+func seal(kind string, v any) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
-	return auth.Seal(b)
+	return auth.Seal(kind, b)
 }
 
-func unseal(sealed string, v any) bool {
-	b, err := auth.Open(sealed)
+func unseal(kind, sealed string, v any) bool {
+	b, err := auth.Open(kind, sealed)
 	return err == nil && json.Unmarshal(b, v) == nil
 }
 
 func startMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow) {
 	f.Expires = time.Now().Add(mfaFlowLifetime).Unix()
-	sealed, err := seal(f)
+	f.Password = passwordFingerprint(f.Account)
+	sealed, err := seal("mfa-flow", f)
 	if err != nil {
 		Error(w, ServerError)
 		return
@@ -81,7 +95,8 @@ func startMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow) {
 
 func readMFAFlow(r *http.Request) (mfaFlow, bool) {
 	var f mfaFlow
-	if !unseal(httpx.FlowCookie(r, mfaCookie), &f) || time.Now().Unix() > f.Expires {
+	if !unseal("mfa-flow", httpx.FlowCookie(r, mfaCookie), &f) || time.Now().Unix() > f.Expires ||
+		(f.Purpose != "signin" && f.Purpose != "stepup") || f.Password != passwordFingerprint(f.Account) {
 		return mfaFlow{}, false
 	}
 	if f.Purpose == "stepup" {
@@ -148,12 +163,14 @@ var ErrTooManyAttempts = errors.New("too many wrong codes")
 // VerifySecondFactor checks an authenticator code, or a recovery code, for the account. method is "totp"
 // or "recovery_code"; left is how many recovery codes remain after one was used.
 func VerifySecondFactor(accountID, code string, recovery bool) (ok bool, method string, left int, err error) {
+	// Counted before it is checked, so codes sent together cannot all slip under the limit; a right one
+	// clears the count.
 	key := "mfa:account:" + accountID
-	n, err := db.RateLimitCount(key, mfaWindow)
+	n, err := db.RateLimitHit(key, mfaWindow)
 	if err != nil {
 		return false, "", 0, err
 	}
-	if n >= mfaAttempts {
+	if n > mfaAttempts {
 		httpx.CountRefused("mfa")
 		return false, "", 0, ErrTooManyAttempts
 	}
@@ -168,7 +185,6 @@ func VerifySecondFactor(accountID, code string, recovery bool) (ok bool, method 
 		return false, method, 0, err
 	}
 	if !ok {
-		db.RateLimitHit(key, mfaWindow)
 		return false, method, 0, nil
 	}
 	db.RateLimitReset(key, mfaWindow)
@@ -180,18 +196,20 @@ func VerifySecondFactor(accountID, code string, recovery bool) (ok bool, method 
 // stale or reused token passkey.ErrExpired.
 func VerifyKey(accountID, token string, response []byte) (string, error) {
 	key := "mfa:account:" + accountID
-	n, err := db.RateLimitCount(key, mfaWindow)
+	n, err := db.RateLimitHit(key, mfaWindow)
 	if err != nil {
 		return "", err
 	}
-	if n >= mfaAttempts {
+	if n > mfaAttempts {
 		httpx.CountRefused("mfa")
 		return "", ErrTooManyAttempts
 	}
 	name, err := passkey.FinishLogin(accountID, token, response)
 	if errors.Is(err, passkey.ErrNotRecognised) {
-		db.RateLimitHit(key, mfaWindow)
 		return "", err
+	}
+	if errors.Is(err, passkey.ErrExpired) {
+		db.RateLimitRefund(key, mfaWindow) // a stale ceremony is no guess
 	}
 	if err == nil {
 		db.RateLimitReset(key, mfaWindow)
@@ -259,12 +277,12 @@ var (
 
 func sealSetup(s totpSetup) (string, error) {
 	s.Expires = time.Now().Add(setupLifetime).Unix()
-	return seal(s)
+	return seal("totp-setup", s)
 }
 
 func openSetup(token, accountID, stage string) (totpSetup, error) {
 	var s totpSetup
-	if !unseal(token, &s) || s.Account != accountID || s.Stage != stage || time.Now().Unix() > s.Expires {
+	if !unseal("totp-setup", token, &s) || s.Account != accountID || s.Stage != stage || time.Now().Unix() > s.Expires {
 		return totpSetup{}, ErrSetupExpired
 	}
 	return s, nil
@@ -623,18 +641,53 @@ func mfaCancel(w http.ResponseWriter, r *http.Request) {
 
 // ---- S15, S16: the required setup ----------------------------------------------------
 
+// setupAccount reads a setup flow. A setup flow only adds the first second factor: once the account has
+// one (added elsewhere since the flow began), the flow is over, so it can never add or replace a factor
+// of an account that already has one.
 func setupAccount(r *http.Request) (mfaFlow, db.Account, bool) {
 	f, ok := readMFAFlow(r)
 	if !ok || !f.Setup {
+		return mfaFlow{}, db.Account{}, false
+	}
+	if has, err := db.HasSecondFactor(f.Account); err != nil || has {
 		return mfaFlow{}, db.Account{}, false
 	}
 	acct, err := db.GetAccount(f.Account)
 	return f, acct, err == nil
 }
 
+// confirmPassword checks the account's password before a step-up adds its first second factor (a step-up
+// starts from a session, which may be old or someone else's browser). Wrong passwords count against the
+// same limit as confirming it's you in the management UI. It returns the error to show, or "".
+func confirmPassword(accountID, password string) string {
+	key := "reauth:account:" + accountID
+	n, err := db.RateLimitHit(key, ReauthWindow)
+	if err != nil {
+		return "Something went wrong. Try again."
+	}
+	if n > ReauthLimit {
+		httpx.CountRefused("reauth")
+		return "Too many wrong passwords. Try again in 15 minutes."
+	}
+	hash, err := db.GetPasswordHash(accountID)
+	if err != nil || hash == "" || len(password) > 1024 || !auth.VerifyPassword(password, hash) {
+		return "That password is wrong."
+	}
+	db.RateLimitReset(key, ReauthWindow)
+	return ""
+}
+
+// ReauthWindow and ReauthLimit limit wrong passwords when confirming it's you: ReauthLimit per account in
+// ReauthWindow.
+const (
+	ReauthWindow = 15 * time.Minute
+	ReauthLimit  = 5
+)
+
 // renderSetup shows S15: the authenticator app (a QR code), or a security key (?method=key).
 func renderSetup(w http.ResponseWriter, r *http.Request, f mfaFlow, acct db.Account, key bool, page Page, status int) {
 	page.Title, page.Message, page.Key = "Set up two-factor", f.Reason, key
+	page.AskPassword = f.Purpose == "stepup"
 	if key {
 		opts, token, err := passkey.BeginRegistration(acct.ID)
 		if err != nil {
@@ -681,6 +734,14 @@ func mfaSetupSubmit(w http.ResponseWriter, r *http.Request) {
 	if !httpx.CSRFValid(r) {
 		http.Redirect(w, r, "/mfa/setup", http.StatusSeeOther)
 		return
+	}
+	// A step-up's setup confirms the password first: otherwise anyone holding the session could add their own
+	// second factor, and with it the right to make protected changes.
+	if step := r.PostFormValue("step"); f.Purpose == "stepup" && (step == "scan" || step == "key") {
+		if msg := confirmPassword(acct.ID, r.PostFormValue("current_password")); msg != "" {
+			renderSetup(w, r, f, acct, step == "key", Page{FieldErrors: map[string]string{"current_password": msg}}, http.StatusBadRequest)
+			return
+		}
 	}
 	switch r.PostFormValue("step") {
 	case "scan":

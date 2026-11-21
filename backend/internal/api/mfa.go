@@ -270,6 +270,9 @@ func resetAccountMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "reason must be 3-500 characters: it is recorded and emailed to the user")
 		return
 	}
+	if !httpx.RequireReauth(w, r) {
+		return
+	}
 	acct, err := db.GetAccount(chi.URLParam(r, "account"))
 	if err != nil {
 		accountFail(w, err)

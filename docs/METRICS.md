@@ -34,7 +34,7 @@ Counters are per replica. Use `sum(rate(...))` across replicas.
 | `guardian_pow_checks_total` | `form`: signup, forgot, login, api_signup. `result`: passed, missing, invalid | Proof-of-work answers checked (below). |
 | `guardian_signups_total` | `result`: awaiting_email, confirmed, active | Self-service sign-ups (below). |
 | `guardian_mail_sent_total` | `result`: sent, failed, dropped | Emails: sent, given up after retries, or dropped because the queue was full. |
-| `guardian_http_requests_total` | `listener`, `route` (pattern), `method`, `code` | Every HTTP request. |
+| `guardian_http_requests_total` | `listener`, `route` (pattern), `method` (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, other), `code` | Every HTTP request. |
 | `guardian_http_request_duration_seconds` | `listener`, `route`, `method` | Request latency (histogram). |
 
 **Token refusal reasons.**
@@ -82,7 +82,8 @@ to watch.
   either way, and have them add it again only if they are sure it is the original.
 
 **Proof of work.**
-- Sign-up and forgot-password always carry a puzzle; sign-in does once an address has failed three times.
+- Sign-up and forgot-password always carry a puzzle; sign-in does once an address has failed three times, or
+  an account ten times from any addresses.
 - `missing` is a form sent without an answer: a browser without JavaScript, or a bot that does not run it.
   `invalid` is a wrong, expired or reused answer, which a browser running the page never sends.
 - Many `missing` or `invalid` at once mean bots are trying; the puzzle is making each attempt cost them.

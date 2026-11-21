@@ -84,6 +84,19 @@ func ConfirmAddress(to, link string, expires time.Time, zone string, signup bool
 	}.message(to)
 }
 
+// AddressHasAccount is E9, sent instead of E1 when someone signs up with an address that already belongs to
+// an account. The sign-up page looks the same either way, so it never tells anyone whose address is in use.
+func AddressHasAccount(to, signIn, forgot string) Message {
+	return email{
+		Subject: "You already have an account",
+		Lines: []string{"Someone, hopefully you, tried to create a Guardian account with this address. It already " +
+			"belongs to an account, so no new one was made. Sign in with it, or reset its password if you forgot it."},
+		Button: &button{"Sign in", signIn},
+		Small:  "Forgot the password? " + forgot,
+		NotMe:  "Ignore this email. Nothing changed.",
+	}.message(to)
+}
+
 // ResetPassword is E2: the link to choose a new password.
 func ResetPassword(to, link string, expires time.Time, zone string) Message {
 	return email{

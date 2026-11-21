@@ -57,6 +57,13 @@ The token response holds:
 
 Keep tokens on your server, never in the browser.
 
+### A fresh sign-in
+
+`prompt=login`, or `max_age=N` when the session signed in more than N seconds ago, makes Guardian show the
+sign-in form even though the user is signed in: they type their password again (and pass two-factor if the
+app or the request asks for it). `prompt=none` with either answers `login_required`. The ID token carries
+`auth_time`; **check it** against what you asked for rather than trusting that the form was shown.
+
 ### Two-factor for one sign-in
 
 To require two-factor for every sign-in, an administrator turns on **Require two-factor** for the app. To

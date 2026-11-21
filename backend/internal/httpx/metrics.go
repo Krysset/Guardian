@@ -181,8 +181,19 @@ func Metrics(listener string) func(http.Handler) http.Handler {
 			if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
 				route = rc.RoutePattern()
 			}
-			httpRequests.WithLabelValues(listener, route, r.Method, strconv.Itoa(rec.status)).Inc()
-			httpDuration.WithLabelValues(listener, route, r.Method).Observe(time.Since(start).Seconds())
+			method := metricMethod(r.Method)
+			httpRequests.WithLabelValues(listener, route, method, strconv.Itoa(rec.status)).Inc()
+			httpDuration.WithLabelValues(listener, route, method).Observe(time.Since(start).Seconds())
 		})
 	}
+}
+
+// metricMethod keeps the method label to a fixed set: a client can send any word as the method, and each
+// would otherwise become a series of its own.
+func metricMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return m
+	}
+	return "other"
 }

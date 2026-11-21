@@ -206,11 +206,10 @@ func Decrypt(value, aad string) ([]byte, error) {
 // AAD is the associated data of a stored value: its table, column and row.
 func AAD(table, column, row string) string { return table + "." + column + ":" + row }
 
-// sealAAD is the associated data of sealed tokens and cookies, which are never stored.
-const sealAAD = "sealed"
+// Seal encrypts a small secret that the browser carries (a sign-in flow, a setup token). kind names what it
+// is ("mfa-flow", "totp-setup", "pow", "passkey"); it is bound into the ciphertext, so a token made for one
+// purpose can never be opened as another.
+func Seal(kind string, plain []byte) (string, error) { return Encrypt(plain, "sealed:"+kind) }
 
-// Seal encrypts a small secret that the browser carries (a sign-in flow, a setup token).
-func Seal(plain []byte) (string, error) { return Encrypt(plain, sealAAD) }
-
-// Open decrypts what Seal produced. Tampered or foreign ciphertext fails.
-func Open(sealed string) ([]byte, error) { return Decrypt(sealed, sealAAD) }
+// Open decrypts what Seal produced for the same kind. Tampered, foreign or other-kind ciphertext fails.
+func Open(kind, sealed string) ([]byte, error) { return Decrypt(sealed, "sealed:"+kind) }

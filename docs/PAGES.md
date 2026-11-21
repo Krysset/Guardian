@@ -124,7 +124,10 @@ appear from that release; until then the page is drawn without them.
   address, in 15 minutes; the account itself is never locked); form expired, reload. The username is kept after an error.
 - After 3 failures from one address, the form carries a proof-of-work puzzle (V9) that the page's script
   solves; a form shown before that is shown again with "a quick check is needed". Without JavaScript, a note
-  says why it is needed.
+  says why it is needed. After 10 failures to one account from any addresses, every sign-in to it needs the
+  puzzle until the right password is given. IPv6 addresses count per /64.
+- When an app asks for a fresh sign-in (`prompt=login`, or `max_age` older than the session's sign-in), S1
+  shows its form even though a session exists, with the username filled in and "Sign in again to continue."
 
 **S2 Sign up**
 - Fields: username (with its rule: 3–64 letters, digits, `.`, `_`, `-`); password, twice; email (0.3:
@@ -240,6 +243,10 @@ appear from that release; until then the page is drawn without them.
   method choice is left out until security keys exist (0.5). Voluntary setup is the API's until the account
   area (0.4). Built in 0.5: the choice is two tabs, "Authenticator app" and "Security key or passkey" (a name,
   then the browser's dialog, then S16).
+- From the security review (1.0): when S15 is reached from a session that is already signed in (an app that
+  requires two-factor, or `acr_values=mfa`), both tabs also ask for the current password, so a borrowed
+  session cannot add a second factor of its own. During sign-in the password was just typed, so it is not
+  asked again. An account that has a second factor never gets S15.
 
 **S16 Recovery codes** (0.3)
 - Shows:

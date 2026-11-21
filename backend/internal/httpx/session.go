@@ -115,6 +115,13 @@ func Authenticate(next http.Handler) http.Handler {
 			Error(w, http.StatusUnauthorized, "Sign in first")
 			return
 		}
+		// An administrator set a temporary password: until the account chooses its own it may only read who
+		// it is (so the management UI can send it to the password page) and change the password.
+		if sess.MustChangePassword && !(r.Method == http.MethodGet && r.URL.Path == "/api/v1/me") &&
+			!(r.Method == http.MethodPut && r.URL.Path == "/api/v1/me/password") {
+			ErrorCode(w, http.StatusForbidden, "password_change_required", "Choose a new password first: PUT /api/v1/me/password")
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxAccountID, sess.AccountID)
 		ctx = context.WithValue(ctx, ctxSessionID, sess.ID)
 		ctx = context.WithValue(ctx, ctxAuthTime, sess.AuthTime)

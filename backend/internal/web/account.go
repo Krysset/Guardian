@@ -64,7 +64,7 @@ func CreateAccount(r *http.Request, username, password string, pending bool) (db
 	if !ValidPassword(password) {
 		return db.Account{}, ErrPasswordRule
 	}
-	n, err := db.RateLimitHit("register:ip:"+httpx.ClientIP(r), signupWindow)
+	n, err := db.RateLimitHit("register:ip:"+httpx.LimitAddress(httpx.ClientIP(r)), signupWindow)
 	if err != nil {
 		return db.Account{}, err
 	}

@@ -394,6 +394,18 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Being first-party skips the consent screen, and scopes decide which claims an app may read: both are a
+	// promise to the people signing in, so only Guardian admins change them. Sending the current value is fine.
+	if via != "admin" {
+		if req.IsFirstParty != nil && *req.IsFirstParty != current.IsFirstParty {
+			httpx.Error(w, http.StatusForbidden, "Only administrators decide whether an app is first-party")
+			return
+		}
+		if req.Scopes != nil && !sameSet(*req.Scopes, current.Scopes) {
+			httpx.Error(w, http.StatusForbidden, "Only administrators change an app's scopes")
+			return
+		}
+	}
 	if req.OwnerGroupID != nil {
 		if via != "admin" {
 			httpx.Error(w, http.StatusForbidden, "Only administrators choose an app's admins")
@@ -502,4 +514,12 @@ func checkURIs(redirect, postLogout []string, backchannel, logo, homepage string
 		}
 	}
 	return ""
+}
+
+// sameSet reports whether a and b hold the same strings, in any order.
+func sameSet(a, b []string) bool {
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(slices.Compact(x), slices.Compact(y))
 }

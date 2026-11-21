@@ -336,6 +336,26 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
   - **Reminder:** recreate the app-to-Guardian communication diagrams (how an app talks to Guardian: sign-in, refresh, logout, back-channel logout, machine API). The old yUML versions described the removed introspection design and were deleted in 0.1.
 - ~~**ES256** only if it doesn't delay the release.~~ Done 2026-11-21, per app (see Keys and secrets).
 - **Checked 2026-11-21:** no secrets or personal data in logs, and non-root, read-only images. The end-to-end run fails if the server logs an email or IP address (`e2e/logs_test.go`); mail servers' answers are logged without the recipient; the `client_id` a refused sign-in request sent is cut to 64 characters. Images: distroless `nonroot` (backend) and `nginx-unprivileged` (frontend), read-only root filesystems and no capabilities in the chart; Compose runs the backend the same way. The one deliberate exception: a generated initial admin password is logged once when `ADMIN_INITIAL_PASSWORD` is not set (the chart always sets it).
+- **Done 2026-11-21:** SIGTERM drains first (readiness fails, requests keep being served for 5 seconds), then stops taking connections and gives requests 15 seconds and queued emails 10 seconds; the chart's grace period is 45 seconds. Readiness fails while the database is unreachable; liveness never depends on it. `docs/DATA-PROTECTION.md` and `CHANGELOG.md` are written, and the app-to-Guardian diagrams are back in `ARCHITECTURE.md` (sign-in with two-factor, signing out with back-channel logout, `acr_values`, the machine API; refresh is in "A group change reaching an app").
+- **Security review, done 2026-11-21** by a separate agent that had not seen the code written; findings fixed:
+  - sealed values (two-factor steps, setup, puzzles, passkey ceremonies) carry their kind, so one cannot be
+    replayed as another; a two-factor step is tied to the password it followed;
+  - two-factor setup from a signed-in session asks for the password, and is refused once a factor exists;
+  - `prompt=login` and `max_age` always show the sign-in form, even with a session, and the request comes
+    back marked with when the sign-in was asked for (no leeway, no loop);
+  - every attempt limit (sign-in, passkeys, two-factor codes, reauth) counts before it checks, so parallel
+    attempts cannot slip under it; IPv6 addresses count per /64; ten failures to one account from any
+    addresses make its sign-ins answer a puzzle;
+  - app admins cannot make an app first-party or change its scopes;
+  - an account with a temporary password can only read `/me` and change its password through the API;
+  - sign-up no longer tells whether an address is in use: the address's owner gets E9 instead;
+  - admin actions that could take over an account (set password, reset two-factor, change email or status,
+    delete, erase) and the data download need a recent sign-in;
+  - the metrics' method label is a fixed set.
+  - **Left as they are:** argon2 hashing waits in an unbounded queue under a flood of sign-ins (rate limits
+    and the puzzle bound it in practice; a "busy" answer needs its own design); back-channel logout URIs could
+    reach internal addresses, which the egress network policy must block (`networkPolicy`); request emails
+    quote what the asker typed (escaped, and marked as their message).
 - **After tagging,** `00001_init.sql` is frozen and the compatibility rules apply. Until then nothing is deployed, so removed or renamed settings are simply dropped: no warnings or refusals for legacy options.
 
 ### Release checklist for v1.0.0
@@ -353,6 +373,16 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - **Passkey-only accounts:** an account with no password, signing in only with passkeys (owner, 2026-11-20). Needs a "remove password" action, and password reset must not quietly add one back.
 - **Rotating refresh tokens for public clients** (mobile apps and backend-less SPAs), with reuse detection.
 - **A metric for group memberships about to expire** (owner held it back from the 1.0 metrics, 2026-11-21).
+- **Email aliases for groups** (owner, 2026-11-21): an address in the installation's domain that reaches a
+  group's members, so someone can write to `grafana-admins@example.com` without knowing who they are.
+  Created per group, not on by default. Open questions before designing it:
+  - one group with several aliases, or also one alias reaching several groups (then it reaches everyone in
+    any of them, once each);
+  - who may send to an alias: anyone, only the domain, or only Guardian accounts;
+  - how mail reaches the members: Guardian does not receive mail, so the mail server needs the alias map from
+    it (for example a lookup endpoint or an exported table for Postfix or similar), and only confirmed
+    addresses are used;
+  - whether hidden groups can have aliases, and whether members can see a group's aliases.
 - **S3-compatible backup storage.**
 - **A bundled CloudNativePG option.**
 - **Invites,** and sign-up approval or closed modes, only if needed.

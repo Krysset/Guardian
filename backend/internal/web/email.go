@@ -43,6 +43,16 @@ func SendConfirmation(acct db.Account, address string, signup bool, browser, ret
 	} else if !allowed {
 		return ErrTooManyMails
 	}
+	if signup {
+		// The sign-up page must not tell whose address is in use, so it looks the same; the address's owner
+		// gets E9 instead of a link that could never work.
+		if used, err := db.EmailInUse(address); err != nil {
+			return err
+		} else if used {
+			mail.Enqueue(mail.AddressHasAccount(address, httpx.Issuer+"/login", httpx.Issuer+"/forgot"))
+			return nil
+		}
+	}
 	token, err := auth.RandomToken(32)
 	if err != nil {
 		return err
@@ -150,13 +160,11 @@ func inboxSubmit(w http.ResponseWriter, r *http.Request) {
 	show(http.StatusOK)
 }
 
-// emailProblem returns what is wrong with an address typed at sign-up, or "".
+// emailProblem returns what is wrong with an address typed at sign-up, or "". Whether another account uses it
+// is not said here: SendConfirmation tells the address's owner instead.
 func emailProblem(address string) string {
 	if !ValidEmail(address) {
 		return "Enter an email address such as name@example.com."
-	}
-	if used, err := db.EmailInUse(address); err != nil || used {
-		return "That email address is already in use."
 	}
 	return ""
 }
@@ -255,7 +263,7 @@ func forgotSubmit(w http.ResponseWriter, r *http.Request) {
 		Render(w, http.StatusBadRequest, "forgot", page)
 		return
 	}
-	n, err := db.RateLimitHit("forgot:ip:"+ip, mailWindow)
+	n, err := db.RateLimitHit("forgot:ip:"+httpx.LimitAddress(ip), mailWindow)
 	if err != nil {
 		Error(w, ServerError)
 		return

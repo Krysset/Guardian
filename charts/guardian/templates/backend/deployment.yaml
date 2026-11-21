@@ -30,6 +30,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       automountServiceAccountToken: false
+      # Draining (5 s), finishing requests (15 s) and flushing queued emails (10 s): see server.Run.
+      terminationGracePeriodSeconds: 45
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:

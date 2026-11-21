@@ -85,13 +85,35 @@ func Run(ctx context.Context, cfg config.Config) error {
 			runErr = fmt.Errorf("listener failed: %w", err)
 		}
 	}
-	// Kubernetes sends SIGTERM on rollouts: finish in-flight requests before exiting.
+	// Kubernetes sends SIGTERM on rollouts. In this order:
+	//  1. readiness fails, and new requests keep being served for DrainDelay while load balancers and
+	//     kube-proxy notice the pod is going (they take a few seconds);
+	//  2. the listeners stop taking connections, and requests in flight get up to 15 seconds to finish;
+	//  3. emails still queued get up to 10 seconds to go out (a reset link must not be lost).
+	// The chart's terminationGracePeriodSeconds (45) covers all three.
+	internalapi.Drain()
+	if runErr == nil && DrainDelay > 0 {
+		slog.Info("draining before shutdown", "delay", DrainDelay.String())
+		time.Sleep(DrainDelay)
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	public.Shutdown(shutdownCtx)
+	if err := public.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("requests were still running when the public listener stopped", "error", err)
+	}
 	internal.Shutdown(shutdownCtx)
+	mailCtx, cancelMail := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelMail()
+	if err := mail.Wait(mailCtx); err != nil {
+		slog.Warn("emails were still queued at shutdown and are lost", "error", err)
+	}
+	slog.Info("stopped")
 	return runErr
 }
+
+// DrainDelay is how long Guardian keeps serving after SIGTERM, with readiness failing, before it stops
+// taking connections.
+var DrainDelay = 5 * time.Second
 
 // UseKeyring parses the configured keyring and makes it the encryption keyring. It refuses one that lacks
 // a key the stored values need: Guardian would fail to decrypt its signing keys or authenticator apps.

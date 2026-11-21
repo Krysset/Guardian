@@ -285,11 +285,13 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ip := httpx.AccountID(r), httpx.ClientIP(r)
+	// Counted before it is checked, so attempts sent together cannot all slip under the limit; success
+	// clears the count.
 	key := "reauth:account:" + id
-	if n, err := db.RateLimitCount(key, reauthWindow); err != nil {
+	if n, err := db.RateLimitHit(key, reauthWindow); err != nil {
 		accountFail(w, err)
 		return
-	} else if n >= reauthLimit {
+	} else if n > reauthLimit {
 		httpx.CountRefused("reauth")
 		w.Header().Set("Retry-After", strconv.Itoa(int(reauthWindow.Seconds())))
 		httpx.ErrorCode(w, http.StatusTooManyRequests, "rate_limited", "Too many wrong passwords. Try again in 15 minutes.")
@@ -340,7 +342,6 @@ func reauth(w http.ResponseWriter, r *http.Request) {
 		ok = hash != "" && len(req.Password) <= 1024 && auth.VerifyPassword(req.Password, hash)
 	}
 	if !ok {
-		db.RateLimitHit(key, reauthWindow)
 		db.Audit("reauth.failure", id, "", ip, nil)
 		if req.Key != nil {
 			httpx.ErrorCode(w, http.StatusForbidden, "key_not_recognised", "That security key is not one of yours")
@@ -528,6 +529,11 @@ func updateAccount(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "status must be active or disabled")
 		return
 	}
+	// Changing someone's address or status could hand their account to someone else, or lock them out, so
+	// the administrator confirms it is them first, like for their own protected changes.
+	if (req.Email != nil || req.Status != nil) && !httpx.RequireReauth(w, r) {
+		return
+	}
 	u := req.update()
 	u.Email, u.Status = req.Email, req.Status
 	acct, notices, err := db.UpdateAccount(chi.URLParam(r, "account"), u)
@@ -562,6 +568,9 @@ func setAccountPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validPassword(req.NewPassword) {
 		httpx.Error(w, http.StatusBadRequest, passwordRule)
+		return
+	}
+	if !httpx.RequireReauth(w, r) {
 		return
 	}
 	hash, err := auth.HashPassword(req.NewPassword)

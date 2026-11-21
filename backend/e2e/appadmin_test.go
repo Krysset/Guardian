@@ -58,6 +58,11 @@ func TestE2EAppAdminsManageTheirOwnApps(t *testing.T) {
 	if a := br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"pretty_name": "Team wiki", "signing_alg": "ES256"}, 200); a["pretty_name"] != "Team wiki" {
 		t.Errorf("edit: %v", a)
 	}
+	// Skipping consent and the scopes are promises to the people signing in: Guardian admins keep them.
+	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"is_first_party": true}, 403)
+	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"scopes": []string{"openid"}}, 403)
+	current := br.call("GET", "/api/v1/apps/"+wiki.ID, nil, 200)
+	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"is_first_party": current["is_first_party"], "scopes": current["scopes"]}, 200)
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"enabled": false}, 200)
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"enabled": true}, 200)
 	br.call("POST", "/api/v1/apps/"+wiki.ID+"/secret", map[string]any{"grace_seconds": 3600}, 201)
