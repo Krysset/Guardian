@@ -36,6 +36,16 @@ var sent = promauto.NewCounterVec(prometheus.CounterOpts{
 
 const queueSize = 256
 
+// The queue's depth warns before emails are dropped, which happens at queueSize.
+var _ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
+	Namespace: "guardian", Name: "mail_queue_depth",
+	Help: "Emails waiting in this replica's queue; at 256 new ones are dropped (guardian_mail_sent_total{result=\"dropped\"}).",
+}, func() float64 {
+	mu.RLock()
+	defer mu.RUnlock()
+	return float64(len(queue))
+})
+
 // retryDelays are the waits between attempts. A failed email is given up after the last one.
 var retryDelays = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
 

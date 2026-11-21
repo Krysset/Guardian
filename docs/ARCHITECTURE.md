@@ -64,8 +64,8 @@ The steady load is refreshes: about `signed-in users × apps ÷ token lifetime` 
 users with one app each on the default 300 seconds is about 33 refreshes per second. Each refresh is a few
 indexed reads and one RS256 signature.
 
-Watch `guardian_http_request_duration_seconds{route="/token"}`, `guardian_token_requests_total` and the
-`guardian_db_*` pool gauges. If they become a problem, in this order: longer token lifetimes for apps that do
+Watch `guardian_http_request_duration_seconds{route="/token"}`, `guardian_tokens_issued_total` and the
+`guardian_db_*` pool gauges (all metrics: METRICS.md). If they become a problem, in this order: longer token lifetimes for apps that do
 not need short ones, PgBouncer, a bigger Postgres. Do not read from replicas for refreshes: replication lag
 would let revoked access through.
 

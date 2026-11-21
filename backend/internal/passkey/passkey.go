@@ -23,6 +23,8 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"guardian/internal/auth"
 	db "guardian/internal/store"
@@ -303,10 +305,34 @@ func FinishPasskeyLogin(token string, response []byte) (accountID string, keyNam
 	return id.String(), name, err
 }
 
+// keyName is the name the account gave the key with this credential id.
+func keyName(u *user, credentialID []byte) string {
+	for _, row := range u.rows {
+		var stored webauthn.Credential
+		if json.Unmarshal(row.Credential, &stored) == nil && bytes.Equal(stored.ID, credentialID) {
+			return row.Name
+		}
+	}
+	return ""
+}
+
+// cloneWarnings should stay at 0: each one is a security key that may have been copied.
+var cloneWarnings = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "guardian", Name: "passkey_clone_warnings_total",
+	Help: "Security key or passkey uses refused because the key's counter went backwards, which means the key may " +
+		"have been copied. Should stay at 0; the audit log has which account. Synced passkeys never trigger it.",
+})
+
 // recordUse stores the key's new counter and flags. A counter that went backwards means the key may have
 // been copied: the use is refused (synced passkeys keep their counter at 0 and never trip this).
 func recordUse(u *user, cred *webauthn.Credential) (string, error) {
 	if cred.Authenticator.CloneWarning {
+		cloneWarnings.Inc()
+		accountID := ""
+		if id, err := uuid.FromBytes(u.id); err == nil {
+			accountID = id.String()
+		}
+		db.Audit("mfa.key_clone_warning", accountID, "", "", map[string]any{"key": keyName(u, cred.ID)})
 		return "", ErrNotRecognised
 	}
 	for _, row := range u.rows {

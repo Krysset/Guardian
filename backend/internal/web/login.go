@@ -49,9 +49,37 @@ func Mount(r chi.Router) {
 	r.Head("/static/*", serveStatic)
 }
 
-var loginsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-	Namespace: "guardian", Name: "logins_total", Help: "Interactive login attempts by result.",
-}, []string{"result"}) // success | failure
+// Sign-ins on the sign-in pages. Neither metric has anything about who: only how, and why not.
+var (
+	loginsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "logins_total",
+		Help: "Completed sign-ins by method: password, passkey, password_and_code, password_and_key, " +
+			"password_and_recovery_code. A sign-in that fails at any step is counted in guardian_login_failures_total instead.",
+	}, []string{"method"})
+	loginFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "login_failures_total",
+		Help: "Failed steps on the sign-in pages (signing in, and the two-factor step before an app that requires it), " +
+			"by the factor that failed and why. Attempts refused by the rate limiter are in guardian_rate_limited_total.",
+	}, []string{"factor", "reason"})
+)
+
+// loginFailureLabels are every factor and reason pair that can happen, so each series exists from the
+// start: a graph or an alert of a rate never misses the first failure.
+var loginFailureLabels = [][2]string{
+	{"password", "wrong_password"}, {"password", "unknown_account"}, {"password", "account_disabled"},
+	{"password", "email_unconfirmed"},
+	{"passkey", "not_recognised"}, {"passkey", "account_disabled"}, {"passkey", "expired"},
+	{"code", "wrong_code"}, {"recovery_code", "wrong_code"}, {"key", "not_recognised"}, {"key", "expired"},
+}
+
+func init() {
+	for _, m := range []string{"password", "passkey", "password_and_code", "password_and_key", "password_and_recovery_code"} {
+		loginsTotal.WithLabelValues(m)
+	}
+	for _, l := range loginFailureLabels {
+		loginFailures.WithLabelValues(l[0], l[1])
+	}
+}
 
 // Login throttling uses Postgres counters (shared by all replicas). Failures are counted per account and
 // IP address together: by default 5 in 15 minutes block that address for that account, and nobody else. A
@@ -150,13 +178,15 @@ func passkeySubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	accountID, name, err := passkey.FinishPasskeyLogin(token, []byte(r.PostFormValue("credential")))
 	var acct db.Account
+	reason := "not_recognised"
 	if err == nil {
 		if acct, err = db.GetAccount(accountID); err == nil && acct.Status != "active" {
-			err = passkey.ErrNotRecognised
+			err, reason = passkey.ErrNotRecognised, "account_disabled"
 		}
 	}
 	switch {
 	case errors.Is(err, passkey.ErrExpired):
+		loginFailures.WithLabelValues("passkey", "expired").Inc()
 		showError(http.StatusBadRequest, "That took too long. Try again.")
 		return
 	case err != nil:
@@ -164,12 +194,12 @@ func passkeySubmit(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to check a passkey", "error", err)
 		}
 		db.RateLimitHit(ipKey, loginLimits.Window)
-		loginsTotal.WithLabelValues("failure").Inc()
+		loginFailures.WithLabelValues("passkey", reason).Inc()
 		db.Audit("login.failure", accountID, "", ip, map[string]any{"method": "passkey"})
 		showError(http.StatusUnauthorized, "That passkey isn't registered here. Sign in with your password instead.")
 		return
 	}
-	finishSignIn(w, r, acct, map[string]any{"method": "passkey", "key": name}, returnTo, "hwk", "user")
+	finishSignIn(w, r, acct, "passkey", map[string]any{"method": "passkey", "key": name}, returnTo, "hwk", "user")
 }
 
 func loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -211,16 +241,23 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid := false
-	if err == nil && hash != "" && (acct.Status == "active" || acct.Status == "pending") {
+	valid, reason := false, "wrong_password"
+	switch {
+	case err == nil && hash != "" && (acct.Status == "active" || acct.Status == "pending"):
 		valid = auth.VerifyPassword(password, hash)
-	} else {
+	case err != nil:
+		reason = "unknown_account"
 		auth.DummyVerify(password) // same cost whether or not the account exists
+	default: // no password (only a passkey, or never set), or disabled
+		if acct.Status != "active" && acct.Status != "pending" {
+			reason = "account_disabled"
+		}
+		auth.DummyVerify(password)
 	}
 	if !valid {
 		db.RateLimitHit(userKey, loginLimits.Window)
 		db.RateLimitHit(ipKey, loginLimits.Window)
-		loginsTotal.WithLabelValues("failure").Inc()
+		loginFailures.WithLabelValues("password", reason).Inc()
 		db.Audit("login.failure", acct.ID, "", ip, map[string]any{"username": login})
 		showError(http.StatusUnauthorized, wrongLogin)
 		return
@@ -229,6 +266,7 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 	db.RateLimitReset(userKey, loginLimits.Window)
 	if acct.Status == "pending" {
 		// The right password, but the sign-up waits for its email confirmation.
+		loginFailures.WithLabelValues("password", "email_unconfirmed").Inc()
 		msg := "Confirm your email address first: open the link we sent you."
 		if httpx.FlowCookie(r, signupCookie) != "" {
 			msg += " To get a new one, go back to the check-your-inbox page."
@@ -247,5 +285,5 @@ func loginSubmit(w http.ResponseWriter, r *http.Request) {
 		startMFAFlow(w, r, mfaFlow{Account: acct.ID, Purpose: "signin", Setup: next == "setup", Reason: reason, ReturnTo: returnTo})
 		return
 	}
-	finishSignIn(w, r, acct, nil, returnTo, "pwd")
+	finishSignIn(w, r, acct, "password", nil, returnTo, "pwd")
 }

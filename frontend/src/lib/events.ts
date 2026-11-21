@@ -30,6 +30,7 @@ const words: Record<string, string> = {
 	'mfa.key_added': 'Security key added',
 	'mfa.key_renamed': 'Security key renamed',
 	'mfa.key_removed': 'Security key removed',
+	'mfa.key_clone_warning': 'Security key refused: it may have been copied',
 	'mfa.recovery_codes_renewed': 'New recovery codes',
 	'mfa.reset': 'Two-factor reset by an administrator',
 	'mfa.failure': 'Wrong two-factor code',
@@ -112,6 +113,7 @@ export function summary(e: Schema<'AuditEntry'>): string {
 			parts.push(m.method === 'passkey' ? 'with a passkey' : m.method === 'security_key' ? `with ${text(m.key) ? `“${text(m.key)}”` : 'a security key'}` : m.method === 'recovery_code' ? 'with a recovery code' : '');
 			break;
 		case 'mfa.key_added':
+		case 'mfa.key_clone_warning':
 		case 'mfa.key_renamed':
 		case 'mfa.key_removed':
 			parts.push(text(m.key) && `“${text(m.key)}”`);

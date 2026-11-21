@@ -170,6 +170,9 @@ func confirmPage(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		db.Audit("email.confirmed", t.AccountID, "", ip, map[string]any{"signup": t.Metadata.Signup})
+		if t.Metadata.Signup {
+			signups.WithLabelValues("confirmed").Inc()
+		}
 		if !t.Metadata.Signup {
 			result(w, "ok", "Email address confirmed", "Thanks. You can now reset your password by email.", &Link{"Continue", "/"})
 			return

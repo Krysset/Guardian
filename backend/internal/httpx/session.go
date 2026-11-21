@@ -98,10 +98,11 @@ func CSRFToken(w http.ResponseWriter, r *http.Request) string {
 // CSRFValid reports whether a posted form carries the token of its CSRF cookie.
 func CSRFValid(r *http.Request) bool {
 	c, err := r.Cookie(csrfCookieName)
-	if err != nil || len(c.Value) < 32 {
+	if err != nil || len(c.Value) < 32 || subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostFormValue("csrf"))) != 1 {
+		csrfRefusals.WithLabelValues("form").Inc()
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostFormValue("csrf"))) == 1
+	return true
 }
 
 // ---- Middleware for the JSON API --------------------------------------------
@@ -196,6 +197,7 @@ func RequireSameOrigin(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			if origin := r.Header.Get("Origin"); origin != "" && !allowedOrigins[origin] {
+				csrfRefusals.WithLabelValues("origin").Inc()
 				Error(w, http.StatusForbidden, "Cross-origin request blocked")
 				return
 			}

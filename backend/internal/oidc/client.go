@@ -23,12 +23,12 @@ func clientTokenAudience() string { return httpx.Issuer }
 func issueClientToken(w http.ResponseWriter, app db.App) {
 	const grant = "client_credentials"
 	if app.ClientType != "confidential" {
-		refuse(w, grant, http.StatusUnauthorized, "invalid_client", "Only apps with a secret can get tokens of their own")
+		refuse(w, app.Name, grant, "public_client", http.StatusUnauthorized, "invalid_client", "Only apps with a secret can get tokens of their own")
 		return
 	}
 	jti, err := auth.RandomToken(16)
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return
 	}
 	now := time.Now()
@@ -38,10 +38,10 @@ func issueClientToken(w http.ResponseWriter, app db.App) {
 		"iat": now.Unix(), "exp": now.Add(ttl).Unix(), "jti": jti,
 	}, accessTokenType)
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return
 	}
-	tokenRequests.WithLabelValues(grant, "issued").Inc()
+	tokensIssued.WithLabelValues(app.Name, grant).Inc()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	httpx.JSON(w, http.StatusOK, map[string]any{

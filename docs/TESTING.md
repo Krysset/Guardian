@@ -39,8 +39,8 @@ count as covered by the API and end-to-end tests of the same behaviour.
 | Layer | Where | Needs DB | What it proves |
 |---|---|---|---|
 | Unit | `internal/config`, `internal/auth`, `internal/server`, `internal/httpx`, `internal/web`, `internal/oidc`, `internal/internalapi`, `internal/backup` (file format), `cmd/guardian` (backup command line), and request validation in `internal/api` | no | argon2 hashing and malformed-hash rejection, key encryption, JWT signing and forgery rejection (alg none, wrong key, unknown kid), PKCE (RFC 7636 vector), client IP and trusted-proxy handling, open-redirect guards, CSRF and Origin checks, claim release per scope, every sign-in page rendering with escaping, security headers and no inline styles or scripts, static files and their caching, request validation (unknown fields refused, one error shape), metrics labelling, discovery document, `docs/openapi.yaml` matching the router route for route, the backup file's checksum catching truncation and damage |
-| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, single-app groups, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job; in `internal/backup`, backup and restore against a real database |
-| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: the sign-in pages driven like a browser without JavaScript (sign-up, sign-in by username or email, temporary passwords, switching account, Home, error pages), SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics |
+| Database | `internal/store/*_test.go` | yes | migrations through goose (recorded once, safe when replicas start together), the schema script (idempotent, never overwrites edits, safe under concurrent startup), groups (membership and expiry, app links, the access rule, owners, single-app groups, the last-administrator rule also under concurrency), session idle and absolute timeouts, immediate revocation, single-use codes (also under concurrency), stable refresh tokens (bound to their app and session, safe under parallel use), the machine API's visibility rules, account administration (disabling, admin-set passwords, search and paging), app edits and secret rotation, the audit log, rate-limit counters, client secrets, cleanup job, the counts behind /metrics; in `internal/backup`, backup and restore against a real database |
+| End to end | `e2e/*_test.go` | yes | the real public and internal routers over HTTP: the sign-in pages driven like a browser without JavaScript (sign-up, sign-in by username or email, temporary passwords, switching account, Home, error pages), SSO, signed access tokens, stable refresh tokens and their re-checks, session timeouts, revocation, logout everywhere, back-channel logout delivery, consent, rate limits, CSRF, the `/api/v1` admin and self-service routes, metrics (what they count, and that nothing about a person reaches a label) |
 
 ## Requirements and their tests
 
@@ -120,7 +120,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | P3 | done | `TestKeyringRotationReencryptsEverything`, `TestKeysCommandLine`, `TestKeysFollowARotation`, `TestSigningKeysMoveThroughTheirStages` |
 | P4 | done | `TestKeysCommandLine`, `TestResettingEveryAuthenticatorAppKeepsSecurityKeys` |
 | P5 | done | `TestSeededAdminHasNoPasswordUntilBootstrapped` |
-| P6 | done | `TestE2EInternalListenerProbesAndMetrics`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
+| P6 | done | `TestCountsForMetrics`, `TestE2EInternalListenerProbesAndMetrics`, `TestE2EMetricsCountHowNotWho`, `TestMetricsMiddlewareRecordsRoutePatternAndStatus` |
 | P7 | done | `TestTheRunbookRecoversALockedOutAdministrator` |
 | M1 | done | `TestAnAppOnlySeesTheGroupsLinkedToIt`, `TestE2EAuthorizationCodeAndPKCE`, `TestE2EDiscoveryAndJWKS`, `TestE2EEachAppSeesOnlyItsOwnGroupsAndNoProfileInAccessTokens`, `TestE2EGroupChangesReachTheAppAtItsNextRefresh`, `TestE2ELoginIssuesSignedAccessAndIDTokens` |
 | M2 | done | `TestAnAppMayKnowItsGroupMembersAndItsUsersOnly`, `TestAnAppSeesOnlyItsLinkedGroupsAndTheirActiveMembers`, `TestE2EMachineAPIShowsAnAppOnlyItsOwnGroupsAndUsers`, `TestMachineAccessIsOnlyForAppsWithASecret` |
@@ -184,7 +184,7 @@ What holds across requirements: security properties, behaviour under concurrency
 * Graceful SIGTERM shutdown, `/readyz` failing when the database is down, connection-pool limits.
 * Kubernetes manifests and the NetworkPolicy: only in CI (the chart workflow's `install` job on kind), not in
   `go test`.
-* Load and latency: use `guardian_http_request_duration_seconds{route="/token"}` and `guardian_token_requests_total` from a staging deployment.
+* Load and latency: use `guardian_http_request_duration_seconds{route="/token"}` and `guardian_tokens_issued_total` from a staging deployment.
 * Delivery through a real mail server with TLS (tests use a fake SMTP server without TLS; Mailpit by hand).
 * Real off-the-shelf apps: Grafana is checked by hand (`docs/LOCAL-GRAFANA.md`).
 

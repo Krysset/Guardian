@@ -22,11 +22,30 @@ var signingKeys *auth.Keys
 // SetKeys must be called once at startup, before serving.
 func SetKeys(keys *auth.Keys) { signingKeys = keys }
 
-// tokenRequests counts answers of the token endpoint. Refreshes are the steady load: one per signed-in
-// user per app per token lifetime.
-var tokenRequests = promauto.NewCounterVec(prometheus.CounterOpts{
-	Namespace: "guardian", Name: "token_requests_total", Help: "Token endpoint requests by grant and result.",
-}, []string{"grant", "result"}) // authorization_code | refresh_token | client_credentials | other  x  issued | refused | error
+// Token endpoint answers, and sign-ins to apps, per app. The app label is the app's name, which never
+// changes; a client id nobody registered is "unknown", so made-up values never become labels. Refreshes
+// are the steady load: one per signed-in user per app per token lifetime.
+var (
+	tokensIssued = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "tokens_issued_total",
+		Help: "Tokens issued by the token endpoint, by app and grant (authorization_code, refresh_token, client_credentials).",
+	}, []string{"app", "grant"})
+	tokenRefusals = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "token_refusals_total",
+		Help: "Token requests not answered with tokens, by app, grant and reason. Expected: session_ended, " +
+			"account_unavailable, access_lost. Worth a look: wrong_secret, unknown_client, unknown_refresh_token, " +
+			"bad_code, pkce_failed. Guardian's fault: server_error.",
+	}, []string{"app", "grant", "reason"})
+	appSignins = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "app_signins_total",
+		Help: "Sign-ins to an app: authorization codes given to it, with a sign-in or with single sign-on.",
+	}, []string{"app"})
+	appAccessDenied = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "guardian", Name: "app_access_denied_total",
+		Help: "Sign-ins to an app refused because the account is not in any of the app's groups. Losing access " +
+			"while signed in shows as guardian_token_refusals_total{reason=\"access_lost\"}.",
+	}, []string{"app"})
+)
 
 // Mount registers the OIDC endpoints at the root of the router.
 func Mount(r chi.Router) {

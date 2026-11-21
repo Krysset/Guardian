@@ -503,8 +503,10 @@ func mfaSubmit(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrTooManyAttempts):
 			fail(http.StatusTooManyRequests, Page{Error: "Too many failed attempts. Wait 15 minutes, then try again."})
 		case errors.Is(err, passkey.ErrExpired):
+			loginFailures.WithLabelValues("key", "expired").Inc()
 			fail(http.StatusBadRequest, Page{Error: "That took too long. Try again."})
 		case errors.Is(err, passkey.ErrNotRecognised):
+			loginFailures.WithLabelValues("key", "not_recognised").Inc()
 			db.Audit("mfa.failure", f.Account, "", ip, map[string]any{"method": "security_key"})
 			fail(http.StatusUnauthorized, Page{Error: "That security key isn't one of yours. Try another, or use another method."})
 		case err != nil:
@@ -526,6 +528,11 @@ func mfaSubmit(w http.ResponseWriter, r *http.Request) {
 		Error(w, ServerError)
 		return
 	case !ok:
+		factor := "code"
+		if recovery {
+			factor = "recovery_code"
+		}
+		loginFailures.WithLabelValues(factor, "wrong_code").Inc()
 		db.Audit("mfa.failure", f.Account, "", ip, map[string]any{"method": method})
 		msg := "That code is wrong. Codes change every 30 seconds."
 		if recovery {
@@ -565,18 +572,24 @@ func completeMFAFlow(w http.ResponseWriter, r *http.Request, f mfaFlow, amr stri
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	finishSignIn(w, r, acct, detail, httpx.SafeReturnTo(f.ReturnTo), "pwd", amr)
+	method := "password_and_code"
+	if amr == "hwk" {
+		method = "password_and_key"
+	} else if detail["method"] == "recovery_code" {
+		method = "password_and_recovery_code"
+	}
+	finishSignIn(w, r, acct, method, detail, httpx.SafeReturnTo(f.ReturnTo), "pwd", amr)
 }
 
 // finishSignIn starts the session and continues: to the new-password page first if the account has a
-// temporary password, else back into the app's sign-in, or Home.
-func finishSignIn(w http.ResponseWriter, r *http.Request, acct db.Account, detail map[string]any, returnTo string, amr ...string) {
+// temporary password, else back into the app's sign-in, or Home. method is the label of guardian_logins_total.
+func finishSignIn(w http.ResponseWriter, r *http.Request, acct db.Account, method string, detail map[string]any, returnTo string, amr ...string) {
 	if _, err := httpx.StartSession(w, r, acct.ID, amr...); err != nil {
 		slog.Error("failed to start a session", "error", err)
 		Error(w, ServerError)
 		return
 	}
-	loginsTotal.WithLabelValues("success").Inc()
+	loginsTotal.WithLabelValues(method).Inc()
 	db.TouchLogin(acct.ID)
 	db.Audit("login.success", acct.ID, "", httpx.ClientIP(r), detail)
 	if acct.MustChangePassword {

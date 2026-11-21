@@ -30,7 +30,11 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 
 // authenticateClient identifies the calling app. Confidential clients must present their secret
 // (checked in one query); public clients are identified by client_id only and rely on PKCE.
-func authenticateClient(r *http.Request) (db.App, bool) {
+//
+// When it fails, label is the app's name if the client id is a registered app ("unknown" otherwise, so a
+// client id someone made up never becomes a label), and reason is unknown_client, app_disabled or
+// wrong_secret.
+func authenticateClient(r *http.Request) (app db.App, ok bool, label, reason string) {
 	clientID, secret, hasBasic := r.BasicAuth()
 	if hasBasic {
 		clientID, _ = url.QueryUnescape(clientID)
@@ -38,12 +42,24 @@ func authenticateClient(r *http.Request) (db.App, bool) {
 	} else {
 		clientID, secret = r.PostFormValue("client_id"), r.PostFormValue("client_secret")
 	}
+	var err error
 	if secret != "" {
-		app, err := db.GetAppByClientIDAndSecret(clientID, auth.HashToken(secret))
-		return app, err == nil
+		app, err = db.GetAppByClientIDAndSecret(clientID, auth.HashToken(secret))
+		if err == nil {
+			return app, true, app.Name, ""
+		}
+	} else if app, err = db.GetAppByClientID(clientID); err == nil && app.Enabled && app.ClientType == "public" {
+		return app, true, app.Name, ""
 	}
-	app, err := db.GetAppByClientID(clientID)
-	return app, err == nil && app.Enabled && app.ClientType == "public"
+	known, err := db.GetAppByClientID(clientID)
+	switch {
+	case err != nil:
+		return db.App{}, false, "unknown", "unknown_client"
+	case !known.Enabled:
+		return db.App{}, false, known.Name, "app_disabled"
+	default: // a confidential app without its secret, or with a wrong or retired one
+		return db.App{}, false, known.Name, "wrong_secret"
+	}
 }
 
 func verifyPKCE(verifier, challenge string) bool {
@@ -55,13 +71,10 @@ func verifyPKCE(verifier, challenge string) bool {
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 
-// refuse answers a token request with an OAuth error and counts it.
-func refuse(w http.ResponseWriter, grant string, status int, code, desc string) {
-	result := "refused"
-	if status >= 500 {
-		result = "error"
-	}
-	tokenRequests.WithLabelValues(grantLabel(grant), result).Inc()
+// refuse answers a token request with an OAuth error and counts it, for the app (its name, or "unknown")
+// with the reason (one of tokenRefusalReasons; "server_error" when it is Guardian's fault).
+func refuse(w http.ResponseWriter, app, grant, reason string, status int, code, desc string) {
+	tokenRefusals.WithLabelValues(app, grantLabel(grant), reason).Inc()
 	oauthError(w, status, code, desc)
 }
 
@@ -76,17 +89,17 @@ func grantLabel(grant string) string {
 func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	if err := r.ParseForm(); err != nil {
-		refuse(w, "", http.StatusBadRequest, "invalid_request", "Malformed request body")
+		refuse(w, "unknown", "", "malformed", http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
 	}
 	grant := r.PostFormValue("grant_type")
-	app, ok := authenticateClient(r)
+	app, ok, label, reason := authenticateClient(r)
 	if !ok {
-		refuse(w, grant, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		refuse(w, label, grant, reason, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
 		return
 	}
 	if !slices.Contains(app.GrantTypes, grant) {
-		refuse(w, grant, http.StatusBadRequest, "unsupported_grant_type", "Grant type not allowed for this client")
+		refuse(w, app.Name, grant, "grant_not_allowed", http.StatusBadRequest, "unsupported_grant_type", "Grant type not allowed for this client")
 		return
 	}
 
@@ -94,11 +107,11 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		ac, err := db.ConsumeAuthCode(auth.HashToken(r.PostFormValue("code")))
 		if err != nil || ac.AppID != app.ID || ac.RedirectURI != r.PostFormValue("redirect_uri") {
-			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Invalid, expired or already used code")
+			refuse(w, app.Name, grant, "bad_code", http.StatusBadRequest, "invalid_grant", "Invalid, expired or already used code")
 			return
 		}
 		if ac.CodeChallenge != "" && !verifyPKCE(r.PostFormValue("code_verifier"), ac.CodeChallenge) {
-			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
+			refuse(w, app.Name, grant, "pkce_failed", http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 			return
 		}
 		if issueTokens(w, grant, app, ac.AccountID, ac.SessionID, ac.Scopes, ac.Nonce, app.RefreshMode == "stable") {
@@ -112,11 +125,11 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		// The refresh token itself never changes. What it returns is decided now, from live data.
 		rt, err := db.GetRefreshToken(auth.HashToken(r.PostFormValue("refresh_token")), app.ID)
 		if errors.Is(err, db.ErrInvalidGrant) {
-			refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Invalid or revoked refresh token")
+			refuse(w, app.Name, grant, "unknown_refresh_token", http.StatusBadRequest, "invalid_grant", "Invalid or revoked refresh token")
 			return
 		}
 		if err != nil {
-			refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+			refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 			return
 		}
 		issueTokens(w, grant, app, rt.AccountID, rt.SessionID, rt.Scopes, "", false)
@@ -125,7 +138,7 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		issueClientToken(w, app)
 
 	default:
-		refuse(w, grant, http.StatusBadRequest, "unsupported_grant_type", "")
+		refuse(w, app.Name, grant, "grant_not_allowed", http.StatusBadRequest, "unsupported_grant_type", "")
 	}
 }
 
@@ -144,21 +157,21 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 
 	sess, err := db.GetLiveSession(sessionID, httpx.SessionIdleTimeout)
 	if err != nil || sess.AccountID != accountID {
-		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "The sign-in session has ended")
+		refuse(w, app.Name, grant, "session_ended", http.StatusBadRequest, "invalid_grant", "The sign-in session has ended")
 		return false
 	}
 	acct, err := db.GetAccount(accountID)
 	if err != nil || acct.Status != "active" {
-		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "Account is not available")
+		refuse(w, app.Name, grant, "account_unavailable", http.StatusBadRequest, "invalid_grant", "Account is not available")
 		return false
 	}
 	groups, err := db.AccountAppGroups(accountID, app.ID)
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false
 	}
 	if app.AccessRule != "anyone" && len(groups) == 0 {
-		refuse(w, grant, http.StatusBadRequest, "invalid_grant", "The account no longer has access to this app")
+		refuse(w, app.Name, grant, "access_lost", http.StatusBadRequest, "invalid_grant", "The account no longer has access to this app")
 		return false
 	}
 
@@ -167,7 +180,7 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 	withGroups := slices.Contains(scopes, "groups")
 	jti, err := auth.RandomToken(16)
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false
 	}
 
@@ -197,12 +210,12 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 
 	accessToken, err := signingKeys.Sign(accessClaims, accessTokenType)
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false
 	}
 	idToken, err := signingKeys.Sign(idClaims, "")
 	if err != nil {
-		refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+		refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 		return false
 	}
 	resp := map[string]any{
@@ -217,14 +230,14 @@ func issueTokens(w http.ResponseWriter, grant string, app db.App, accountID, ses
 		}
 		if err != nil {
 			slog.Error("failed to save a refresh token", "error", err)
-			refuse(w, grant, http.StatusInternalServerError, "server_error", "")
+			refuse(w, app.Name, grant, "server_error", http.StatusInternalServerError, "server_error", "")
 			return false
 		}
 		resp["refresh_token"] = refresh
 	}
 	db.TrackSessionApp(sess.ID, app.ID) // so back-channel logout knows to notify this app
 
-	tokenRequests.WithLabelValues(grantLabel(grant), "issued").Inc()
+	tokensIssued.WithLabelValues(app.Name, grantLabel(grant)).Inc()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	httpx.JSON(w, http.StatusOK, resp)
@@ -277,7 +290,7 @@ func revokeEndpoint(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
 	}
-	app, ok := authenticateClient(r)
+	app, ok, _, _ := authenticateClient(r)
 	if !ok || app.ClientType != "confidential" {
 		oauthError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
 		return

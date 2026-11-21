@@ -91,7 +91,8 @@ func postForm(h http.HandlerFunc, body, basicUser, basicPass string) *httptest.R
 }
 
 func TestTokenAndRevokeRejectUnauthenticatedClients(t *testing.T) {
-	before := promtest.ToFloat64(tokenRequests.WithLabelValues("refresh_token", "refused"))
+	// A client id nobody registered is counted as the app "unknown", never under the id it sent.
+	before := promtest.ToFloat64(tokenRefusals.WithLabelValues("unknown", "refresh_token", "unknown_client"))
 	for _, ep := range []struct {
 		name string
 		h    http.HandlerFunc
@@ -117,7 +118,7 @@ func TestTokenAndRevokeRejectUnauthenticatedClients(t *testing.T) {
 			}
 		}
 	}
-	if got := promtest.ToFloat64(tokenRequests.WithLabelValues("refresh_token", "refused")); got != before+2 {
+	if got := promtest.ToFloat64(tokenRefusals.WithLabelValues("unknown", "refresh_token", "unknown_client")); got != before+2 {
 		t.Errorf("refused counter went %v -> %v, want +2", before, got)
 	}
 	// whatever a client sends as grant_type, the metric keeps a fixed set of labels

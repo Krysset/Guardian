@@ -64,7 +64,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := BootstrapAdmin(cfg.AdminInitialPassword); err != nil {
 		return err
 	}
-	httpx.RegisterDBMetrics()
+	httpx.RegisterDBMetrics(schedule.Lifetime)
 	db.StartMaintenance(ctx)
 
 	// Two listeners: the public one goes through the ingress; the internal one (metrics and probes) is only exposed as a ClusterIP Service and protected by a NetworkPolicy.

@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"guardian/internal/auth"
 	"guardian/internal/httpx"
 	db "guardian/internal/store"
@@ -85,5 +88,25 @@ func CreateAccount(r *http.Request, username, password string, pending bool) (db
 		return db.Account{}, err
 	}
 	db.Audit("account.signed_up", acct.ID, "", httpx.ClientIP(r), nil)
+	if pending {
+		signups.WithLabelValues("awaiting_email").Inc()
+	} else {
+		signups.WithLabelValues("active").Inc()
+	}
 	return acct, nil
+}
+
+// signups counts self-service sign-ups. Accounts made by bots usually never confirm their address, so a
+// growing gap between awaiting_email and confirmed is the sign of spam sign-ups (guardian_accounts{status=
+// "pending"} shows the same from the other side, until unconfirmed sign-ups are cleaned up).
+var signups = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "guardian", Name: "signups_total",
+	Help: "Self-service sign-ups: awaiting_email (created, waiting for the link in the email), confirmed (the link " +
+		"was followed) and active (created without an email address, usable at once).",
+}, []string{"result"})
+
+func init() {
+	for _, r := range []string{"awaiting_email", "confirmed", "active"} {
+		signups.WithLabelValues(r)
+	}
 }

@@ -951,10 +951,10 @@ func TestE2EInternalListenerProbesAndMetrics(t *testing.T) {
 	}
 	m := readBody(t, mustGet(t, intSrv.URL+"/metrics"))
 	for _, want := range []string{
-		`guardian_token_requests_total{grant="authorization_code",result="issued"}`,
-		`guardian_token_requests_total{grant="refresh_token",result="issued"}`,
-		`guardian_token_requests_total{grant="refresh_token",result="refused"}`,
-		`guardian_logins_total{result="success"}`, `guardian_http_request_duration_seconds_bucket`,
+		`guardian_tokens_issued_total{app="billing",grant="authorization_code"}`,
+		`guardian_tokens_issued_total{app="billing",grant="refresh_token"}`,
+		`guardian_token_refusals_total{app="billing",grant="refresh_token",reason="unknown_refresh_token"}`,
+		`guardian_logins_total{method="password"}`, `guardian_http_request_duration_seconds_bucket`,
 		`listener="public"`, `listener="internal"`, `route="/token"`,
 	} {
 		if !strings.Contains(m, want) {

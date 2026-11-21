@@ -22,6 +22,7 @@ import (
 
 	"guardian/internal/auth"
 	"guardian/internal/config"
+	"guardian/internal/httpx"
 	"guardian/internal/mail"
 	"guardian/internal/server"
 	db "guardian/internal/store"
@@ -71,6 +72,8 @@ func TestMain(m *testing.M) {
 		}
 		testKeys, testConfig = k, cfg
 		server.Configure(cfg, k)
+		httpx.RegisterDBMetrics(cfg.SigningKeyLifetime)
+		httpx.StateMetricsMaxAge = 0 // every scrape reads the database
 		mail.Configure(mailbox, mail.Site{Name: "Test Guardian", Host: "guardian.test"})
 		pubSrv = httptest.NewServer(server.PublicRouter())
 		intSrv = httptest.NewServer(server.InternalRouter())

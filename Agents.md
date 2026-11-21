@@ -80,7 +80,16 @@ current: they are the hand-off between sessions.
     `filippo.io/age` (vendored 2026-11-19); a backup's payload decrypts with the `age` CLI too.
   - **The cluster is not ready (2026-11-19):** carry on with local development; chart features beyond part 1
     (including the email settings) wait until the owner's cluster is.
-- **0.6 built, uncommitted** (2026-11-21): every done requirement in USERS.md names a test via `// Covers: X, Y`
+- **Polish after 0.6** (2026-11-21, owner trying the UI with Compose `--profile ui`): new-group form puts
+  Display name first and suggests the key from it; metrics expanded (below, and `docs/METRICS.md`). Owner
+  commits; check `git log` for what is in.
+- **Metrics rule:** labels only from fixed sets (outcome, method, reason, route pattern, app *name*; unknown
+  client ids become `unknown`). Never usernames, ids, IPs, user agents or raw request values;
+  `TestE2EMetricsCountHowNotWho` checks it. Gauges read from the database live in `httpx/metrics.go`
+  (`stateCollector`, cached `StateMetricsMaxAge` = 30 s, 0 in e2e; queries in `store/metrics.go`) and say
+  "use max(), not sum()" in their help. Counters pre-create every fixed label pair. Sessions and per-app
+  sessions are separate metrics on purpose (owner: avoid misuse in Grafana). Each new metric goes in METRICS.md.
+- **0.6 built** (2026-11-21): every done requirement in USERS.md names a test via `// Covers: X, Y`
   in the test's doc comment; `backend/requirements_test.go` (package `guardian_test` at the module root) fails on
   gaps and unknown ids and generates the table between the markers in TESTING.md
   (`UPDATE_REQUIREMENTS=1 go test -run TestEveryDoneRequirementHasATest .`). **When adding a requirement or a

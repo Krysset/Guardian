@@ -174,7 +174,8 @@ Check the installation:
 
 - `https://auth.example.com/.well-known/openid-configuration` answers with the issuer URL;
 - `kubectl -n auth get pods` shows the backend pods ready (2 by default) and, if bundled, `guardian-postgres-0`;
-- metrics are on the `guardian-internal` Service, port 3002, `/metrics`, inside the cluster only.
+- metrics are on the `guardian-internal` Service, port 3002, `/metrics`, inside the cluster only (what they
+  are, and alerts to start from: `docs/METRICS.md`).
 
 ## Backup and restore
 

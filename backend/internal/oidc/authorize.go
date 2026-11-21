@@ -173,6 +173,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
+		appAccessDenied.WithLabelValues(req.App.Name).Inc()
 		db.Audit("authorize.denied", sess.AccountID, req.App.ID, httpx.ClientIP(r), map[string]any{"reason": "access_rule"})
 		if slices.Contains(req.Prompts, "none") {
 			redirectWithError(w, r, req.RedirectURI, req.State, "access_denied", "The account has no access to this app")
@@ -220,6 +221,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	appSignins.WithLabelValues(req.App.Name).Inc()
 	u, _ := url.Parse(req.RedirectURI)
 	q := u.Query()
 	q.Set("code", code)
