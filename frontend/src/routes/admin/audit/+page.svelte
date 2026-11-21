@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import type { Schema } from '#lib/api/client.ts';
 	import { eventGroups, eventWords, summary, who } from '#lib/events.ts';
-	import { formatWhen } from '#lib/format.ts';
+	import { formatDays, formatWhen } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -69,7 +69,7 @@
 
 <svelte:head><title>Audit log · Guardian</title></svelte:head>
 
-<div class="ph"><h1>Audit log</h1><p>Everything that happened in Guardian, newest first. Entries are kept for {data.overview.audit_retention_days} days.</p></div>
+<div class="ph"><h1>Audit log</h1><p>Everything that happened in Guardian, newest first. Entries are kept for {formatDays(data.overview.audit_retention_days)}.</p></div>
 
 <section class="card">
 	<div class="filters">

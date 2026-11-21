@@ -39,7 +39,7 @@
 {/snippet}
 
 <Frame area="home" username={me.username} isAdmin={me.is_admin}>
-	<div class="ph"><h1>Welcome to {home.site_name}</h1><p>One account for all the apps below.</p></div>
+	<div class="ph"><h1>Welcome to {home.site_name}</h1><p>Your apps, and where to manage your account.</p></div>
 
 	{#if needsTwoFactor || pendingEmail}
 		<section class="card">

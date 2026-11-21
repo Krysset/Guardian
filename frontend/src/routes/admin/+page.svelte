@@ -8,7 +8,7 @@
 
 <svelte:head><title>Overview · Guardian</title></svelte:head>
 
-<div class="ph"><h1>Overview</h1><p>Figures only. Open a section to see who and what.</p></div>
+<div class="ph"><h1>Overview</h1><p>How Guardian is doing: accounts, groups, apps and the last 24 hours.</p></div>
 
 {#snippet stats(items: [number | string, string][])}
 	<div class="stats">

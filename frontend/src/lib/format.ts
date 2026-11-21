@@ -69,3 +69,20 @@ export function messageOf(e: unknown): string {
 	}
 	return 'Something went wrong. Try again.';
 }
+
+// formatDays says a number of days the way people say it: whole or half years ("half a year", "1 year",
+// "1 and a half years"), else whole weeks ("1 week", "26 weeks"), else days. Months are never used: they
+// differ in length. A half year is 182 or 183 days.
+export function formatDays(days: number): string {
+	const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+	if (days >= 182) {
+		if (days % 365 === 0) return plural(days / 365, 'year');
+		const halves = Math.round(days / 182.5);
+		if (halves % 2 === 1 && Math.abs(days - halves * 182.5) <= 0.5) {
+			const whole = (halves - 1) / 2;
+			return whole === 0 ? 'half a year' : `${whole} and a half years`;
+		}
+	}
+	if (days > 0 && days % 7 === 0) return plural(days / 7, 'week');
+	return plural(days, 'day');
+}
