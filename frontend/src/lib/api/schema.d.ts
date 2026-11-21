@@ -377,6 +377,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How my notifications come
+         * @description The notifications that are not about security, for the kinds this account can receive (requests to join the groups it owns; for Guardian administrators, requests to join groups without owners), each sent right away (now), in the daily summary (daily) or not at all (off). Security emails always come and are not listed. email is the confirmed address they go to, or "" when there is none.
+         */
+        get: operations["getMyNotifications"];
+        /**
+         * Change how my notifications come
+         * @description Only the kinds sent change, and only kinds the account can receive may be sent. summary_hour is when the daily summary comes, in the account's time zone (UTC without one). Notifications waiting for a summary are dropped when their kind stops being daily.
+         */
+        put: operations["updateMyNotifications"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/sessions": {
         parameters: {
             query?: never;
@@ -1001,7 +1025,7 @@ export interface paths {
         head?: never;
         /**
          * Change an app's settings
-         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party and scopes (an app admin may send their current values).
+         * @description Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party, scopes and backchannel_logout_uri (an app admin may send their current values).
          */
         patch: operations["updateApp"];
         trace?: never;
@@ -1158,6 +1182,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        Delivery: "off" | "now" | "daily";
+        Notifications: {
+            email: string;
+            summary_hour: number;
+            settings: {
+                kind: string;
+                /** @enum {string} */
+                panel: "owner" | "admin";
+                label: string;
+                hint: string;
+                delivery: components["schemas"]["Delivery"];
+            }[];
+        };
         Error: {
             /**
              * @description invalid_request, unauthorized, forbidden, not_found, method_not_allowed, conflict, rate_limited,
@@ -2400,6 +2438,59 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMyNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notifications"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    updateMyNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    summary_hour?: number;
+                    settings?: {
+                        [key: string]: components["schemas"]["Delivery"];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The settings now. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notifications"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrossOrigin"];
         };
     };
     listMySessions: {

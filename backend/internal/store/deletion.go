@@ -226,6 +226,8 @@ func ExportAccountData(id string) (map[string]any, error) {
 			JOIN user_group g ON g.id = m.group_id WHERE m.account_id = $1 ORDER BY g.key`},
 		{"group_requests", `SELECT g.display_name AS group, q.message, q.created_at, q.decision, q.decided_at FROM group_request q
 			JOIN user_group g ON g.id = q.group_id WHERE q.account_id = $1 ORDER BY q.created_at DESC`},
+		{"notification_settings", `SELECT kind, delivery FROM notification_setting WHERE account_id = $1 ORDER BY kind`},
+		{"notifications_waiting", `SELECT kind, title, created_at FROM notification_pending WHERE account_id = $1 ORDER BY created_at`},
 		{"consents", `SELECT a.pretty_name AS app, c.scopes, c.granted_at, c.revoked_at FROM account_consent c
 			JOIN app a ON a.id = c.app_id WHERE c.account_id = $1 ORDER BY a.pretty_name`},
 		{"apps_used", `SELECT a.pretty_name AS app, u.first_signed_in_at, u.last_signed_in_at FROM app_user u

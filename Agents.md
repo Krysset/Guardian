@@ -106,8 +106,15 @@ current: they are the hand-off between sessions.
   session. `httpx.Authenticate` refuses everything but `GET /me` and `PUT /me/password` with
   `password_change_required` for temporary passwords (`Session.MustChangePassword` from `liveSession`). Admin
   takeover actions and `/me/export` call `RequireReauth` (the data page downloads through the API client).
-  App admins: `is_first_party` and `scopes` are admin-only (`AppSettings` `locked`). Sign-up with a taken
+  App admins: `is_first_party`, `scopes` and `backchannel_logout_uri` are admin-only (`AppSettings` `locked`). Sign-up with a taken
   address sends E9 (`mail.AddressHasAccount`) and looks like success. Tests: `e2e/hardening_test.go`.
+- **Notifications (U21, 2026-11-21):** `web/notifications.go` has the kinds (`NotificationKinds`, panel
+  owner/admin), `notify(acct, kind, title, link, compose)` (off / now / daily → `notification_pending`), and
+  `StartSummaries`/`SendDueSummaries(now)` (slot = latest chosen hour in the account's zone; only items older
+  than the slot trigger it). Tables `notification_setting`, `notification_schedule` (backed up),
+  `notification_pending` (not). API `GET/PUT /me/notifications`; page `/account/notifications` (AC9). E9 and E10
+  are new emails; E7 takes the settings link. Group requests for groups without owners, or owned by
+  guardian-admins, are kind `group_request_unowned`.
 - **Logs:** `e2e/logs_test.go` fails the e2e run when the server logs an email or IP address. Keep logs to
   ids and fixed words.
 - **Metrics rule:** labels only from fixed sets (outcome, method, reason, route pattern, app *name*; unknown

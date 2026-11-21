@@ -28,6 +28,8 @@ var tables = []table{
 	{"user_group", "id"},
 	{"group_member", "group_id, account_id"},
 	{"group_request", "id"},
+	{"notification_setting", "account_id, kind"},
+	{"notification_schedule", "account_id"},
 	{"app_group", "app_id, group_id"},
 	{"app_user", "app_id, account_id"},
 	{"signing_key", "kid"},
@@ -39,9 +41,9 @@ var tables = []table{
 const auditLog = "audit_log"
 
 // notBackedUp are the tables a backup leaves out: sign-in state that is worthless after a restore
-// (everyone signs in again), one-time tokens and rate-limit counters. A restore empties them. schema_revision and goose's own
+// (everyone signs in again), one-time tokens, rate-limit counters and notifications waiting for a summary. A restore empties them. schema_revision and goose's own
 // table belong to the schema, not to the data, and are neither backed up nor touched.
-var notBackedUp = []string{"session", "authorization_code", "refresh_token", "session_app", "account_token", "rate_limit", "used_challenge"}
+var notBackedUp = []string{"session", "authorization_code", "refresh_token", "session_app", "account_token", "rate_limit", "used_challenge", "notification_pending"}
 
 var schemaTables = []string{"schema_revision", "goose_db_version"}
 

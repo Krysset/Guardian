@@ -66,6 +66,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	httpx.RegisterDBMetrics(schedule.Lifetime)
 	db.StartMaintenance(ctx)
+	web.StartSummaries(ctx)
 
 	// Two listeners: the public one goes through the ingress; the internal one (metrics and probes) is only exposed as a ClusterIP Service and protected by a NetworkPolicy.
 	public := newServer(cfg.PublicAddr, PublicRouter())

@@ -33,11 +33,14 @@ The first release: an OpenID Connect sign-in service with groups, for apps you r
   single-app groups are bound to one app for good; memberships can expire.
 - Groups can be copied, hidden from their members, opened to requests to join (decided by their owners,
   with emails both ways), and joined by every new account.
+- Notifications that are not about security (requests to join a group, for its owners or for Guardian
+  admins) come right away, in a daily summary at the hour each person chooses, or not at all.
 - App admins: an app's owner group manages the app, links only groups it owns, and reads the app's audit
   entries.
 
 ### Management UI
-- The account area (profile, security, sessions, connected apps, groups, data download and deletion) and the
+- The account area (profile, notifications, security, sessions, connected apps, groups, data download and
+  deletion) and the
   admin area (overview, accounts, groups, apps, audit log, deleted accounts).
 
 ### Operations

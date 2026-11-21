@@ -108,6 +108,7 @@ Everything a visitor has, plus:
 | U18 | See the groups they are in, by display name (never by key), with expiry dates. Hidden groups (A26) are left out. | 0.1 / 0.4 | done |
 | U19 | A home page (`/`) without personal details: no email, sessions or other data, only their apps (U20), the way to the account area (and the admin area for admins) and any action needed (for example "set up two-factor" or "confirm your new email address", without showing the address). | 0.1 (simple) / 0.4 | done |
 | U20 | See the apps they can use, each opening the app's homepage: the apps they are connected to (have signed in to), and the apps available to them that they have not used yet. Apps without a homepage, or that they may not sign in to, are left out. | 0.1 / 0.4 | done |
+| U21 | Choose how notifications that are not about security come, per kind: an email right away, in one daily summary at an hour they choose (in their time zone), or not at all. They see the security emails, which always come, and the address emails go to. Group owners choose for requests to join their groups; Guardian admins for groups without owners. | 1.0 / 1.0 | done |
 
 ## Group owner
 

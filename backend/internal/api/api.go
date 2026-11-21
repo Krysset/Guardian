@@ -44,6 +44,8 @@ func Router() http.Handler {
 			r.Delete("/me/email", removeMyEmail)
 			r.Delete("/me/email/pending", cancelPendingEmail)
 			r.Get("/me/home", getHome)
+			r.Get("/me/notifications", getMyNotifications)
+			r.Put("/me/notifications", updateMyNotifications)
 			r.Get("/me/sessions", listMySessions)
 			r.Delete("/me/sessions", endMyOtherSessions)
 			r.Delete("/me/sessions/{session}", endMySession)

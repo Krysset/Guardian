@@ -8,6 +8,10 @@
 {{.}}
 {{end}}{{with .Facts}}
 {{range .}}{{.Label}}: {{.Value}}
+{{end}}{{end}}{{with .Items}}
+{{range .}}- {{.Title}}
+  {{.When}}
+  {{.URL}}
 {{end}}{{end}}{{with .NotMe}}
 Wasn't you? {{.}}
 {{end}}

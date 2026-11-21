@@ -6,6 +6,7 @@
 
 	const nav: NavItem[] = [
 		{ href: '/account', label: 'Profile', icon: 'profile' },
+		{ href: '/account/notifications', label: 'Notifications', icon: 'bell' },
 		{ href: '/account/security', label: 'Security', icon: 'security' },
 		{ href: '/account/sessions', label: 'Sessions', icon: 'sessions' },
 		{ href: '/account/apps', label: 'Connected apps', icon: 'apps' },

@@ -395,8 +395,14 @@ func updateApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Being first-party skips the consent screen, and scopes decide which claims an app may read: both are a
-	// promise to the people signing in, so only Guardian admins change them. Sending the current value is fine.
+	// promise to the people signing in, so only Guardian admins change them. The back-channel logout URI is
+	// an address Guardian's own server sends requests to, from inside the cluster, so it is theirs too.
+	// Sending the current value is fine.
 	if via != "admin" {
+		if req.BackchannelLogoutURI != nil && *req.BackchannelLogoutURI != current.BackchannelLogoutURI {
+			httpx.Error(w, http.StatusForbidden, "Only administrators change an app's back-channel logout URI")
+			return
+		}
 		if req.IsFirstParty != nil && *req.IsFirstParty != current.IsFirstParty {
 			httpx.Error(w, http.StatusForbidden, "Only administrators decide whether an app is first-party")
 			return

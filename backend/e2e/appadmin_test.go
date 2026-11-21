@@ -61,8 +61,11 @@ func TestE2EAppAdminsManageTheirOwnApps(t *testing.T) {
 	// Skipping consent and the scopes are promises to the people signing in: Guardian admins keep them.
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"is_first_party": true}, 403)
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"scopes": []string{"openid"}}, 403)
+	// Guardian's server sends requests to the back-channel logout URI, so an app admin cannot aim it elsewhere.
+	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"backchannel_logout_uri": "https://internal.example/admin"}, 403)
 	current := br.call("GET", "/api/v1/apps/"+wiki.ID, nil, 200)
-	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"is_first_party": current["is_first_party"], "scopes": current["scopes"]}, 200)
+	bc, _ := current["backchannel_logout_uri"].(string)
+	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"is_first_party": current["is_first_party"], "scopes": current["scopes"], "backchannel_logout_uri": bc}, 200)
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"enabled": false}, 200)
 	br.call("PATCH", "/api/v1/apps/"+wiki.ID, map[string]any{"enabled": true}, 200)
 	br.call("POST", "/api/v1/apps/"+wiki.ID+"/secret", map[string]any{"grace_seconds": 3600}, 201)

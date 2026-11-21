@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	htmltemplate "html/template"
+	"strconv"
 	"strings"
 	texttemplate "text/template"
 	"time"
@@ -28,12 +29,16 @@ type email struct {
 	Button  *button
 	Small   string // under the button: how long the link works
 	Facts   []fact
+	Items   []Item // a list of things, each linking to its page (the daily summary)
 	NotMe   string // "Wasn't you?" and what to do then
 	Footer  string // why this email came, for emails that are not about security
 }
 
 type button struct{ Label, URL string }
 type fact struct{ Label, Value string }
+
+// Item is one line of a list in an email: what happened, when, and the page to open.
+type Item struct{ Title, When, URL string }
 
 func (e email) message(to string) Message {
 	e.Site = currentSite()
@@ -97,6 +102,20 @@ func AddressHasAccount(to, signIn, forgot string) Message {
 	}.message(to)
 }
 
+// DailySummary is E10: the notifications an account chose to get once a day, in one email.
+func DailySummary(to string, items []Item, settings string) Message {
+	subject := "Your daily summary: 1 thing"
+	if len(items) != 1 {
+		subject = "Your daily summary: " + strconv.Itoa(len(items)) + " things"
+	}
+	return email{
+		Subject: subject,
+		Lines:   []string{"Here is what happened since your last summary."},
+		Items:   items,
+		Footer:  "You get this because you chose a daily summary. Change it under Notifications in your account: " + settings,
+	}.message(to)
+}
+
 // ResetPassword is E2: the link to choose a new password.
 func ResetPassword(to, link string, expires time.Time, zone string) Message {
 	return email{
@@ -155,7 +174,7 @@ func TwoFactorReset(to, reason string, when time.Time, zone string) Message {
 }
 
 // GroupRequested is E7, sent to the people who decide when someone asks to join a group.
-func GroupRequested(to, who, group, message, link string, when time.Time, zone string) Message {
+func GroupRequested(to, who, group, message, link, settings string, when time.Time, zone string) Message {
 	facts := []fact{{"Who", who}, {"Group", group}, {"When", When(when, zone)}}
 	if message != "" {
 		facts = append(facts, fact{"Their message", message})
@@ -165,7 +184,7 @@ func GroupRequested(to, who, group, message, link string, when time.Time, zone s
 		Lines:   []string{who + " asks to join the group " + group + " in Guardian. You can approve or deny the request."},
 		Button:  &button{"Open the request", link},
 		Facts:   facts,
-		Footer:  "You get this because you decide who may join " + group + ".",
+		Footer:  "You get this because you decide who may join " + group + ". Choose how you get these under Notifications in your account: " + settings,
 	}.message(to)
 }
 

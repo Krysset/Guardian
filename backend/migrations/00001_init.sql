@@ -242,6 +242,36 @@ CREATE TABLE IF NOT EXISTS group_request (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_group_request_open ON group_request (group_id, account_id) WHERE decision IS NULL;
 CREATE INDEX IF NOT EXISTS ix_group_request_account ON group_request (account_id);
 
+-- How an account gets each kind of notification that is not about security (security emails are always
+-- sent): 'off', 'now' (an email each time) or 'daily' (in the daily summary). A kind without a row is 'now'.
+-- The kinds are named in the code (web/notifications.go), so a new one needs no migration.
+CREATE TABLE IF NOT EXISTS notification_setting (
+	account_id UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+	kind       TEXT NOT NULL CHECK (kind ~ '^[a-z_]{1,64}$'),
+	delivery   TEXT NOT NULL CHECK (delivery IN ('off', 'now', 'daily')),
+	PRIMARY KEY (account_id, kind)
+);
+
+-- When an account's daily summary goes out (summary_hour, in the account's time zone, or UTC without one),
+-- and when it last did. Without a row the summary comes at 08:00.
+CREATE TABLE IF NOT EXISTS notification_schedule (
+	account_id      UUID PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
+	summary_hour    SMALLINT NOT NULL DEFAULT 8 CHECK (summary_hour BETWEEN 0 AND 23),
+	last_summary_at TIMESTAMPTZ
+);
+
+-- Notifications waiting for their account's next daily summary: one line and the page it links to. The
+-- summary removes them; they are not backed up.
+CREATE TABLE IF NOT EXISTS notification_pending (
+	id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	account_id UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+	kind       TEXT NOT NULL,
+	title      TEXT NOT NULL,
+	link       TEXT NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_notification_pending_account ON notification_pending (account_id);
+
 -- Which groups an app is told about. An app only ever sees the groups linked to it, and with
 -- access_rule = 'groups' only their members may sign in to it.
 CREATE TABLE IF NOT EXISTS app_group (

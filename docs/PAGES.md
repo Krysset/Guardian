@@ -47,6 +47,7 @@ The account area opens on AC1 Profile.
 | AC5 Groups | Groups they are in (not hidden ones), the groups they own (with waiting requests), linking to AC6; their requests to join, and groups they may ask to join. | U18, O1, A33 | User | 0.4 |
 | AC6 Owned group | One group they own: requests to join, members and expiry, add by exact username or email, remove, linked apps. | O2, O3, O5, A33 | Group owner | 0.4 |
 | AC7 Your data | Download their data; delete the account. | U14, U15 | User | 0.4 |
+| AC9 Notifications | Where emails go, the security emails (always sent), and per kind of other notification: right away, daily summary or off; the summary's hour. Panels only for the roles the account has. | U21 | User | 1.0 |
 | AC8 Confirm it's you (dialog) | Password or second factor before a protected change, then the change is saved. Used by AC1, AC2, AC3, AC4 and AC7. | U16 | User | 0.4 |
 
 ## Admin area (`/admin`)
@@ -81,6 +82,10 @@ Sent only to accounts with a confirmed address (except E1, which confirms it).
 | E4 Two-factor was added or removed | U17 | 0.3 |
 | E5 Your email address is being changed (to the old address) | U9, U17 | 0.3 |
 | E6 An administrator reset your two-factor (with the reason) | A9, U17 | 0.3 |
+| E7 Someone asks to join a group you decide | A33, U21 | 1.0 |
+| E8 Your request to join was decided | A33 | 1.0 |
+| E9 You already have an account (sign-up with a taken address) | V3 | 1.0 |
+| E10 Daily summary | U21 | 1.0 |
 
 ## What each page contains
 
@@ -334,6 +339,18 @@ appear from that release; until then the page is drawn without them.
   - type your username to confirm, then confirm it's you (AC8).
   - States: refused for the last administrator, with the reason.
 
+**AC9 Notifications** (1.0, after Profile in the menu)
+- Shows: "How emails reach you": the confirmed address (or that there is none, with a link to Profile) and
+  the daily summary's hour, at the top so it is not buried under the panels and always there (for anyone
+  with a kind to choose) so choosing Daily summary does not move the page; "Your account": the security
+  emails, each marked "Always sent"; "Groups you own" (group owners) and "Guardian admin" (administrators)
+  with one row per kind and the choice Right away, Daily summary or Off.
+- Changes save at once, and say so where they were made: the chosen button flashes green with "Saved"
+  beside it (on its title line on a phone), or "Saved" beside the hour; it fades after a moment, and nothing
+  moves when it shows. A failure shows under that row. A kind that stops being daily drops what was waiting for the summary.
+- The summary comes at the chosen hour in the account's time zone, only when something happened; what came
+  after that hour waits for the next day. Emails of these kinds link to this page.
+
 **AC8 Confirm it's you** (dialog, 0.3)
 - Shows: what is about to change ("Confirm it's you to change your email address").
 - Fields: password, or a second-factor code, or a security key (0.5).
@@ -467,6 +484,13 @@ user. It holds no other personal data.
 - **E4 Two-factor was added or removed:** which method, when.
 - **E5 Your email address is being changed:** sent to the old address; the new address masked.
 - **E6 An administrator reset your two-factor:** when, and the reason given.
+- **E7 Someone asks to join a group:** who, the group, their message, and a link to decide. Not about
+  security: it says why it came and links to AC9, and follows the decider's choice there.
+- **E8 Your request was decided:** approved or denied.
+- **E9 You already have an account:** instead of E1 when someone signs up with an address in use; links to
+  sign-in and forgot-password.
+- **E10 Daily summary:** one line per notification waiting since the last summary, each linking to its page;
+  the footer links to AC9.
 
 ### What the API still lacks for these pages
 
@@ -512,6 +536,7 @@ Nothing since 0.4: every page gets its data from `/api/v1`.
 | U18 | AC5 |
 | U19 | H0 |
 | U20 | H0 |
+| U21 | AC9, E7, E10 |
 | O1 | AC5 |
 | O2 | AC6 |
 | O3 | AC6 |

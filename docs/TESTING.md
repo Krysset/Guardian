@@ -82,6 +82,7 @@ or when a test names an id that is not a requirement, and generates this table. 
 | U18 | done | `TestAccountGroupsListsActiveMemberships`, `TestE2EMyGroupsAndAddingMembersByLogin` |
 | U19 | done | `TestE2EHomeListsTheAppsTheAccountMayUse` |
 | U20 | done | `TestE2EHomeAndConnectedApps`, `TestE2EHomeListsTheAppsTheAccountMayUse` |
+| U21 | done | `TestE2ENotificationsComeAsEachAccountChose`, `TestSummarySlotIsTheLatestChosenHourInTheAccountsZone` |
 | O1 | done | `TestE2EMyGroupsAndAddingMembersByLogin`, `TestGroupOwnersAreTheMembersOfTheOwnerGroup` |
 | O2 | done | `TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups`, `TestE2EMyGroupsAndAddingMembersByLogin`, `TestExpiredMembershipsDoNotCount` |
 | O3 | done | `TestE2EGroupOwnersManageOnlyTheMembersOfTheirGroups`, `TestE2EMyGroupsAndAddingMembersByLogin`, `TestEveryRouteHasItsPermissionCheck` |

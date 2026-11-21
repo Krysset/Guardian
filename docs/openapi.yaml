@@ -650,6 +650,53 @@ paths:
                   available: { type: array, items: { $ref: '#/components/schemas/HomeApp' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/notifications:
+    get:
+      tags: [me]
+      summary: How my notifications come
+      description: >-
+        The notifications that are not about security, for the kinds this account can receive (requests to
+        join the groups it owns; for Guardian administrators, requests to join groups without owners), each
+        sent right away (now), in the daily summary (daily) or not at all (off). Security emails always come
+        and are not listed. email is the confirmed address they go to, or "" when there is none.
+      operationId: getMyNotifications
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notifications' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [me]
+      summary: Change how my notifications come
+      description: >-
+        Only the kinds sent change, and only kinds the account can receive may be sent. summary_hour is when
+        the daily summary comes, in the account's time zone (UTC without one). Notifications waiting for a
+        summary are dropped when their kind stops being daily.
+      operationId: updateMyNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                summary_hour: { type: integer, minimum: 0, maximum: 23 }
+                settings:
+                  type: object
+                  additionalProperties: { $ref: '#/components/schemas/Delivery' }
+      responses:
+        '200':
+          description: The settings now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notifications' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CrossOrigin' }
+
   /me/sessions:
     get:
       tags: [me]
@@ -1575,7 +1622,7 @@ paths:
     patch:
       tags: [apps]
       summary: Change an app's settings
-      description: Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party and scopes (an app admin may send their current values).
+      description: Only fields present change. The name, client id and client type never change; access has its own route. A disabled app cannot sign users in or refresh. For Guardian admins and the app's admins; only Guardian admins may change owner_group_id, is_first_party, scopes and backchannel_logout_uri (an app admin may send their current values).
       operationId: updateApp
       requestBody:
         required: true
@@ -1936,6 +1983,26 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    Delivery:
+      type: string
+      enum: ['off', 'now', 'daily']
+    Notifications:
+      type: object
+      required: [email, summary_hour, settings]
+      properties:
+        email: { type: string }
+        summary_hour: { type: integer, minimum: 0, maximum: 23 }
+        settings:
+          type: array
+          items:
+            type: object
+            required: [kind, panel, label, hint, delivery]
+            properties:
+              kind: { type: string }
+              panel: { type: string, enum: [owner, admin] }
+              label: { type: string }
+              hint: { type: string }
+              delivery: { $ref: '#/components/schemas/Delivery' }
     Error:
       type: object
       required: [error, message]

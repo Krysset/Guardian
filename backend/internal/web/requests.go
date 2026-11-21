@@ -55,12 +55,16 @@ func AskToJoin(r *http.Request, accountID, groupID, message string) (db.GroupReq
 		slog.Error("failed to find who decides a group request", "error", err)
 	}
 	group, _ := db.GetGroup(groupID)
+	// Requests for a group without owners (or owned by the administrators' group) are the administrators'
+	// own kind of notification, and they decide them in the admin area.
+	kind, link := KindGroupRequest, httpx.Issuer+"/account/groups/"+groupID
+	if group.OwnerGroupID == "" || isAdminGroup(group.OwnerGroupID) {
+		kind, link = KindGroupRequestUnowned, httpx.Issuer+"/admin/groups/"+groupID
+	}
 	for _, d := range deciders {
-		link := httpx.Issuer + "/account/groups/" + groupID
-		if group.OwnerGroupID == "" {
-			link = httpx.Issuer + "/admin/groups/" + groupID
-		}
-		mail.Enqueue(mail.GroupRequested(d.Email, who, q.GroupName, message, link, q.CreatedAt, d.Zoneinfo))
+		notify(d, kind, who+" asks to join "+q.GroupName, link, func() mail.Message {
+			return mail.GroupRequested(d.Email, who, q.GroupName, message, link, NotificationsURL(), q.CreatedAt, d.Zoneinfo)
+		})
 	}
 	return q, nil
 }
@@ -132,4 +136,10 @@ func RequestNotice(outcome string) string {
 		return "That group can no longer be asked for."
 	}
 	return ""
+}
+
+// isAdminGroup reports whether the group is the built-in administrators' group.
+func isAdminGroup(groupID string) bool {
+	g, err := db.GetGroup(groupID)
+	return err == nil && g.Key == db.AdminGroupKey
 }

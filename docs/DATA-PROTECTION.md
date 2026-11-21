@@ -19,6 +19,7 @@ people sign in to.
 | Two-factor: authenticator app secret, security keys and passkeys (public keys, names, last use), recovery codes | To sign in with two-factor. The app secret is encrypted with the keyring; recovery codes are hashed; security keys are only public keys. | `account_mfa` |
 | Group memberships, with who added them and when they expire | To decide which apps someone may use, and what the apps are told | `group_member` |
 | Requests to join a group, with the optional message | So owners can decide | `group_request` |
+| Notification choices and the daily summary's hour; notifications waiting for the summary (one line: who asks to join which group, and a link) | So people get the emails they chose, when they chose | `notification_setting`, `notification_schedule`, `notification_pending` |
 | Sessions: when signed in, last active, IP address, browser (user agent), how they signed in | To keep people signed in, to show them where they are signed in, and to sign them out | `session` |
 | Apps a person has used, consents given | To skip asking again, and for "Connected apps" | `app_user`, `account_consent` |
 | Refresh tokens and authorization codes | Sign-in to apps. Only hashes are kept. | `refresh_token`, `authorization_code` |
@@ -60,6 +61,7 @@ and the email's text. It is your processor.
 | Revoked refresh tokens | 7 days |
 | Expired one-time links and codes | 1 to 7 days |
 | Decided requests to join a group | 30 days |
+| Notifications waiting for a daily summary | Until the summary goes out (about a day), or the kind is no longer summarised |
 | Rate-limit counters | 1 day |
 | Audit log | 6 months (`AUDIT_RETENTION`, at least 1 day) |
 | Deletion log | For as long as backups from before an erasure exist; it holds ids only |
@@ -70,7 +72,7 @@ A maintenance job removes expired data every hour, on whichever replica takes it
 ## People's rights
 
 - **Access and portability.** "Download your data" in the account area (`GET /api/v1/me/export`) gives a
-  JSON file (after confirming it's them) with the profile, two-factor methods (no secrets), groups, requests to join, consents, apps used,
+  JSON file (after confirming it's them) with the profile, two-factor methods (no secrets), groups, requests to join, notification choices and waiting notifications, consents, apps used,
   sessions and the audit entries about the account (up to 5000).
 - **Rectification.** The profile and email address are edited in the account area; a new address is
   confirmed by a link before it counts. An administrator can correct them too.
@@ -87,7 +89,7 @@ A maintenance job removes expired data every hour, on whichever replica takes it
 ## Backups and restore
 
 A backup holds accounts, groups, apps, two-factor (still encrypted), requests to join, signing keys, the
-deletion log and, unless left out, the audit log. Sessions and tokens are not in it. Backups are encrypted to
+deletion log, notification choices and, unless left out, the audit log. Sessions and tokens are not in it. Backups are encrypted to
 your age keys, and the cluster never holds the private key.
 
 Data stays in a backup until the backup is deleted. When you restore one, give it the current deletion log

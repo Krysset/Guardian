@@ -47,9 +47,10 @@ func TestEveryEmailRendersBothPartsAndEscapes(t *testing.T) {
 			}
 		}
 	}
-	// The group request emails are not about security, and say why they came instead.
+	// The group request emails and the daily summary are not about security, and say why they came instead.
 	for name, m := range map[string]Message{
-		"requested": GroupRequested("a@b.test", "Zelda <z>", "Knights", "Let me <in>", link, when, ""),
+		"summary":   DailySummary("a@b.test", []Item{{"Zelda <z> asks to join Knights", "21 Nov", link}}, link),
+		"requested": GroupRequested("a@b.test", "Zelda <z>", "Knights", "Let me <in>", link, link, when, ""),
 		"approved":  GroupRequestDecided("a@b.test", "Knights", true, link, when, ""),
 		"denied":    GroupRequestDecided("a@b.test", "Knights", false, link, when, ""),
 	} {

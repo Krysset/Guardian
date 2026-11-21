@@ -323,6 +323,13 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - **Proof-of-work challenges** (V9, built): an ALTCHA-style puzzle (SHA-256 of a salt and a secret number up to 50000, sealed with the keyring, each answered once through `used_challenge`) on sign-up and forgot-password always, and on sign-in once an address has failed three times (owner's choice). `guardian.js` solves it from page load, in about a third of a second on a laptop; a form sent before then waits for it. Without JavaScript the page explains why the form needs it; sign-in works without it until an address fails repeatedly. `POST /api/v1/signup` takes a puzzle from `GET /api/v1/signup/challenge`. Metric `guardian_pow_checks_total`.
 
 - **Hidden groups, requests to join, default groups** (A26, A33, A34, built 2026-11-21): three group switches (hidden; people can ask to join; new accounts join), never on built-in groups, hidden and requestable not together. Requests (`group_request`, one open per account and group, 10 an hour, decided ones kept 30 days) come from the account area or the no-access page; the owners decide, or Guardian admins for a group without owners; both sides are emailed (E7, E8); an approval adds the membership, optionally until a date. Closing a group to requests withdraws the open ones. New accounts join the default groups in the same statement that creates them.
+- **Notification settings** (U21, built 2026-11-21, owner's design with the master switch dropped): Account →
+  Notifications (AC9, after Profile) shows where emails go, the security emails as "Always sent", and a panel
+  per role (Groups you own; Guardian admin) with Right away, Daily summary or Off per kind, plus the summary's
+  hour while some kind is daily. Kinds live in `web/notifications.go`, so adding one needs no migration. The
+  summary (E10) comes at the chosen hour in the account's time zone, only when something waited since before
+  that hour; every replica checks every 10 minutes and `TakeSummary` makes sure one sends it. Join-request
+  emails link to the page.
 
 ### 1.0: release
 - **M7 hardening:**
@@ -346,7 +353,8 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
   - every attempt limit (sign-in, passkeys, two-factor codes, reauth) counts before it checks, so parallel
     attempts cannot slip under it; IPv6 addresses count per /64; ten failures to one account from any
     addresses make its sign-ins answer a puzzle;
-  - app admins cannot make an app first-party or change its scopes;
+  - app admins cannot make an app first-party, change its scopes, or change its back-channel logout URI
+    (Guardian's server sends requests there; owner, 2026-11-21);
   - an account with a temporary password can only read `/me` and change its password through the API;
   - sign-up no longer tells whether an address is in use: the address's owner gets E9 instead;
   - admin actions that could take over an account (set password, reset two-factor, change email or status,
@@ -354,7 +362,7 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
   - the metrics' method label is a fixed set.
   - **Left as they are:** argon2 hashing waits in an unbounded queue under a flood of sign-ins (rate limits
     and the puzzle bound it in practice; a "busy" answer needs its own design); back-channel logout URIs could
-    reach internal addresses, which the egress network policy must block (`networkPolicy`); request emails
+    reach internal addresses, but only Guardian admins set them; request emails
     quote what the asker typed (escaped, and marked as their message).
 - **After tagging,** `00001_init.sql` is frozen and the compatibility rules apply. Until then nothing is deployed, so removed or renamed settings are simply dropped: no warnings or refusals for legacy options.
 
@@ -375,14 +383,13 @@ Built in parts: (1) audit retention and the clean-up of single-app groups, (2) s
 - **A metric for group memberships about to expire** (owner held it back from the 1.0 metrics, 2026-11-21).
 - **Email aliases for groups** (owner, 2026-11-21): an address in the installation's domain that reaches a
   group's members, so someone can write to `grafana-admins@example.com` without knowing who they are.
-  Created per group, not on by default. Open questions before designing it:
-  - one group with several aliases, or also one alias reaching several groups (then it reaches everyone in
-    any of them, once each);
-  - who may send to an alias: anyone, only the domain, or only Guardian accounts;
-  - how mail reaches the members: Guardian does not receive mail, so the mail server needs the alias map from
-    it (for example a lookup endpoint or an exported table for Postfix or similar), and only confirmed
-    addresses are used;
-  - whether hidden groups can have aliases, and whether members can see a group's aliases.
+  - Leaning: created per group, one group with several aliases (no alias reaching several groups until a
+    real case needs it; a group with those members does the same). Anyone may send to it, like any address.
+  - Only confirmed addresses receive; whether hidden groups can have aliases is open.
+  - Delivery is the hard part. Guardian does not receive mail. Today the domain's mail is Proton with DNS at
+    Cloudflare, and that may change, so Guardian should hand out the alias map (a lookup endpoint or an
+    export) rather than depend on one provider. Check what the mail provider can forward to, and whether
+    aliases need their own subdomain (its MX pointing at something that can expand them).
 - **S3-compatible backup storage.**
 - **A bundled CloudNativePG option.**
 - **Invites,** and sign-up approval or closed modes, only if needed.
